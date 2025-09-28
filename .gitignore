@@ -1,0 +1,79 @@
+# See https://help.github.com/ignore-files/ for more about ignoring files.
+
+# testing
+**/coverage
+**/cypress
+**/node_modules
+**/cypress.env.json
+**/screenshots
+**/serviceAccount.json
+**/*.service-account.json
+**/storybook-static
+**/service-accounts
+.copilot
+.cursorrules
+
+# production
+**/build
+**/dist
+**/pruned
+**/deploy
+**/out
+**/.next
+
+# misc
+**/.DS_Store
+**/*.log
+**/.eslintcache
+
+# env files
+**/.env
+
+# SWC
+**/.swc/
+
+# Caches
+**/.*cache*
+**/.turbo
+tsconfig*.tsbuildinfo*
+
+# yarn
+**/.pnp.*
+**/.yarn/*
+!**/.yarn/patches
+!**/.yarn/plugins
+!**/.yarn/releases
+!**/.yarn/sdks
+!**/.yarn/versions
+
+# Redis local db persistence
+**/dump.rdb
+
+# Webstorm
+**/.idea/
+
+# data for actions
+**/actions/data
+
+
+# Bundle Analyzer
+**/bundle-stats.html
+# Ignore generated credentials from google-github-actions/auth
+**/gha-creds-*.json
+
+# Tinybird
+.tinyb
+
+# Turborepo
+.turbo
+**/.prisma/**
+
+*storybook.log
+
+# Code gen
+**/gen
+
+
+# svelte
+**/sv
+*.zsh
