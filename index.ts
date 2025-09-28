@@ -6,9 +6,10 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { execSync } from 'child_process';
-import { promises as fs } from 'fs';
-import path from 'path';
+import { execSync } from 'node:child_process';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { name, version } from './package.json';
 
 interface ProjectConfig {
   name: string;
@@ -36,8 +37,8 @@ class NextMCPServer {
   constructor() {
     this.server = new Server(
       {
-        name: 'nextjs-scaffolding-server',
-        version: '1.0.0',
+        name,
+        version,
       },
       {
         capabilities: {
