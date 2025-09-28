@@ -212,41 +212,53 @@ class NextMCPServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
-      try {
-        switch (name) {
-          case 'scaffold_project':
-            return await this.scaffoldProject(args.config, args.targetPath);
-          case 'create_directory_structure':
-            return await this.createDirectoryStructure(args.projectPath, args.config);
-          case 'generate_package_json':
-            return await this.generatePackageJson(args.projectPath, args.config);
-          case 'generate_dockerfile':
-            return await this.generateDockerfile(args.projectPath, args.config);
-          case 'generate_nextjs_config':
-            return await this.generateNextJSConfig(args.projectPath, args.config);
-          case 'generate_base_components':
-            return await this.generateBaseComponents(args.projectPath, args.config);
-          case 'setup_database':
-            return await this.setupDatabase(args.projectPath, args.config);
-          case 'setup_authentication':
-            return await this.setupAuthentication(args.projectPath, args.config);
-          case 'generate_ci_cd':
-            return await this.generateCICD(args.projectPath, args.config);
-          case 'install_dependencies':
-            return await this.installDependencies(args.projectPath, args.packageManager);
-          case 'validate_project':
-            return await this.validateProject(args.projectPath);
-          case 'generate_readme':
-            return await this.generateReadme(args.projectPath, args.config);
-          default:
-            throw new Error(`Unknown tool: ${name}`);
-        }
-      } catch (error) {
+      if (!args) {
         return {
           content: [
             {
               type: 'text',
-              text: `Error executing ${name}: ${error.message}`,
+              text: `No arguments provided for tool: ${name}`,
+            },
+          ],
+        };
+      }
+
+      try {
+        switch (name) {
+          case 'scaffold_project':
+            return await this.scaffoldProject(args.config as ProjectConfig, args.targetPath as string);
+          case 'create_directory_structure':
+            return await this.createDirectoryStructure(args.projectPath as string, args.config as ProjectConfig);
+          case 'generate_package_json':
+            return await this.generatePackageJson(args.projectPath as string, args.config as ProjectConfig);
+          case 'generate_dockerfile':
+            return await this.generateDockerfile(args.projectPath as string, args.config as ProjectConfig);
+          case 'generate_nextjs_config':
+            return await this.generateNextJSConfig(args.projectPath as string, args.config as ProjectConfig);
+          case 'generate_base_components':
+            return await this.generateBaseComponents(args.projectPath as string, args.config as ProjectConfig);
+          case 'setup_database':
+            return await this.setupDatabase(args.projectPath as string, args.config as ProjectConfig);
+          case 'setup_authentication':
+            return await this.setupAuthentication(args.projectPath as string, args.config as ProjectConfig);
+          case 'generate_ci_cd':
+            return await this.generateCICD(args.projectPath as string, args.config as ProjectConfig);
+          case 'install_dependencies':
+            return await this.installDependencies(args.projectPath as string, args.packageManager as string);
+          case 'validate_project':
+            return await this.validateProject(args.projectPath as string);
+          case 'generate_readme':
+            return await this.generateReadme(args.projectPath as string, args.config as ProjectConfig);
+          default:
+            throw new Error(`Unknown tool: ${name}`);
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error executing ${name}: ${errorMessage}`,
             },
           ],
         };
