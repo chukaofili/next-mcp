@@ -1,33 +1,35 @@
 #!/usr/bin/env node
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
-import { execSync } from 'node:child_process';
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import { name, version } from './package.json';
+} from "@modelcontextprotocol/sdk/types.js";
+import { execSync } from "node:child_process";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { name, version } from "./package.json";
 
 interface ProjectConfig {
   name: string;
   description: string;
   features: string[];
   deployment: {
-    platform: 'vercel' | 'aws' | 'gcp' | 'azure';
+    platform: "vercel" | "aws" | "gcp" | "azure";
     containerRegistry?: string;
     domain?: string;
   };
   architecture: {
     appRouter: boolean;
     typescript: boolean;
-    database: 'none' | 'postgres' | 'mysql' | 'mongodb';
-    auth: 'none' | 'better-auth' | 'clerk' | 'supabase';
-    uiLibrary: 'none' | 'shadcn';
-    stateManagement: 'zustand' | 'redux' | 'context';
-    testing: 'jest' | 'vitest' | 'playwright';
+    database: "none" | "postgres" | "mysql" | "mongodb";
+    orm: "none" | "prisma" | "drizzle" | "mongoose";
+    auth: "none" | "better-auth" | "clerk" | "supabase";
+    styling: "tailwind";
+    uiLibrary: "none" | "shadcn";
+    stateManagement: "zustand" | "redux" | "context";
+    testing: "jest" | "vitest" | "playwright";
   };
 }
 
@@ -54,158 +56,162 @@ class NextMCPServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
         {
-          name: 'scaffold_project',
-          description: 'Create a new Next.js project with specified configuration',
+          name: "scaffold_project",
+          description:
+            "Create a new Next.js project with specified configuration",
           inputSchema: {
-            type: 'object',
+            type: "object",
             properties: {
               config: {
-                type: 'object',
+                type: "object",
                 properties: {
-                  name: { type: 'string' },
-                  description: { type: 'string' },
-                  features: { type: 'array', items: { type: 'string' } },
-                  deployment: { type: 'object' },
-                  architecture: { type: 'object' }
+                  name: { type: "string" },
+                  description: { type: "string" },
+                  features: { type: "array", items: { type: "string" } },
+                  deployment: { type: "object" },
+                  architecture: { type: "object" },
                 },
-                required: ['name', 'architecture']
+                required: ["name", "architecture"],
               },
-              targetPath: { type: 'string', description: 'Target directory path' }
+              targetPath: {
+                type: "string",
+                description: "Target directory path",
+              },
             },
-            required: ['config', 'targetPath']
-          }
+            required: ["config", "targetPath"],
+          },
         },
         {
-          name: 'create_directory_structure',
-          description: 'Create the base directory structure for the project',
+          name: "create_directory_structure",
+          description: "Create the base directory structure for the project",
           inputSchema: {
-            type: 'object',
+            type: "object",
             properties: {
-              projectPath: { type: 'string' },
-              config: { type: 'object' }
+              projectPath: { type: "string" },
+              config: { type: "object" },
             },
-            required: ['projectPath', 'config']
-          }
+            required: ["projectPath", "config"],
+          },
         },
         {
-          name: 'generate_package_json',
-          description: 'Generate package.json with appropriate dependencies',
+          name: "generate_package_json",
+          description: "Generate package.json with appropriate dependencies",
           inputSchema: {
-            type: 'object',
+            type: "object",
             properties: {
-              projectPath: { type: 'string' },
-              config: { type: 'object' }
+              projectPath: { type: "string" },
+              config: { type: "object" },
             },
-            required: ['projectPath', 'config']
-          }
+            required: ["projectPath", "config"],
+          },
         },
         {
-          name: 'generate_dockerfile',
-          description: 'Generate Dockerfile and docker-compose.yml',
+          name: "generate_dockerfile",
+          description: "Generate Dockerfile and docker-compose.yml",
           inputSchema: {
-            type: 'object',
+            type: "object",
             properties: {
-              projectPath: { type: 'string' },
-              config: { type: 'object' }
+              projectPath: { type: "string" },
+              config: { type: "object" },
             },
-            required: ['projectPath', 'config']
-          }
+            required: ["projectPath", "config"],
+          },
         },
         {
-          name: 'generate_nextjs_config',
-          description: 'Generate Next.js configuration files',
+          name: "generate_nextjs_config",
+          description: "Generate Next.js configuration files",
           inputSchema: {
-            type: 'object',
+            type: "object",
             properties: {
-              projectPath: { type: 'string' },
-              config: { type: 'object' }
+              projectPath: { type: "string" },
+              config: { type: "object" },
             },
-            required: ['projectPath', 'config']
-          }
+            required: ["projectPath", "config"],
+          },
         },
         {
-          name: 'generate_base_components',
-          description: 'Generate base React components and layouts',
+          name: "generate_base_components",
+          description: "Generate base React components and layouts",
           inputSchema: {
-            type: 'object',
+            type: "object",
             properties: {
-              projectPath: { type: 'string' },
-              config: { type: 'object' }
+              projectPath: { type: "string" },
+              config: { type: "object" },
             },
-            required: ['projectPath', 'config']
-          }
+            required: ["projectPath", "config"],
+          },
         },
         {
-          name: 'setup_database',
-          description: 'Generate database configuration and migrations',
+          name: "setup_database",
+          description: "Generate database configuration and migrations",
           inputSchema: {
-            type: 'object',
+            type: "object",
             properties: {
-              projectPath: { type: 'string' },
-              config: { type: 'object' }
+              projectPath: { type: "string" },
+              config: { type: "object" },
             },
-            required: ['projectPath', 'config']
-          }
+            required: ["projectPath", "config"],
+          },
         },
         {
-          name: 'setup_authentication',
-          description: 'Configure authentication system',
+          name: "setup_authentication",
+          description: "Configure authentication system",
           inputSchema: {
-            type: 'object',
+            type: "object",
             properties: {
-              projectPath: { type: 'string' },
-              config: { type: 'object' }
+              projectPath: { type: "string" },
+              config: { type: "object" },
             },
-            required: ['projectPath', 'config']
-          }
+            required: ["projectPath", "config"],
+          },
         },
         {
-          name: 'generate_ci_cd',
-          description: 'Generate CI/CD pipeline configuration',
+          name: "generate_ci_cd",
+          description: "Generate CI/CD pipeline configuration",
           inputSchema: {
-            type: 'object',
+            type: "object",
             properties: {
-              projectPath: { type: 'string' },
-              config: { type: 'object' }
+              projectPath: { type: "string" },
+              config: { type: "object" },
             },
-            required: ['projectPath', 'config']
-          }
+            required: ["projectPath", "config"],
+          },
         },
         {
-          name: 'install_dependencies',
-          description: 'Install npm/pnpm dependencies',
+          name: "install_dependencies",
+          description: "Install npm/pnpm dependencies",
           inputSchema: {
-            type: 'object',
+            type: "object",
             properties: {
-              projectPath: { type: 'string' },
-              packageManager: { type: 'string', enum: ['npm', 'pnpm', 'yarn'] }
+              projectPath: { type: "string" },
+              packageManager: { type: "string", enum: ["npm", "pnpm", "yarn"] },
             },
-            required: ['projectPath']
-          }
+            required: ["projectPath"],
+          },
         },
         {
-          name: 'validate_project',
-          description: 'Run validation checks on the generated project',
+          name: "validate_project",
+          description: "Run validation checks on the generated project",
           inputSchema: {
-            type: 'object',
+            type: "object",
             properties: {
-              projectPath: { type: 'string' }
+              projectPath: { type: "string" },
             },
-            required: ['projectPath']
-          }
+            required: ["projectPath"],
+          },
         },
         {
-          name: 'generate_readme',
-          description: 'Generate comprehensive README.md',
+          name: "generate_readme",
+          description: "Generate comprehensive README.md",
           inputSchema: {
-            type: 'object',
+            type: "object",
             properties: {
-              projectPath: { type: 'string' },
-              config: { type: 'object' }
+              projectPath: { type: "string" },
+              config: { type: "object" },
             },
-            required: ['projectPath', 'config']
-          }
-        }
+            required: ["projectPath", "config"],
+          },
+        },
       ],
     }));
 
@@ -216,7 +222,7 @@ class NextMCPServer {
         return {
           content: [
             {
-              type: 'text',
+              type: "text",
               text: `No arguments provided for tool: ${name}`,
             },
           ],
@@ -225,39 +231,73 @@ class NextMCPServer {
 
       try {
         switch (name) {
-          case 'scaffold_project':
-            return await this.scaffoldProject(args.config as ProjectConfig, args.targetPath as string);
-          case 'create_directory_structure':
-            return await this.createDirectoryStructure(args.projectPath as string, args.config as ProjectConfig);
-          case 'generate_package_json':
-            return await this.generatePackageJson(args.projectPath as string, args.config as ProjectConfig);
-          case 'generate_dockerfile':
-            return await this.generateDockerfile(args.projectPath as string, args.config as ProjectConfig);
-          case 'generate_nextjs_config':
-            return await this.generateNextJSConfig(args.projectPath as string, args.config as ProjectConfig);
-          case 'generate_base_components':
-            return await this.generateBaseComponents(args.projectPath as string, args.config as ProjectConfig);
-          case 'setup_database':
-            return await this.setupDatabase(args.projectPath as string, args.config as ProjectConfig);
-          case 'setup_authentication':
-            return await this.setupAuthentication(args.projectPath as string, args.config as ProjectConfig);
-          case 'generate_ci_cd':
-            return await this.generateCICD(args.projectPath as string, args.config as ProjectConfig);
-          case 'install_dependencies':
-            return await this.installDependencies(args.projectPath as string, args.packageManager as string);
-          case 'validate_project':
+          case "scaffold_project":
+            return await this.scaffoldProject(
+              args.config as ProjectConfig,
+              args.targetPath as string
+            );
+          case "create_directory_structure":
+            return await this.createDirectoryStructure(
+              args.projectPath as string,
+              args.config as ProjectConfig
+            );
+          case "generate_package_json":
+            return await this.updatePackageJson(
+              args.projectPath as string,
+              args.config as ProjectConfig
+            );
+          case "generate_dockerfile":
+            return await this.generateDockerfile(
+              args.projectPath as string,
+              args.config as ProjectConfig
+            );
+          case "generate_nextjs_config":
+            return await this.generateNextJSConfig(
+              args.projectPath as string,
+              args.config as ProjectConfig
+            );
+          case "generate_base_components":
+            return await this.generateBaseComponents(
+              args.projectPath as string,
+              args.config as ProjectConfig
+            );
+          case "setup_database":
+            return await this.setupDatabase(
+              args.projectPath as string,
+              args.config as ProjectConfig
+            );
+          case "setup_authentication":
+            return await this.setupAuthentication(
+              args.projectPath as string,
+              args.config as ProjectConfig
+            );
+          case "generate_ci_cd":
+            return await this.generateCICD(
+              args.projectPath as string,
+              args.config as ProjectConfig
+            );
+          case "install_dependencies":
+            return await this.installDependencies(
+              args.projectPath as string,
+              args.packageManager as string
+            );
+          case "validate_project":
             return await this.validateProject(args.projectPath as string);
-          case 'generate_readme':
-            return await this.generateReadme(args.projectPath as string, args.config as ProjectConfig);
+          case "generate_readme":
+            return await this.generateReadme(
+              args.projectPath as string,
+              args.config as ProjectConfig
+            );
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
         return {
           content: [
             {
-              type: 'text',
+              type: "text",
               text: `Error executing ${name}: ${errorMessage}`,
             },
           ],
@@ -268,116 +308,115 @@ class NextMCPServer {
 
   private async scaffoldProject(config: ProjectConfig, targetPath: string) {
     const projectPath = path.join(targetPath, config.name);
-    
+
     try {
       // Build create-next-app command based on configuration
       const createCommand = this.buildCreateNextAppCommand(config, targetPath);
-      
+
       console.error(`Executing: ${createCommand}`);
-      
+
       // Run create-next-app
-      execSync(createCommand, { 
-        stdio: 'inherit',
-        cwd: targetPath
-      });
-      
+      execSync(createCommand, { stdio: "inherit", cwd: targetPath });
+
       // Verify the project was created
       await fs.access(projectPath);
-      
+
       return {
         content: [
           {
-            type: 'text',
+            type: "text",
             text: `✅ Successfully created Next.js project at ${projectPath}\nCommand executed: ${createCommand}`,
           },
         ],
       };
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
       return {
         content: [
           {
-            type: 'text',
-            text: `❌ Failed to create Next.js project: ${error.message}`,
+            type: "text",
+            text: `❌ Failed to create Next.js project: ${errorMessage}`,
           },
         ],
       };
     }
   }
 
-  private buildCreateNextAppCommand(config: ProjectConfig, targetPath: string): string {
-    const flags = [
-      'npx create-next-app@latest',
-      `./${config.name}`,
-    ];
+  private buildCreateNextAppCommand(
+    config: ProjectConfig,
+    targetPath: string
+  ): string {
+    const flags = ["npx create-next-app@latest", `./${config.name}`];
 
-    // Always include these flags based on our architecture
     if (config.architecture.typescript) {
-      flags.push('--ts');
+      flags.push("--ts");
     } else {
-      flags.push('--js');
+      flags.push("--js");
     }
 
-    // Styling framework
-    if (config.architecture.styling === 'tailwind') {
-      flags.push('--tailwind');
+    if (config.architecture.styling === "tailwind") {
+      flags.push("--tailwind");
     } else {
-      flags.push('--no-tailwind');
+      flags.push("--no-tailwind");
+    }
+
+    if (config.architecture.appRouter) {
+      flags.push("--app");
+    } else {
+      flags.push("--no-app");
     }
 
     // Always use ESLint
-    flags.push('--eslint');
-
-    // Always use App Router (it's the future)
-    if (config.architecture.appRouter) {
-      flags.push('--app');
-    } else {
-      flags.push('--no-app');
-    }
+    flags.push("--eslint");
 
     // Use src directory for better organization
-    flags.push('--src-dir');
+    flags.push("--src-dir");
 
     // Use Turbopack for faster development
-    flags.push('--turbopack');
+    flags.push("--turbopack");
 
     // Set import alias
     flags.push('--import-alias "@/*"');
 
     // Use pnpm as package manager
-    flags.push('--use-pnpm');
+    flags.push("--use-pnpm");
 
-    // Skip git init since we'll handle it separately
-    flags.push('--skip-git');
+    // We'll initialize git ourselves later
+    flags.push("--no-git");
 
-    return flags.join(' ');
+    return flags.join(" ");
   }
 
-  private async createDirectoryStructure(projectPath: string, config: ProjectConfig) {
+  private async createDirectoryStructure(
+    projectPath: string,
+    config: ProjectConfig
+  ) {
     // Additional directories that create-next-app doesn't create
     const additionalDirectories = [
-      'src/components/ui',
-      'src/components/forms',
-      'src/hooks',
-      'tests',
-      'docker',
-      '.github/workflows'
+      "src/components/ui",
+      "src/components/forms",
+      "src/lib",
+      "src/hooks",
+      "src/tests",
+      ".github/workflows",
     ];
 
     // Add stores directory if using external state management
-    if (config.architecture.stateManagement !== 'context') {
-      additionalDirectories.push('src/stores');
+    if (config.architecture.stateManagement !== "context") {
+      additionalDirectories.push("src/stores");
     }
 
     // Add database-related directories
-    if (config.architecture.database !== 'none') {
-      additionalDirectories.push('src/lib/db');
-      additionalDirectories.push('migrations');
+    if (config.architecture.database !== "none") {
+      additionalDirectories.push("src/lib/db");
     }
 
     // Add auth-related directories
-    if (config.architecture.auth !== 'none') {
-      additionalDirectories.push('src/lib/auth');
-      additionalDirectories.push('src/components/auth');
+    if (config.architecture.auth !== "none") {
+      additionalDirectories.push("src/lib/auth");
+      additionalDirectories.push("src/components/auth");
     }
 
     // Create the additional directories
@@ -392,53 +431,58 @@ class NextMCPServer {
 
     // Initialize git repository (since we skipped it in create-next-app)
     try {
-      execSync('git init', { cwd: projectPath, stdio: 'pipe' });
-      execSync('git add .', { cwd: projectPath, stdio: 'pipe' });
-      execSync('git commit -m "Initial commit from scaffolding"', { 
-        cwd: projectPath, 
-        stdio: 'pipe' 
+      execSync("git init", { cwd: projectPath, stdio: "pipe" });
+      execSync("git add .", { cwd: projectPath, stdio: "pipe" });
+      execSync('git commit -m "chore: initial commit from scaffolding"', {
+        cwd: projectPath,
+        stdio: "pipe",
       });
     } catch (error) {
-      console.error('Git initialization failed, continuing without git');
+      console.error("Git initialization failed, continuing without git");
     }
 
     return {
       content: [
         {
-          type: 'text',
+          type: "text",
           text: `✅ Created ${additionalDirectories.length} additional directories and initialized git repository`,
         },
       ],
     };
   }
 
-  private async generatePackageJson(projectPath: string, config: ProjectConfig) {
+  private async updatePackageJson(projectPath: string, config: ProjectConfig) {
     try {
       // Read the existing package.json created by create-next-app
-      const packageJsonPath = path.join(projectPath, 'package.json');
+      const packageJsonPath = path.join(projectPath, "package.json");
       const existingPackageJson = JSON.parse(
-        await fs.readFile(packageJsonPath, 'utf-8')
+        await fs.readFile(packageJsonPath, "utf-8")
       );
 
       // Add additional scripts
       const additionalScripts = {
-        'type-check': 'tsc --noEmit',
-        'lint:fix': 'next lint --fix',
-        'docker:build': `docker build -t ${config.name} .`,
-        'docker:run': `docker run -p 3000:3000 ${config.name}`,
-        'docker:dev': 'docker-compose -f docker/docker-compose.yml up',
+        "type-check": "tsc --noEmit",
+        "lint:fix": "next lint --fix",
+        "docker:build": `docker build -t ${config.name} .`,
+        "docker:run": `docker run -p 3000:3000 ${config.name}`,
+        "docker:dev": "docker-compose -f docker-compose.yml up",
+        test: 'echo "No test command specified"',
+        "test:watch": 'echo "No test watch command specified"',
+        "test:ui": 'echo "No test UI command specified"',
+        "test:e2e": 'echo "No e2e test command specified"',
+        "test:e2e:ui": 'echo "No e2e test UI command specified"',
       };
 
-      if (config.architecture.testing === 'vitest') {
-        additionalScripts.test = 'vitest';
-        additionalScripts['test:watch'] = 'vitest --watch';
-        additionalScripts['test:ui'] = 'vitest --ui';
-      } else if (config.architecture.testing === 'jest') {
-        additionalScripts.test = 'jest';
-        additionalScripts['test:watch'] = 'jest --watch';
-      } else if (config.architecture.testing === 'playwright') {
-        additionalScripts['test:e2e'] = 'playwright test';
-        additionalScripts['test:e2e:ui'] = 'playwright test --ui';
+      if (config.architecture.testing === "vitest") {
+        additionalScripts.test = "vitest";
+        additionalScripts["test:watch"] = "vitest --watch";
+        additionalScripts["test:ui"] = "vitest --ui";
+      } else if (config.architecture.testing === "jest") {
+        additionalScripts.test = "jest";
+        additionalScripts["test:watch"] = "jest --watch";
+      } else if (config.architecture.testing === "playwright") {
+        additionalScripts["test:e2e"] = "playwright test";
+        additionalScripts["test:e2e:ui"] = "playwright test --ui";
       }
 
       // Merge scripts
@@ -452,69 +496,66 @@ class NextMCPServer {
       const additionalDevDeps: Record<string, string> = {};
 
       // State Management
-      if (config.architecture.stateManagement === 'zustand') {
-        additionalDeps.zustand = '^4.4.7';
-      } else if (config.architecture.stateManagement === 'redux') {
-        additionalDeps['@reduxjs/toolkit'] = '^2.0.1';
-        additionalDeps['react-redux'] = '^9.0.4';
-        additionalDevDeps['@types/react-redux'] = '^7.1.33';
+      if (config.architecture.stateManagement === "zustand") {
+        additionalDeps.zustand = "^5.0.8";
+      } else if (config.architecture.stateManagement === "redux") {
+        additionalDeps["@reduxjs/toolkit"] = "^2.5.0";
+        additionalDeps["react-redux"] = "^9.2.0";
+        additionalDevDeps["@types/react-redux"] = "^7.1.34";
       }
 
-      // Database
-      if (config.architecture.database === 'postgres') {
-        additionalDeps.pg = '^8.11.3';
-        additionalDeps['drizzle-orm'] = '^0.29.1';
-        additionalDevDeps['@types/pg'] = '^8.10.9';
-        additionalDevDeps['drizzle-kit'] = '^0.20.7';
-      } else if (config.architecture.database === 'mysql') {
-        additionalDeps.mysql2 = '^3.6.5';
-        additionalDeps['drizzle-orm'] = '^0.29.1';
-        additionalDevDeps['drizzle-kit'] = '^0.20.7';
-      } else if (config.architecture.database === 'mongodb') {
-        additionalDeps.mongodb = '^6.3.0';
-        additionalDeps.mongoose = '^8.0.3';
-        additionalDevDeps['@types/mongodb'] = '^4.0.7';
+      // Database + ORM
+      if (config.architecture.orm === "prisma") {
+        additionalDeps["@prisma/client"] = "^6.16.2";
+        additionalDevDeps.prisma = "^6.16.2";
+      } else if (config.architecture.orm === "drizzle") {
+        additionalDeps["drizzle-orm"] = "^0.44.5";
+        additionalDevDeps["drizzle-kit"] = "^0.31.5";
+      } else if (config.architecture.orm === "mongoose") {
+        additionalDeps.mongoose = "^8.18.2";
+      }
+
+      if (
+        config.architecture.database === "postgres" &&
+        config.architecture.orm === "none"
+      ) {
+        additionalDeps.pg = "^8.16.3";
+      } else if (config.architecture.database === "mysql") {
+        additionalDeps.mysql2 = "^3.15.1";
+      } else if (config.architecture.database === "mongodb") {
+        additionalDeps.mongodb = "^6.3.0";
       }
 
       // Authentication
-      if (config.architecture.auth === 'nextauth') {
-        additionalDeps['next-auth'] = '^4.24.5';
-      } else if (config.architecture.auth === 'clerk') {
-        additionalDeps['@clerk/nextjs'] = '^4.29.1';
-      } else if (config.architecture.auth === 'supabase') {
-        additionalDeps['@supabase/supabase-js'] = '^2.38.5';
-        additionalDeps['@supabase/ssr'] = '^0.0.10';
-      }
-
-      // Styling (if not Tailwind, since that's handled by create-next-app)
-      if (config.architecture.styling === 'styled-components') {
-        additionalDeps['styled-components'] = '^6.1.6';
-        additionalDevDeps['@types/styled-components'] = '^5.1.34';
-      } else if (config.architecture.styling === 'emotion') {
-        additionalDeps['@emotion/react'] = '^11.11.1';
-        additionalDeps['@emotion/styled'] = '^11.11.0';
-      }
+      // if (config.architecture.auth === 'nextauth') {
+      //   additionalDeps['next-auth'] = '^4.24.5';
+      // } else if (config.architecture.auth === 'clerk') {
+      //   additionalDeps['@clerk/nextjs'] = '^4.29.1';
+      // } else if (config.architecture.auth === 'supabase') {
+      //   additionalDeps['@supabase/supabase-js'] = '^2.38.5';
+      //   additionalDeps['@supabase/ssr'] = '^0.0.10';
+      // }
 
       // Testing
-      if (config.architecture.testing === 'vitest') {
-        additionalDevDeps.vitest = '^1.0.4';
-        additionalDevDeps['@vitejs/plugin-react'] = '^4.2.1';
-        additionalDevDeps['@testing-library/react'] = '^14.1.2';
-        additionalDevDeps['@testing-library/jest-dom'] = '^6.1.6';
-        additionalDevDeps.jsdom = '^23.0.1';
-      } else if (config.architecture.testing === 'jest') {
-        additionalDevDeps.jest = '^29.7.0';
-        additionalDevDeps['jest-environment-jsdom'] = '^29.7.0';
-        additionalDevDeps['@testing-library/react'] = '^14.1.2';
-        additionalDevDeps['@testing-library/jest-dom'] = '^6.1.6';
-      } else if (config.architecture.testing === 'playwright') {
-        additionalDevDeps['@playwright/test'] = '^1.40.1';
+      if (config.architecture.testing === "vitest") {
+        additionalDevDeps.vitest = "^1.0.4";
+        additionalDevDeps["@vitejs/plugin-react"] = "^4.2.1";
+        additionalDevDeps["@testing-library/react"] = "^14.1.2";
+        additionalDevDeps["@testing-library/jest-dom"] = "^6.1.6";
+        additionalDevDeps.jsdom = "^23.0.1";
+      } else if (config.architecture.testing === "jest") {
+        additionalDevDeps.jest = "^29.7.0";
+        additionalDevDeps["jest-environment-jsdom"] = "^29.7.0";
+        additionalDevDeps["@testing-library/react"] = "^14.1.2";
+        additionalDevDeps["@testing-library/jest-dom"] = "^6.1.6";
+      } else if (config.architecture.testing === "playwright") {
+        additionalDevDeps["@playwright/test"] = "^1.40.1";
       }
 
       // Additional utility packages
-      additionalDeps.clsx = '^2.0.0';
-      additionalDeps['class-variance-authority'] = '^0.7.0';
-      additionalDeps.lucide-react = '^0.300.0';
+      // additionalDeps.clsx = '^2.0.0';
+      // additionalDeps['class-variance-authority'] = '^0.7.0';
+      // additionalDeps.lucide-react = '^0.300.0';
 
       // Merge dependencies
       existingPackageJson.dependencies = {
@@ -545,17 +586,19 @@ class NextMCPServer {
       return {
         content: [
           {
-            type: 'text',
+            type: "text",
             text: `✅ Updated package.json with:\n- ${addedDepsCount} additional dependencies\n- ${addedDevDepsCount} additional dev dependencies\n- ${addedScriptsCount} additional scripts`,
           },
         ],
       };
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       return {
         content: [
           {
-            type: 'text',
-            text: `❌ Failed to update package.json: ${error.message}`,
+            type: "text",
+            text: `❌ Failed to update package.json: ${errorMessage}`,
           },
         ],
       };
@@ -628,10 +671,16 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-    ${config.architecture.database !== 'none' ? `depends_on:
-      - db` : ''}
+    ${
+      config.architecture.database !== "none"
+        ? `depends_on:
+      - db`
+        : ""
+    }
 
-${config.architecture.database === 'postgres' ? `  db:
+${
+  config.architecture.database === "postgres"
+    ? `  db:
     image: postgres:15-alpine
     environment:
       POSTGRES_DB: ${config.name}
@@ -643,23 +692,31 @@ ${config.architecture.database === 'postgres' ? `  db:
       - postgres_data:/var/lib/postgresql/data
 
 volumes:
-  postgres_data:` : ''}
+  postgres_data:`
+    : ""
+}
 `;
 
-    await fs.writeFile(path.join(projectPath, 'docker/Dockerfile'), dockerfile);
-    await fs.writeFile(path.join(projectPath, 'docker/docker-compose.yml'), dockerCompose);
+    await fs.writeFile(path.join(projectPath, "docker/Dockerfile"), dockerfile);
+    await fs.writeFile(
+      path.join(projectPath, "docker/docker-compose.yml"),
+      dockerCompose
+    );
 
     return {
       content: [
         {
-          type: 'text',
-          text: 'Generated Dockerfile and docker-compose.yml',
+          type: "text",
+          text: "Generated Dockerfile and docker-compose.yml",
         },
       ],
     };
   }
 
-  private async generateNextJSConfig(projectPath: string, config: ProjectConfig) {
+  private async generateNextJSConfig(
+    projectPath: string,
+    config: ProjectConfig
+  ) {
     const nextConfig = `/** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
@@ -677,10 +734,10 @@ const nextConfig = {
 module.exports = nextConfig
 `;
 
-    let tailwindConfig = '';
-    let postcssConfig = '';
+    let tailwindConfig = "";
+    let postcssConfig = "";
 
-    if (config.architecture.styling === 'tailwind') {
+    if (config.architecture.styling === "tailwind") {
       tailwindConfig = `/** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
@@ -740,92 +797,117 @@ module.exports = {
 }
 `;
 
-    await fs.writeFile(path.join(projectPath, 'next.config.js'), nextConfig);
-    await fs.writeFile(path.join(projectPath, 'tsconfig.json'), tsConfig);
-    
-    if (config.architecture.styling === 'tailwind') {
-      await fs.writeFile(path.join(projectPath, 'tailwind.config.js'), tailwindConfig);
-      await fs.writeFile(path.join(projectPath, 'postcss.config.js'), postcssConfig);
+    await fs.writeFile(path.join(projectPath, "next.config.js"), nextConfig);
+    await fs.writeFile(path.join(projectPath, "tsconfig.json"), tsConfig);
+
+    if (config.architecture.styling === "tailwind") {
+      await fs.writeFile(
+        path.join(projectPath, "tailwind.config.js"),
+        tailwindConfig
+      );
+      await fs.writeFile(
+        path.join(projectPath, "postcss.config.js"),
+        postcssConfig
+      );
     }
 
     return {
       content: [
         {
-          type: 'text',
-          text: 'Generated Next.js configuration files',
+          type: "text",
+          text: "Generated Next.js configuration files",
         },
       ],
     };
   }
 
-  private async generateBaseComponents(projectPath: string, config: ProjectConfig) {
+  private async generateBaseComponents(
+    projectPath: string,
+    config: ProjectConfig
+  ) {
     try {
       // Update the existing page.tsx with our custom content
       const pageTsx = `export default function Home() {
   return (
-    <main${config.architecture.styling === 'tailwind' ? ' className="min-h-screen flex flex-col items-center justify-center p-8"' : ''}>
-      <div${config.architecture.styling === 'tailwind' ? ' className="max-w-4xl mx-auto text-center"' : ''}>
-        <h1${config.architecture.styling === 'tailwind' ? ' className="text-6xl font-bold mb-6 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent"' : ''}>
+    <main${config.architecture.styling === "tailwind" ? ' className="min-h-screen flex flex-col items-center justify-center p-8"' : ""}>
+      <div${config.architecture.styling === "tailwind" ? ' className="max-w-4xl mx-auto text-center"' : ""}>
+        <h1${config.architecture.styling === "tailwind" ? ' className="text-6xl font-bold mb-6 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent"' : ""}>
           Welcome to ${config.name}
         </h1>
-        <p${config.architecture.styling === 'tailwind' ? ' className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto"' : ''}>
-          ${config.description || 'Your Next.js application is ready! Built with modern tools and best practices.'}
+        <p${config.architecture.styling === "tailwind" ? ' className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto"' : ""}>
+          ${config.description || "Your Next.js application is ready! Built with modern tools and best practices."}
         </p>
         
-        <div${config.architecture.styling === 'tailwind' ? ' className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-12"' : ''}>
-          <div${config.architecture.styling === 'tailwind' ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ''}>
-            <h3${config.architecture.styling === 'tailwind' ? ' className="text-lg font-semibold mb-2"' : ''}>🚀 Next.js 15</h3>
-            <p${config.architecture.styling === 'tailwind' ? ' className="text-gray-600"' : ''}>
+        <div${config.architecture.styling === "tailwind" ? ' className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-12"' : ""}>
+          <div${config.architecture.styling === "tailwind" ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ""}>
+            <h3${config.architecture.styling === "tailwind" ? ' className="text-lg font-semibold mb-2"' : ""}>🚀 Next.js 15</h3>
+            <p${config.architecture.styling === "tailwind" ? ' className="text-gray-600"' : ""}>
               Built with the latest Next.js features including App Router and Turbopack.
             </p>
           </div>
           
-          ${config.architecture.styling === 'tailwind' ? `<div className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow">
+          ${
+            config.architecture.styling === "tailwind"
+              ? `<div className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow">
             <h3 className="text-lg font-semibold mb-2">🎨 Tailwind CSS</h3>
             <p className="text-gray-600">
               Utility-first CSS framework for rapid UI development.
             </p>
-          </div>` : ''}
+          </div>`
+              : ""
+          }
           
-          ${config.architecture.typescript ? `<div${config.architecture.styling === 'tailwind' ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ''}>
-            <h3${config.architecture.styling === 'tailwind' ? ' className="text-lg font-semibold mb-2"' : ''}>📘 TypeScript</h3>
-            <p${config.architecture.styling === 'tailwind' ? ' className="text-gray-600"' : ''}>
+          ${
+            config.architecture.typescript
+              ? `<div${config.architecture.styling === "tailwind" ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ""}>
+            <h3${config.architecture.styling === "tailwind" ? ' className="text-lg font-semibold mb-2"' : ""}>📘 TypeScript</h3>
+            <p${config.architecture.styling === "tailwind" ? ' className="text-gray-600"' : ""}>
               Type-safe development with excellent IDE support.
             </p>
-          </div>` : ''}
+          </div>`
+              : ""
+          }
           
-          ${config.architecture.database !== 'none' ? `<div${config.architecture.styling === 'tailwind' ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ''}>
-            <h3${config.architecture.styling === 'tailwind' ? ' className="text-lg font-semibold mb-2"' : ''}>🗄️ ${config.architecture.database.charAt(0).toUpperCase() + config.architecture.database.slice(1)}</h3>
-            <p${config.architecture.styling === 'tailwind' ? ' className="text-gray-600"' : ''}>
+          ${
+            config.architecture.database !== "none"
+              ? `<div${config.architecture.styling === "tailwind" ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ""}>
+            <h3${config.architecture.styling === "tailwind" ? ' className="text-lg font-semibold mb-2"' : ""}>🗄️ ${config.architecture.database.charAt(0).toUpperCase() + config.architecture.database.slice(1)}</h3>
+            <p${config.architecture.styling === "tailwind" ? ' className="text-gray-600"' : ""}>
               Database integration ready for your data needs.
             </p>
-          </div>` : ''}
+          </div>`
+              : ""
+          }
           
-          ${config.architecture.auth !== 'none' ? `<div${config.architecture.styling === 'tailwind' ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ''}>
-            <h3${config.architecture.styling === 'tailwind' ? ' className="text-lg font-semibold mb-2"' : ''}>🔐 Authentication</h3>
-            <p${config.architecture.styling === 'tailwind' ? ' className="text-gray-600"' : ''}>
+          ${
+            config.architecture.auth !== "none"
+              ? `<div${config.architecture.styling === "tailwind" ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ""}>
+            <h3${config.architecture.styling === "tailwind" ? ' className="text-lg font-semibold mb-2"' : ""}>🔐 Authentication</h3>
+            <p${config.architecture.styling === "tailwind" ? ' className="text-gray-600"' : ""}>
               Secure authentication with ${config.architecture.auth}.
             </p>
-          </div>` : ''}
+          </div>`
+              : ""
+          }
           
-          <div${config.architecture.styling === 'tailwind' ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ''}>
-            <h3${config.architecture.styling === 'tailwind' ? ' className="text-lg font-semibold mb-2"' : ''}>🐳 Docker Ready</h3>
-            <p${config.architecture.styling === 'tailwind' ? ' className="text-gray-600"' : ''}>
+          <div${config.architecture.styling === "tailwind" ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ""}>
+            <h3${config.architecture.styling === "tailwind" ? ' className="text-lg font-semibold mb-2"' : ""}>🐳 Docker Ready</h3>
+            <p${config.architecture.styling === "tailwind" ? ' className="text-gray-600"' : ""}>
               Containerized for easy deployment to any cloud platform.
             </p>
           </div>
         </div>
         
-        <div${config.architecture.styling === 'tailwind' ? ' className="mt-12 flex flex-col sm:flex-row gap-4 justify-center"' : ''}>
+        <div${config.architecture.styling === "tailwind" ? ' className="mt-12 flex flex-col sm:flex-row gap-4 justify-center"' : ""}>
           <a 
-            href="/api/health"${config.architecture.styling === 'tailwind' ? ' className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"' : ''}
+            href="/api/health"${config.architecture.styling === "tailwind" ? ' className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"' : ""}
           >
             Test API Route
           </a>
           <a 
             href="https://nextjs.org/docs"
             target="_blank"
-            rel="noopener noreferrer"${config.architecture.styling === 'tailwind' ? ' className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"' : ''}
+            rel="noopener noreferrer"${config.architecture.styling === "tailwind" ? ' className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"' : ""}
           >
             Read the Docs
           </a>
@@ -856,8 +938,8 @@ export async function GET() {
 `;
 
       // Create some basic UI components if using Tailwind
-      let buttonComponent = '';
-      if (config.architecture.styling === 'tailwind') {
+      let buttonComponent = "";
+      if (config.architecture.styling === "tailwind") {
         buttonComponent = `import { type ButtonHTMLAttributes, forwardRef } from 'react';
 import { clsx } from 'clsx';
 
@@ -900,18 +982,24 @@ export { Button };
       }
 
       // Write the files
-      await fs.writeFile(path.join(projectPath, 'src/app/page.tsx'), pageTsx);
-      await fs.writeFile(path.join(projectPath, 'src/app/api/health/route.ts'), healthApiRoute);
-      
+      await fs.writeFile(path.join(projectPath, "src/app/page.tsx"), pageTsx);
+      await fs.writeFile(
+        path.join(projectPath, "src/app/api/health/route.ts"),
+        healthApiRoute
+      );
+
       if (buttonComponent) {
-        await fs.writeFile(path.join(projectPath, 'src/components/ui/button.tsx'), buttonComponent);
+        await fs.writeFile(
+          path.join(projectPath, "src/components/ui/button.tsx"),
+          buttonComponent
+        );
       }
 
       return {
         content: [
           {
-            type: 'text',
-            text: `✅ Updated base components:\n- Enhanced home page with feature showcase\n- Added health check API route\n${buttonComponent ? '- Created reusable Button component\n' : ''}`,
+            type: "text",
+            text: `✅ Updated base components:\n- Enhanced home page with feature showcase\n- Added health check API route\n${buttonComponent ? "- Created reusable Button component\n" : ""}`,
           },
         ],
       };
@@ -919,7 +1007,7 @@ export { Button };
       return {
         content: [
           {
-            type: 'text',
+            type: "text",
             text: `❌ Failed to generate base components: ${error.message}`,
           },
         ],
@@ -928,12 +1016,12 @@ export { Button };
   }
 
   private async setupDatabase(projectPath: string, config: ProjectConfig) {
-    if (config.architecture.database === 'none') {
+    if (config.architecture.database === "none") {
       return {
         content: [
           {
-            type: 'text',
-            text: 'No database configuration needed',
+            type: "text",
+            text: "No database configuration needed",
           },
         ],
       };
@@ -950,25 +1038,28 @@ export const dbConfig = {
 }
 `;
 
-    await fs.writeFile(path.join(projectPath, 'src/lib/db.ts'), dbConfig);
+    await fs.writeFile(path.join(projectPath, "src/lib/db.ts"), dbConfig);
 
     return {
       content: [
         {
-          type: 'text',
+          type: "text",
           text: `Generated ${config.architecture.database} database configuration`,
         },
       ],
     };
   }
 
-  private async setupAuthentication(projectPath: string, config: ProjectConfig) {
-    if (config.architecture.auth === 'none') {
+  private async setupAuthentication(
+    projectPath: string,
+    config: ProjectConfig
+  ) {
+    if (config.architecture.auth === "none") {
       return {
         content: [
           {
-            type: 'text',
-            text: 'No authentication configuration needed',
+            type: "text",
+            text: "No authentication configuration needed",
           },
         ],
       };
@@ -986,12 +1077,12 @@ export const authConfig = {
 }
 `;
 
-    await fs.writeFile(path.join(projectPath, 'src/lib/auth.ts'), authConfig);
+    await fs.writeFile(path.join(projectPath, "src/lib/auth.ts"), authConfig);
 
     return {
       content: [
         {
-          type: 'text',
+          type: "text",
           text: `Generated ${config.architecture.auth} authentication configuration`,
         },
       ],
@@ -1032,7 +1123,7 @@ jobs:
     - name: Build application
       run: pnpm build
     
-    ${config.architecture.testing !== 'jest' ? '- name: Run tests\n      run: pnpm test' : ''}
+    ${config.architecture.testing !== "jest" ? "- name: Run tests\n      run: pnpm test" : ""}
   
   deploy:
     needs: test
@@ -1046,29 +1137,35 @@ jobs:
       run: echo "Deploy to ${config.deployment.platform}"
 `;
 
-    await fs.writeFile(path.join(projectPath, '.github/workflows/ci.yml'), ciWorkflow);
+    await fs.writeFile(
+      path.join(projectPath, ".github/workflows/ci.yml"),
+      ciWorkflow
+    );
 
     return {
       content: [
         {
-          type: 'text',
-          text: 'Generated CI/CD pipeline configuration',
+          type: "text",
+          text: "Generated CI/CD pipeline configuration",
         },
       ],
     };
   }
 
-  private async installDependencies(projectPath: string, packageManager = 'pnpm') {
+  private async installDependencies(
+    projectPath: string,
+    packageManager = "pnpm"
+  ) {
     try {
-      execSync(`${packageManager} install`, { 
+      execSync(`${packageManager} install`, {
         cwd: projectPath,
-        stdio: 'pipe'
+        stdio: "pipe",
       });
 
       return {
         content: [
           {
-            type: 'text',
+            type: "text",
             text: `Successfully installed dependencies using ${packageManager}`,
           },
         ],
@@ -1077,7 +1174,7 @@ jobs:
       return {
         content: [
           {
-            type: 'text',
+            type: "text",
             text: `Failed to install dependencies: ${error.message}`,
           },
         ],
@@ -1090,30 +1187,32 @@ jobs:
 
     try {
       // Check if package.json exists
-      await fs.access(path.join(projectPath, 'package.json'));
-      validationResults.push('✅ package.json exists');
+      await fs.access(path.join(projectPath, "package.json"));
+      validationResults.push("✅ package.json exists");
 
       // Check if Next.js config exists
-      await fs.access(path.join(projectPath, 'next.config.js'));
-      validationResults.push('✅ next.config.js exists');
+      await fs.access(path.join(projectPath, "next.config.js"));
+      validationResults.push("✅ next.config.js exists");
 
       // Check if TypeScript config exists
-      await fs.access(path.join(projectPath, 'tsconfig.json'));
-      validationResults.push('✅ tsconfig.json exists');
+      await fs.access(path.join(projectPath, "tsconfig.json"));
+      validationResults.push("✅ tsconfig.json exists");
 
       // Try to build the project
-      execSync('npm run build', { cwd: projectPath, stdio: 'pipe' });
-      validationResults.push('✅ Project builds successfully');
-
+      execSync("npm run build", { cwd: projectPath, stdio: "pipe" });
+      validationResults.push("✅ Project builds successfully");
     } catch (error) {
-      validationResults.push(`❌ Validation failed: ${error.message}`);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
+      validationResults.push(`❌ Validation failed: ${errorMessage}`);
     }
 
     return {
       content: [
         {
-          type: 'text',
-          text: validationResults.join('\n'),
+          type: "text",
+          text: validationResults.join("\n"),
         },
       ],
     };
@@ -1122,16 +1221,16 @@ jobs:
   private async generateReadme(projectPath: string, config: ProjectConfig) {
     const readme = `# ${config.name}
 
-${config.description || 'A Next.js application'}
+${config.description || "A Next.js application"}
 
 ## Features
 
-${config.features.map(feature => `- ${feature}`).join('\n')}
+${config.features.map((feature) => `- ${feature}`).join("\n")}
 
 ## Tech Stack
 
-- **Framework**: Next.js ${config.architecture.appRouter ? '(App Router)' : '(Pages Router)'}
-- **Language**: ${config.architecture.typescript ? 'TypeScript' : 'JavaScript'}
+- **Framework**: Next.js ${config.architecture.appRouter ? "(App Router)" : "(Pages Router)"}
+- **Language**: ${config.architecture.typescript ? "TypeScript" : "JavaScript"}
 - **Styling**: ${config.architecture.styling}
 - **Database**: ${config.architecture.database}
 - **Authentication**: ${config.architecture.auth}
@@ -1185,9 +1284,11 @@ docker-compose up
 
 This project is configured for deployment on ${config.deployment.platform}.
 
-${config.deployment.platform === 'vercel' ? 
-  'The easiest way to deploy is to use the [Vercel Platform](https://vercel.com/new).' :
-  `Deploy using your ${config.deployment.platform} workflow.`}
+${
+  config.deployment.platform === "vercel"
+    ? "The easiest way to deploy is to use the [Vercel Platform](https://vercel.com/new)."
+    : `Deploy using your ${config.deployment.platform} workflow.`
+}
 
 ## Scripts
 
@@ -1196,7 +1297,7 @@ ${config.deployment.platform === 'vercel' ?
 - \`pnpm start\` - Start production server
 - \`pnpm lint\` - Run ESLint
 - \`pnpm type-check\` - Run TypeScript type checking
-${config.architecture.testing !== 'jest' ? '- `pnpm test` - Run tests' : ''}
+${config.architecture.testing !== "jest" ? "- `pnpm test` - Run tests" : ""}
 
 ## Learn More
 
@@ -1204,13 +1305,13 @@ ${config.architecture.testing !== 'jest' ? '- `pnpm test` - Run tests' : ''}
 - [Learn Next.js](https://nextjs.org/learn)
 `;
 
-    await fs.writeFile(path.join(projectPath, 'README.md'), readme);
+    await fs.writeFile(path.join(projectPath, "README.md"), readme);
 
     return {
       content: [
         {
-          type: 'text',
-          text: 'Generated comprehensive README.md',
+          type: "text",
+          text: "Generated comprehensive README.md",
         },
       ],
     };
@@ -1219,7 +1320,7 @@ ${config.architecture.testing !== 'jest' ? '- `pnpm test` - Run tests' : ''}
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('Next.js Scaffolding MCP server running on stdio');
+    console.error("Next.js Scaffolding MCP server running on stdio");
   }
 }
 
