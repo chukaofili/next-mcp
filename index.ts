@@ -25,8 +25,7 @@ interface ProjectConfig {
     typescript: boolean;
     database: "none" | "postgres" | "mysql" | "mongodb";
     orm: "none" | "prisma" | "drizzle" | "mongoose";
-    auth: "none" | "better-auth" | "clerk" | "supabase";
-    styling: "tailwind";
+    auth: "none" | "better-auth";
     uiLibrary: "none" | "shadcn";
     stateManagement: "zustand" | "redux" | "context";
     testing: "jest" | "vitest" | "playwright";
@@ -356,12 +355,6 @@ class NextMCPServer {
       flags.push("--js");
     }
 
-    if (config.architecture.styling === "tailwind") {
-      flags.push("--tailwind");
-    } else {
-      flags.push("--no-tailwind");
-    }
-
     if (config.architecture.appRouter) {
       flags.push("--app");
     } else {
@@ -370,6 +363,9 @@ class NextMCPServer {
 
     // Always use ESLint
     flags.push("--eslint");
+
+    //Always use Tailwind CSS for styling
+    flags.push("--tailwind");
 
     // Use src directory for better organization
     flags.push("--src-dir");
@@ -527,14 +523,9 @@ class NextMCPServer {
       }
 
       // Authentication
-      // if (config.architecture.auth === 'nextauth') {
-      //   additionalDeps['next-auth'] = '^4.24.5';
-      // } else if (config.architecture.auth === 'clerk') {
-      //   additionalDeps['@clerk/nextjs'] = '^4.29.1';
-      // } else if (config.architecture.auth === 'supabase') {
-      //   additionalDeps['@supabase/supabase-js'] = '^2.38.5';
-      //   additionalDeps['@supabase/ssr'] = '^0.0.10';
-      // }
+      if (config.architecture.auth === "better-auth") {
+        additionalDeps["better-auth"] = "^1.3.22";
+      }
 
       // Testing
       if (config.architecture.testing === "vitest") {
@@ -551,11 +542,6 @@ class NextMCPServer {
       } else if (config.architecture.testing === "playwright") {
         additionalDevDeps["@playwright/test"] = "^1.40.1";
       }
-
-      // Additional utility packages
-      // additionalDeps.clsx = '^2.0.0';
-      // additionalDeps['class-variance-authority'] = '^0.7.0';
-      // additionalDeps.lucide-react = '^0.300.0';
 
       // Merge dependencies
       existingPackageJson.dependencies = {
@@ -606,82 +592,32 @@ class NextMCPServer {
   }
 
   private async generateDockerfile(projectPath: string, config: ProjectConfig) {
-    const dockerfile = `# Use the official Node.js 20 image
-FROM node:20-alpine AS base
+    try {
+      // Read Dockerfile template
+      const dockerfileTemplate = await fs.readFile(
+        path.join(__dirname, "templates", "Dockerfile"),
+        "utf-8"
+      );
 
-# Install dependencies only when needed
-FROM base AS deps
-RUN apk add --no-cache libc6-compat
-WORKDIR /app
+      // Read docker-compose template
+      const dockerComposeTemplate = await fs.readFile(
+        path.join(__dirname, "templates", "docker-compose.yml"),
+        "utf-8"
+      );
 
-# Install dependencies based on the preferred package manager
-COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* ./
-RUN \\
-  if [ -f yarn.lock ]; then yarn --frozen-lockfile; \\
-  elif [ -f package-lock.json ]; then npm ci; \\
-  elif [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm i --frozen-lockfile; \\
-  else echo "Lockfile not found." && exit 1; \\
-  fi
+      // Generate database-specific sections
+      let databaseDependsOn = "";
+      let databaseService = "";
+      let volumesSection = "";
 
-# Rebuild the source code only when needed
-FROM base AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+      if (config.architecture.database !== "none") {
+        databaseDependsOn = `    depends_on:
+      - db`;
 
-# Build the application
-RUN \\
-  if [ -f yarn.lock ]; then yarn build; \\
-  elif [ -f package-lock.json ]; then npm run build; \\
-  elif [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm build; \\
-  else echo "Lockfile not found." && exit 1; \\
-  fi
-
-# Production image, copy all the files and run next
-FROM base AS runner
-WORKDIR /app
-
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
-
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
-
-EXPOSE 3000
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-
-CMD ["node", "server.js"]
-`;
-
-    const dockerCompose = `version: '3.8'
-
-services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=production
-    ${
-      config.architecture.database !== "none"
-        ? `depends_on:
-      - db`
-        : ""
-    }
-
-${
-  config.architecture.database === "postgres"
-    ? `  db:
-    image: postgres:15-alpine
+        switch (config.architecture.database) {
+          case "postgres":
+            databaseService = `  db:
+    image: postgres:17-alpine
     environment:
       POSTGRES_DB: ${config.name}
       POSTGRES_USER: postgres
@@ -689,136 +625,123 @@ ${
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data`;
+            volumesSection = `volumes:
+  postgres_data:`;
+            break;
 
-volumes:
-  postgres_data:`
-    : ""
-}
-`;
+          case "mysql":
+            databaseService = `  db:
+    image: mysql:9
+    environment:
+      MYSQL_ROOT_PASSWORD: mysql
+      MYSQL_DATABASE: ${config.name}
+      MYSQL_USER: mysql
+      MYSQL_PASSWORD: mysql
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql`;
+            volumesSection = `volumes:
+  mysql_data:`;
+            break;
 
-    await fs.writeFile(path.join(projectPath, "docker/Dockerfile"), dockerfile);
-    await fs.writeFile(
-      path.join(projectPath, "docker/docker-compose.yml"),
-      dockerCompose
-    );
+          case "mongodb":
+            databaseService = `  db:
+    image: mongo:6.0
+    environment:
+      MONGO_INITDB_DATABASE: ${config.name}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db`;
+            volumesSection = `volumes:
+  mongodb_data:`;
+            break;
+        }
+      }
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Generated Dockerfile and docker-compose.yml",
-        },
-      ],
-    };
+      // Replace template placeholders
+      const dockerCompose = dockerComposeTemplate
+        .replace("__DATABASE_DEPENDS_ON__", databaseDependsOn)
+        .replace("__DATABASE_SERVICE__", databaseService)
+        .replace("__VOLUMES_SECTION__", volumesSection);
+
+      await fs.writeFile(
+        path.join(projectPath, "Dockerfile"),
+        dockerfileTemplate
+      );
+      await fs.writeFile(
+        path.join(projectPath, "docker-compose.yml"),
+        dockerCompose
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✅ Generated Docker configuration:\n- Dockerfile (from template)\n- docker-compose.yml with ${config.architecture.database} database setup`,
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `❌ Failed to generate Docker configuration: ${errorMessage}`,
+          },
+        ],
+      };
+    }
   }
 
   private async generateNextJSConfig(
     projectPath: string,
     config: ProjectConfig
   ) {
-    const nextConfig = `/** @type {import('next').NextConfig} */
-const nextConfig = {
-  experimental: {
-    appDir: true,
-  },
-  output: 'standalone',
-  images: {
-    domains: ['localhost'],
-  },
-  env: {
-    CUSTOM_KEY: process.env.CUSTOM_KEY,
-  },
-}
+    try {
+      // Read template files
+      const nextConfigTemplate = await fs.readFile(
+        path.join(__dirname, "templates", "next.config.ts"),
+        "utf-8"
+      );
 
-module.exports = nextConfig
-`;
+      // Write core configuration files
+      await fs.writeFile(
+        path.join(projectPath, "next.config.ts"),
+        nextConfigTemplate
+      );
 
-    let tailwindConfig = "";
-    let postcssConfig = "";
+      const filesCreated = ["next.config.ts"];
 
-    if (config.architecture.styling === "tailwind") {
-      tailwindConfig = `/** @type {import('tailwindcss').Config} */
-module.exports = {
-  content: [
-    './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
-    './src/components/**/*.{js,ts,jsx,tsx,mdx}',
-    './src/app/**/*.{js,ts,jsx,tsx,mdx}',
-  ],
-  theme: {
-    extend: {
-      colors: {
-        background: 'var(--background)',
-        foreground: 'var(--foreground)',
-      },
-    },
-  },
-  plugins: [],
-}
-`;
-
-      postcssConfig = `module.exports = {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-}
-`;
-    }
-
-    const tsConfig = `{
-  "compilerOptions": {
-    "target": "es5",
-    "lib": ["dom", "dom.iterable", "es6"],
-    "allowJs": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "forceConsistentCasingInFileNames": true,
-    "noEmit": true,
-    "esModuleInterop": true,
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "jsx": "preserve",
-    "incremental": true,
-    "plugins": [
-      {
-        "name": "next"
+      // Handle Tailwind CSS configuration if specified
+      if (config.architecture.uiLibrary === "shadcn") {
+        // ADD SHdcn
       }
-    ],
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"]
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✅ Generated Next.js configuration files (from templates):\n${filesCreated.map((f) => `- ${f}`).join("\n")}`,
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `❌ Failed to generate Next.js configuration: ${errorMessage}`,
+          },
+        ],
+      };
     }
-  },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
-}
-`;
-
-    await fs.writeFile(path.join(projectPath, "next.config.js"), nextConfig);
-    await fs.writeFile(path.join(projectPath, "tsconfig.json"), tsConfig);
-
-    if (config.architecture.styling === "tailwind") {
-      await fs.writeFile(
-        path.join(projectPath, "tailwind.config.js"),
-        tailwindConfig
-      );
-      await fs.writeFile(
-        path.join(projectPath, "postcss.config.js"),
-        postcssConfig
-      );
-    }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Generated Next.js configuration files",
-        },
-      ],
-    };
   }
 
   private async generateBaseComponents(
