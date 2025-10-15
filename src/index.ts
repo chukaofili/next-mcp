@@ -1,34 +1,49 @@
 #!/usr/bin/env node
+import { execSync } from 'node:child_process';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import { execSync } from "node:child_process";
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import { name, version } from "./package.json";
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import winston from 'winston';
+
+import details from '../package.json' with { type: 'json' };
+
+// Configure logger
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.json(),
+  transports: [new winston.transports.File({ filename: 'next-mcp.log' })],
+});
+
+// Add console transport in development
+if (process.env.NODE_ENV !== 'production') {
+  logger.add(
+    new winston.transports.Console({
+      format: winston.format.simple(),
+    })
+  );
+}
 
 interface ProjectConfig {
   name: string;
   description: string;
   features: string[];
   deployment: {
-    platform: "vercel" | "aws" | "gcp" | "azure";
+    platform: 'vercel' | 'aws' | 'gcp' | 'azure';
     containerRegistry?: string;
     domain?: string;
   };
   architecture: {
     appRouter: boolean;
     typescript: boolean;
-    database: "none" | "postgres" | "mysql" | "mongodb";
-    orm: "none" | "prisma" | "drizzle" | "mongoose";
-    auth: "none" | "better-auth";
-    uiLibrary: "none" | "shadcn";
-    stateManagement: "zustand" | "redux" | "context";
-    testing: "jest" | "vitest" | "playwright";
+    database: 'none' | 'postgres' | 'mysql' | 'mongodb';
+    orm: 'none' | 'prisma' | 'drizzle' | 'mongoose';
+    auth: 'none' | 'better-auth';
+    uiLibrary: 'none' | 'shadcn';
+    stateManagement: 'zustand' | 'redux' | 'context';
+    testing: 'jest' | 'vitest' | 'playwright';
   };
 }
 
@@ -38,8 +53,8 @@ class NextMCPServer {
   constructor() {
     this.server = new Server(
       {
-        name,
-        version,
+        name: details.name,
+        version: details.version,
       },
       {
         capabilities: {
@@ -55,160 +70,159 @@ class NextMCPServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
         {
-          name: "scaffold_project",
-          description:
-            "Create a new Next.js project with specified configuration",
+          name: 'scaffold_project',
+          description: 'Create a new Next.js project with specified configuration',
           inputSchema: {
-            type: "object",
+            type: 'object',
             properties: {
               config: {
-                type: "object",
+                type: 'object',
                 properties: {
-                  name: { type: "string" },
-                  description: { type: "string" },
-                  features: { type: "array", items: { type: "string" } },
-                  deployment: { type: "object" },
-                  architecture: { type: "object" },
+                  name: { type: 'string' },
+                  description: { type: 'string' },
+                  features: { type: 'array', items: { type: 'string' } },
+                  deployment: { type: 'object' },
+                  architecture: { type: 'object' },
                 },
-                required: ["name", "architecture"],
+                required: ['name', 'architecture'],
               },
               targetPath: {
-                type: "string",
-                description: "Target directory path",
+                type: 'string',
+                description: 'Target directory path',
               },
             },
-            required: ["config", "targetPath"],
+            required: ['config', 'targetPath'],
           },
         },
         {
-          name: "create_directory_structure",
-          description: "Create the base directory structure for the project",
+          name: 'create_directory_structure',
+          description: 'Create the base directory structure for the project',
           inputSchema: {
-            type: "object",
+            type: 'object',
             properties: {
-              projectPath: { type: "string" },
-              config: { type: "object" },
+              projectPath: { type: 'string' },
+              config: { type: 'object' },
             },
-            required: ["projectPath", "config"],
+            required: ['projectPath', 'config'],
           },
         },
         {
-          name: "generate_package_json",
-          description: "Generate package.json with appropriate dependencies",
+          name: 'generate_package_json',
+          description: 'Generate package.json with appropriate dependencies',
           inputSchema: {
-            type: "object",
+            type: 'object',
             properties: {
-              projectPath: { type: "string" },
-              config: { type: "object" },
+              projectPath: { type: 'string' },
+              config: { type: 'object' },
             },
-            required: ["projectPath", "config"],
+            required: ['projectPath', 'config'],
           },
         },
         {
-          name: "generate_dockerfile",
-          description: "Generate Dockerfile and docker-compose.yml",
+          name: 'generate_dockerfile',
+          description: 'Generate Dockerfile and docker-compose.yml',
           inputSchema: {
-            type: "object",
+            type: 'object',
             properties: {
-              projectPath: { type: "string" },
-              config: { type: "object" },
+              projectPath: { type: 'string' },
+              config: { type: 'object' },
             },
-            required: ["projectPath", "config"],
+            required: ['projectPath', 'config'],
           },
         },
         {
-          name: "generate_nextjs_config",
-          description: "Generate Next.js configuration files",
+          name: 'generate_nextjs_config',
+          description: 'Generate Next.js configuration files',
           inputSchema: {
-            type: "object",
+            type: 'object',
             properties: {
-              projectPath: { type: "string" },
-              config: { type: "object" },
+              projectPath: { type: 'string' },
+              config: { type: 'object' },
             },
-            required: ["projectPath", "config"],
+            required: ['projectPath', 'config'],
           },
         },
         {
-          name: "generate_base_components",
-          description: "Generate base React components and layouts",
+          name: 'generate_base_components',
+          description: 'Generate base React components and layouts',
           inputSchema: {
-            type: "object",
+            type: 'object',
             properties: {
-              projectPath: { type: "string" },
-              config: { type: "object" },
+              projectPath: { type: 'string' },
+              config: { type: 'object' },
             },
-            required: ["projectPath", "config"],
+            required: ['projectPath', 'config'],
           },
         },
         {
-          name: "setup_database",
-          description: "Generate database configuration and migrations",
+          name: 'setup_database',
+          description: 'Generate database configuration and migrations',
           inputSchema: {
-            type: "object",
+            type: 'object',
             properties: {
-              projectPath: { type: "string" },
-              config: { type: "object" },
+              projectPath: { type: 'string' },
+              config: { type: 'object' },
             },
-            required: ["projectPath", "config"],
+            required: ['projectPath', 'config'],
           },
         },
         {
-          name: "setup_authentication",
-          description: "Configure authentication system",
+          name: 'setup_authentication',
+          description: 'Configure authentication system',
           inputSchema: {
-            type: "object",
+            type: 'object',
             properties: {
-              projectPath: { type: "string" },
-              config: { type: "object" },
+              projectPath: { type: 'string' },
+              config: { type: 'object' },
             },
-            required: ["projectPath", "config"],
+            required: ['projectPath', 'config'],
           },
         },
         {
-          name: "generate_ci_cd",
-          description: "Generate CI/CD pipeline configuration",
+          name: 'generate_ci_cd',
+          description: 'Generate CI/CD pipeline configuration',
           inputSchema: {
-            type: "object",
+            type: 'object',
             properties: {
-              projectPath: { type: "string" },
-              config: { type: "object" },
+              projectPath: { type: 'string' },
+              config: { type: 'object' },
             },
-            required: ["projectPath", "config"],
+            required: ['projectPath', 'config'],
           },
         },
         {
-          name: "install_dependencies",
-          description: "Install npm/pnpm dependencies",
+          name: 'install_dependencies',
+          description: 'Install npm/pnpm dependencies',
           inputSchema: {
-            type: "object",
+            type: 'object',
             properties: {
-              projectPath: { type: "string" },
-              packageManager: { type: "string", enum: ["npm", "pnpm", "yarn"] },
+              projectPath: { type: 'string' },
+              packageManager: { type: 'string', enum: ['npm', 'pnpm', 'yarn'] },
             },
-            required: ["projectPath"],
+            required: ['projectPath'],
           },
         },
         {
-          name: "validate_project",
-          description: "Run validation checks on the generated project",
+          name: 'validate_project',
+          description: 'Run validation checks on the generated project',
           inputSchema: {
-            type: "object",
+            type: 'object',
             properties: {
-              projectPath: { type: "string" },
+              projectPath: { type: 'string' },
             },
-            required: ["projectPath"],
+            required: ['projectPath'],
           },
         },
         {
-          name: "generate_readme",
-          description: "Generate comprehensive README.md",
+          name: 'generate_readme',
+          description: 'Generate comprehensive README.md',
           inputSchema: {
-            type: "object",
+            type: 'object',
             properties: {
-              projectPath: { type: "string" },
-              config: { type: "object" },
+              projectPath: { type: 'string' },
+              config: { type: 'object' },
             },
-            required: ["projectPath", "config"],
+            required: ['projectPath', 'config'],
           },
         },
       ],
@@ -221,7 +235,7 @@ class NextMCPServer {
         return {
           content: [
             {
-              type: "text",
+              type: 'text',
               text: `No arguments provided for tool: ${name}`,
             },
           ],
@@ -230,73 +244,69 @@ class NextMCPServer {
 
       try {
         switch (name) {
-          case "scaffold_project":
-            return await this.scaffoldProject(
-              args.config as ProjectConfig,
-              args.targetPath as string
-            );
-          case "create_directory_structure":
-            return await this.createDirectoryStructure(
-              args.projectPath as string,
-              args.config as ProjectConfig
-            );
-          case "generate_package_json":
-            return await this.updatePackageJson(
-              args.projectPath as string,
-              args.config as ProjectConfig
-            );
-          case "generate_dockerfile":
-            return await this.generateDockerfile(
-              args.projectPath as string,
-              args.config as ProjectConfig
-            );
-          case "generate_nextjs_config":
-            return await this.generateNextJSConfig(
-              args.projectPath as string,
-              args.config as ProjectConfig
-            );
-          case "generate_base_components":
-            return await this.generateBaseComponents(
-              args.projectPath as string,
-              args.config as ProjectConfig
-            );
-          case "setup_database":
-            return await this.setupDatabase(
-              args.projectPath as string,
-              args.config as ProjectConfig
-            );
-          case "setup_authentication":
-            return await this.setupAuthentication(
-              args.projectPath as string,
-              args.config as ProjectConfig
-            );
-          case "generate_ci_cd":
-            return await this.generateCICD(
-              args.projectPath as string,
-              args.config as ProjectConfig
-            );
-          case "install_dependencies":
-            return await this.installDependencies(
-              args.projectPath as string,
-              args.packageManager as string
-            );
-          case "validate_project":
-            return await this.validateProject(args.projectPath as string);
-          case "generate_readme":
-            return await this.generateReadme(
-              args.projectPath as string,
-              args.config as ProjectConfig
-            );
+          case 'scaffold_project':
+            return await this.scaffoldProject(args.config as ProjectConfig, args.targetPath as string);
+          // case "create_directory_structure":
+          //   return await this.createDirectoryStructure(
+          //     args.projectPath as string,
+          //     args.config as ProjectConfig
+          //   );
+          // case "generate_package_json":
+          //   return await this.updatePackageJson(
+          //     args.projectPath as string,
+          //     args.config as ProjectConfig
+          //   );
+          // case "generate_dockerfile":
+          //   return await this.generateDockerfile(
+          //     args.projectPath as string,
+          //     args.config as ProjectConfig
+          //   );
+          // case "generate_nextjs_config":
+          //   return await this.generateNextJSConfig(
+          //     args.projectPath as string,
+          //     args.config as ProjectConfig
+          //   );
+          // case "generate_base_components":
+          //   return await this.generateBaseComponents(
+          //     args.projectPath as string,
+          //     args.config as ProjectConfig
+          //   );
+          // case "setup_database":
+          //   return await this.setupDatabase(
+          //     args.projectPath as string,
+          //     args.config as ProjectConfig
+          //   );
+          // case "setup_authentication":
+          //   return await this.setupAuthentication(
+          //     args.projectPath as string,
+          //     args.config as ProjectConfig
+          //   );
+          // case "generate_ci_cd":
+          //   return await this.generateCICD(
+          //     args.projectPath as string,
+          //     args.config as ProjectConfig
+          //   );
+          // case "install_dependencies":
+          //   return await this.installDependencies(
+          //     args.projectPath as string,
+          //     args.packageManager as string
+          //   );
+          // case "validate_project":
+          //   return await this.validateProject(args.projectPath as string);
+          // case "generate_readme":
+          //   return await this.generateReadme(
+          //     args.projectPath as string,
+          //     args.config as ProjectConfig
+          //   );
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
         return {
           content: [
             {
-              type: "text",
+              type: 'text',
               text: `Error executing ${name}: ${errorMessage}`,
             },
           ],
@@ -310,12 +320,11 @@ class NextMCPServer {
 
     try {
       // Build create-next-app command based on configuration
-      const createCommand = this.buildCreateNextAppCommand(config, targetPath);
-
-      console.error(`Executing: ${createCommand}`);
+      const createCommand = this.buildCreateNextAppCommand(config);
+      logger.info(`Executing: ${createCommand}`);
 
       // Run create-next-app
-      execSync(createCommand, { stdio: "inherit", cwd: targetPath });
+      execSync(createCommand, { stdio: 'inherit', cwd: targetPath });
 
       // Verify the project was created
       await fs.access(projectPath);
@@ -323,19 +332,18 @@ class NextMCPServer {
       return {
         content: [
           {
-            type: "text",
+            type: 'text',
             text: `✅ Successfully created Next.js project at ${projectPath}\nCommand executed: ${createCommand}`,
           },
         ],
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
 
       return {
         content: [
           {
-            type: "text",
+            type: 'text',
             text: `❌ Failed to create Next.js project: ${errorMessage}`,
           },
         ],
@@ -343,47 +351,46 @@ class NextMCPServer {
     }
   }
 
-  private buildCreateNextAppCommand(
-    config: ProjectConfig,
-    targetPath: string
-  ): string {
-    const flags = ["npx create-next-app@latest", `./${config.name}`];
+  private buildCreateNextAppCommand(config: ProjectConfig): string {
+    const flags = ['npx create-next-app@latest', `./${config.name}`];
 
     if (config.architecture.typescript) {
-      flags.push("--ts");
+      flags.push('--ts');
     } else {
-      flags.push("--js");
+      flags.push('--js');
     }
 
     if (config.architecture.appRouter) {
-      flags.push("--app");
+      flags.push('--app');
     } else {
-      flags.push("--no-app");
+      flags.push('--no-app');
     }
 
     // Always use ESLint
-    flags.push("--eslint");
+    flags.push('--eslint');
 
     //Always use Tailwind CSS for styling
-    flags.push("--tailwind");
+    flags.push('--tailwind');
 
     // Use src directory for better organization
-    flags.push("--src-dir");
+    flags.push('--src-dir');
 
     // Use Turbopack for faster development
-    flags.push("--turbopack");
+    flags.push('--turbopack');
 
     // Set import alias
     flags.push('--import-alias "@/*"');
 
     // Use pnpm as package manager
-    flags.push("--use-pnpm");
+    flags.push('--use-pnpm');
 
     // We'll initialize git ourselves later
-    flags.push("--no-git");
+    flags.push('--no-git');
 
-    return flags.join(" ");
+    return flags.join(' ');
   }
+
+  /**
 
   private async createDirectoryStructure(
     projectPath: string,
@@ -421,7 +428,7 @@ class NextMCPServer {
         await fs.mkdir(path.join(projectPath, dir), { recursive: true });
       } catch (error) {
         // Directory might already exist, continue
-        console.error(`Note: Directory ${dir} might already exist`);
+        logger.error(`Note: Directory ${dir} might already exist`);
       }
     }
 
@@ -434,7 +441,7 @@ class NextMCPServer {
         stdio: "pipe",
       });
     } catch (error) {
-      console.error("Git initialization failed, continuing without git");
+      logger.error("Git initialization failed, continuing without git");
     }
 
     return {
@@ -599,6 +606,11 @@ class NextMCPServer {
         "utf-8"
       );
 
+      const dockerignoreTemplate = await fs.readFile(
+        path.join(__dirname, "templates", ".dockerignore"),
+        "utf-8"
+      );
+
       // Read docker-compose template
       const dockerComposeTemplate = await fs.readFile(
         path.join(__dirname, "templates", "docker-compose.yml"),
@@ -671,6 +683,12 @@ class NextMCPServer {
         path.join(projectPath, "Dockerfile"),
         dockerfileTemplate
       );
+
+      await fs.writeFile(
+        path.join(projectPath, ".dockerignore"),
+        dockerignoreTemplate
+      );
+
       await fs.writeFile(
         path.join(projectPath, "docker-compose.yml"),
         dockerCompose
@@ -705,7 +723,7 @@ class NextMCPServer {
     try {
       // Read template files
       const nextConfigTemplate = await fs.readFile(
-        path.join(__dirname, "templates", "next.config.ts"),
+        path.join(__dirname, "templates", "next.config.template"),
         "utf-8"
       );
 
@@ -1239,13 +1257,14 @@ ${config.architecture.testing !== "jest" ? "- `pnpm test` - Run tests" : ""}
       ],
     };
   }
+  */
 
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error("Next.js Scaffolding MCP server running on stdio");
+    logger.info('Next.js Scaffolding MCP server running on stdio');
   }
 }
 
 const server = new NextMCPServer();
-server.run().catch(console.error);
+server.run().catch(logger.error);
