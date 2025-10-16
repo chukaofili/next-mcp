@@ -139,6 +139,18 @@ class NextMCPServer {
           },
         },
         {
+          name: 'setup_shadcn',
+          description: 'Initialize shadcn/ui with defaults and install all components',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              config: { type: 'object' },
+              projectPath: { type: 'string' },
+            },
+            required: ['config', 'projectPath'],
+          },
+        },
+        {
           name: 'generate_base_components',
           description: 'Generate base React components and layouts',
           inputSchema: {
@@ -192,10 +204,10 @@ class NextMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
+              config: { type: 'object' },
               projectPath: { type: 'string' },
-              packageManager: { type: 'string', enum: ['npm', 'pnpm', 'yarn', 'bun'] },
             },
-            required: ['projectPath'],
+            required: ['config', 'projectPath'],
           },
         },
         {
@@ -250,19 +262,18 @@ class NextMCPServer {
             return await this.generateDockerfile(args.config as ProjectConfig, args.projectPath as string);
           case 'generate_nextjs_config':
             return await this.generateNextJSConfig(args.projectPath as string);
-          // case "generate_base_components":
-          //   return await this.generateBaseComponents(args.config as ProjectConfig, args.projectPath as string);
+          case 'generate_base_components':
+            return await this.generateBaseComponents(args.config as ProjectConfig, args.projectPath as string);
+          case 'setup_shadcn':
+            return await this.setupShadcn(args.config as ProjectConfig, args.projectPath as string);
           // case "setup_database":
           //   return await this.setupDatabase(args.config as ProjectConfig, args.projectPath as string);
           // case "setup_authentication":
           //   return await this.setupAuthentication(args.config as ProjectConfig, args.projectPath as string);
           // case "generate_ci_cd":
           //   return await this.generateCICD(args.config as ProjectConfig, args.projectPath as string);
-          // case "install_dependencies":
-          //   return await this.installDependencies(
-          //     args.projectPath as string,
-          //     args.packageManager as string
-          //   );
+          case 'install_dependencies':
+            return await this.installDependencies(args.config as ProjectConfig, args.projectPath as string);
           // case "validate_project":
           //   return await this.validateProject(args.projectPath as string);
           // case "generate_readme":
@@ -643,7 +654,7 @@ class NextMCPServer {
 
           case 'mongodb':
             databaseService = `  db:
-    image: mongo:6.0
+    image: mongo:8-noble
     environment:
       MONGO_INITDB_DATABASE: ${config.name}
     ports:
@@ -652,6 +663,15 @@ class NextMCPServer {
       - mongodb_data:/data/db`;
             volumesSection = `volumes:
   mongodb_data:`;
+            break;
+
+          case 'sqlite':
+            // SQLite doesn't need a separate database service
+            // But we need to ensure the database file persists
+            databaseDependsOn = `    volumes:
+      - sqlite_data:/app/data`;
+            volumesSection = `volumes:
+  sqlite_data:`;
             break;
         }
       }
@@ -706,6 +726,7 @@ class NextMCPServer {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('Unexpected error during generateNextJSConfig:', errorMessage);
       return {
         content: [
           {
@@ -717,94 +738,186 @@ class NextMCPServer {
     }
   }
 
-  /**
-  private async generateBaseComponents(
-    projectPath: string,
-    config: ProjectConfig
-  ) {
+  private async setupShadcn(config: ProjectConfig, projectPath: string) {
+    if (config.architecture.uiLibrary !== 'shadcn') {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Shadcn/ui setup skipped - uiLibrary is not set to "shadcn"',
+          },
+        ],
+      };
+    }
+
     try {
-      // Update the existing page.tsx with our custom content
+      const packageManager = config.architecture.packageManager;
+      const results: string[] = [];
+
+      // Determine the correct package runner command
+      let pkgRunner: string;
+      switch (packageManager) {
+        case 'pnpm':
+          pkgRunner = 'pnpm dlx';
+          break;
+        case 'yarn':
+          pkgRunner = 'yarn dlx';
+          break;
+        case 'bun':
+          pkgRunner = 'bunx';
+          break;
+        case 'npm':
+        default:
+          pkgRunner = 'npx';
+          break;
+      }
+
+      // Step 1: Initialize shadcn/ui with default configuration
+      logger.info(`Initializing shadcn/ui with ${packageManager}...`);
+      try {
+        const initCommand = `${pkgRunner} shadcn@latest init -y -d`;
+        const initOutput = execSync(initCommand, {
+          cwd: projectPath,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        results.push(`✅ Initialized shadcn/ui with default configuration using ${packageManager}`);
+        logger.info(`shadcn/ui init output: ${initOutput.toString()}`);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error('Failed to initialize shadcn/ui:', errorMessage);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `❌ Failed to initialize shadcn/ui: ${errorMessage}`,
+            },
+          ],
+        };
+      }
+
+      // Step 2: Install all shadcn/ui components using the --all flag
+      logger.info(`Installing all shadcn/ui components with ${packageManager}...`);
+      try {
+        const addAllCommand = `${pkgRunner} shadcn@latest add --all -y -o`;
+        execSync(addAllCommand, {
+          cwd: projectPath,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        results.push('✅ Successfully installed all shadcn/ui components');
+        logger.info(`shadcn/ui add all components executed successfully`);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error('Failed to install shadcn/ui components:', errorMessage);
+        results.push(`⚠️  Failed to install all components: ${errorMessage}`);
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: results.join('\n'),
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('Unexpected error during shadcn/ui setup:', errorMessage);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ Failed to set up shadcn/ui: ${errorMessage}`,
+          },
+        ],
+      };
+    }
+  }
+
+  private async generateBaseComponents(config: ProjectConfig, projectPath: string) {
+    try {
+      // Note: If uiLibrary is 'shadcn', call the 'setup_shadcn' tool separately
+      // to initialize shadcn/ui and install all components
+
+      // Update the existing page.tsx with our custom content using Tailwind CSS
       const pageTsx = `export default function Home() {
   return (
-    <main${config.architecture.styling === "tailwind" ? ' className="min-h-screen flex flex-col items-center justify-center p-8"' : ""}>
-      <div${config.architecture.styling === "tailwind" ? ' className="max-w-4xl mx-auto text-center"' : ""}>
-        <h1${config.architecture.styling === "tailwind" ? ' className="text-6xl font-bold mb-6 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent"' : ""}>
+    <main className="min-h-screen flex flex-col items-center justify-center p-8">
+      <div className="max-w-4xl mx-auto text-center">
+        <h1 className="text-6xl font-bold mb-6 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
           Welcome to ${config.name}
         </h1>
-        <p${config.architecture.styling === "tailwind" ? ' className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto"' : ""}>
-          ${config.description || "Your Next.js application is ready! Built with modern tools and best practices."}
+        <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
+          ${config.description || 'Your Next.js application is ready! Built with modern tools and best practices.'}
         </p>
-        
-        <div${config.architecture.styling === "tailwind" ? ' className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-12"' : ""}>
-          <div${config.architecture.styling === "tailwind" ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ""}>
-            <h3${config.architecture.styling === "tailwind" ? ' className="text-lg font-semibold mb-2"' : ""}>🚀 Next.js 15</h3>
-            <p${config.architecture.styling === "tailwind" ? ' className="text-gray-600"' : ""}>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-12">
+          <div className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow">
+            <h3 className="text-lg font-semibold mb-2">🚀 Next.js 15</h3>
+            <p className="text-gray-600">
               Built with the latest Next.js features including App Router and Turbopack.
             </p>
           </div>
-          
-          ${
-            config.architecture.styling === "tailwind"
-              ? `<div className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow">
+
+          <div className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow">
             <h3 className="text-lg font-semibold mb-2">🎨 Tailwind CSS</h3>
             <p className="text-gray-600">
               Utility-first CSS framework for rapid UI development.
             </p>
-          </div>`
-              : ""
-          }
-          
+          </div>
           ${
             config.architecture.typescript
-              ? `<div${config.architecture.styling === "tailwind" ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ""}>
-            <h3${config.architecture.styling === "tailwind" ? ' className="text-lg font-semibold mb-2"' : ""}>📘 TypeScript</h3>
-            <p${config.architecture.styling === "tailwind" ? ' className="text-gray-600"' : ""}>
+              ? `
+          <div className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow">
+            <h3 className="text-lg font-semibold mb-2">📘 TypeScript</h3>
+            <p className="text-gray-600">
               Type-safe development with excellent IDE support.
             </p>
           </div>`
-              : ""
+              : ''
           }
-          
           ${
-            config.architecture.database !== "none"
-              ? `<div${config.architecture.styling === "tailwind" ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ""}>
-            <h3${config.architecture.styling === "tailwind" ? ' className="text-lg font-semibold mb-2"' : ""}>🗄️ ${config.architecture.database.charAt(0).toUpperCase() + config.architecture.database.slice(1)}</h3>
-            <p${config.architecture.styling === "tailwind" ? ' className="text-gray-600"' : ""}>
+            config.architecture.database !== 'none'
+              ? `
+          <div className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow">
+            <h3 className="text-lg font-semibold mb-2">🗄️ ${config.architecture.database.charAt(0).toUpperCase() + config.architecture.database.slice(1)}</h3>
+            <p className="text-gray-600">
               Database integration ready for your data needs.
             </p>
           </div>`
-              : ""
+              : ''
           }
-          
           ${
-            config.architecture.auth !== "none"
-              ? `<div${config.architecture.styling === "tailwind" ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ""}>
-            <h3${config.architecture.styling === "tailwind" ? ' className="text-lg font-semibold mb-2"' : ""}>🔐 Authentication</h3>
-            <p${config.architecture.styling === "tailwind" ? ' className="text-gray-600"' : ""}>
+            config.architecture.auth !== 'none'
+              ? `
+          <div className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow">
+            <h3 className="text-lg font-semibold mb-2">🔐 Authentication</h3>
+            <p className="text-gray-600">
               Secure authentication with ${config.architecture.auth}.
             </p>
           </div>`
-              : ""
+              : ''
           }
-          
-          <div${config.architecture.styling === "tailwind" ? ' className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"' : ""}>
-            <h3${config.architecture.styling === "tailwind" ? ' className="text-lg font-semibold mb-2"' : ""}>🐳 Docker Ready</h3>
-            <p${config.architecture.styling === "tailwind" ? ' className="text-gray-600"' : ""}>
+
+          <div className="p-6 border border-gray-200 rounded-lg hover:shadow-lg transition-shadow">
+            <h3 className="text-lg font-semibold mb-2">🐳 Docker Ready</h3>
+            <p className="text-gray-600">
               Containerized for easy deployment to any cloud platform.
             </p>
           </div>
         </div>
-        
-        <div${config.architecture.styling === "tailwind" ? ' className="mt-12 flex flex-col sm:flex-row gap-4 justify-center"' : ""}>
-          <a 
-            href="/api/health"${config.architecture.styling === "tailwind" ? ' className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"' : ""}
+
+        <div className="mt-12 flex flex-col sm:flex-row gap-4 justify-center">
+          <a
+            href="/api/health"
+            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
           >
             Test API Route
           </a>
-          <a 
+          <a
             href="https://nextjs.org/docs"
             target="_blank"
-            rel="noopener noreferrer"${config.architecture.styling === "tailwind" ? ' className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"' : ""}
+            rel="noopener noreferrer"
+            className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
           >
             Read the Docs
           </a>
@@ -826,7 +939,7 @@ export async function GET() {
     features: {
       database: '${config.architecture.database}',
       auth: '${config.architecture.auth}',
-      styling: '${config.architecture.styling}',
+      styling: 'tailwind',
       stateManagement: '${config.architecture.stateManagement}',
       testing: '${config.architecture.testing}',
     },
@@ -834,10 +947,8 @@ export async function GET() {
 }
 `;
 
-      // Create some basic UI components if using Tailwind
-      let buttonComponent = "";
-      if (config.architecture.styling === "tailwind") {
-        buttonComponent = `import { type ButtonHTMLAttributes, forwardRef } from 'react';
+      // Create reusable Button component with Tailwind CSS
+      const buttonComponent = `import { type ButtonHTMLAttributes, forwardRef } from 'react';
 import { clsx } from 'clsx';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -876,42 +987,35 @@ Button.displayName = 'Button';
 
 export { Button };
 `;
-      }
 
       // Write the files
-      await fs.writeFile(path.join(projectPath, "src/app/page.tsx"), pageTsx);
-      await fs.writeFile(
-        path.join(projectPath, "src/app/api/health/route.ts"),
-        healthApiRoute
-      );
-
-      if (buttonComponent) {
-        await fs.writeFile(
-          path.join(projectPath, "src/components/ui/button.tsx"),
-          buttonComponent
-        );
-      }
+      await fs.mkdir(path.join(projectPath, 'src/app/api/health'), { recursive: true });
+      await fs.writeFile(path.join(projectPath, 'src/app/page.tsx'), pageTsx);
+      await fs.writeFile(path.join(projectPath, 'src/app/api/health/route.ts'), healthApiRoute);
+      await fs.writeFile(path.join(projectPath, 'src/components/ui/button.tsx'), buttonComponent);
 
       return {
         content: [
           {
-            type: "text",
-            text: `✅ Updated base components:\n- Enhanced home page with feature showcase\n- Added health check API route\n${buttonComponent ? "- Created reusable Button component\n" : ""}`,
+            type: 'text',
+            text: `✅ Generated base components with Tailwind CSS:\n- Enhanced home page with feature showcase\n- Added health check API route\n- Created reusable Button component`,
           },
         ],
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [
           {
-            type: "text",
-            text: `❌ Failed to generate base components: ${error.message}`,
+            type: 'text',
+            text: `❌ Failed to generate base components: ${errorMessage}`,
           },
         ],
       };
     }
   }
 
+  /**
   private async setupDatabase(config: ProjectConfig, projectPath: string) {
     if (config.architecture.database === "none") {
       return {
@@ -1048,37 +1152,39 @@ jobs:
       ],
     };
   }
-
-  private async installDependencies(
-    projectPath: string,
-    packageManager = "pnpm"
-  ) {
+*/
+  private async installDependencies(config: ProjectConfig, projectPath: string) {
     try {
-      execSync(`${packageManager} install`, {
+      const installOutput = execSync(`${config.architecture.packageManager} install`, {
         cwd: projectPath,
-        stdio: "pipe",
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
+
+      logger.info(`Dependencies installed using ${config.architecture.packageManager}: ${installOutput.toString()}`);
 
       return {
         content: [
           {
-            type: "text",
-            text: `Successfully installed dependencies using ${packageManager}`,
+            type: 'text',
+            text: `Successfully installed dependencies using ${config.architecture.packageManager}\n\n[Output]:\n${installOutput.toString()}`,
           },
         ],
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('Unexpected error during shadcn/ui setup:', errorMessage);
       return {
         content: [
           {
-            type: "text",
-            text: `Failed to install dependencies: ${error.message}`,
+            type: 'text',
+            text: `Failed to install dependencies: ${errorMessage}`,
           },
         ],
       };
     }
   }
 
+  /**
   private async validateProject(projectPath: string) {
     const validationResults = [];
 
