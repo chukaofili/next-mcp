@@ -242,8 +242,8 @@ class NextMCPServer {
             return await this.createDirectoryStructure(args.config as ProjectConfig, args.projectPath as string);
           case 'update_package_json':
             return await this.updatePackageJson(args.config as ProjectConfig, args.projectPath as string);
-          // case "generate_dockerfile":
-          //   return await this.generateDockerfile(args.config as ProjectConfig, args.projectPath as string);
+          case 'generate_dockerfile':
+            return await this.generateDockerfile(args.config as ProjectConfig, args.projectPath as string);
           // case "generate_nextjs_config":
           //   return await this.generateNextJSConfig(args.config as ProjectConfig, args.projectPath as string);
           // case "generate_base_components":
@@ -587,37 +587,26 @@ class NextMCPServer {
     }
   }
 
-  /**
   private async generateDockerfile(config: ProjectConfig, projectPath: string) {
     try {
       // Read Dockerfile template
-      const dockerfileTemplate = await fs.readFile(
-        path.join(__dirname, "templates", "Dockerfile"),
-        "utf-8"
-      );
-
-      const dockerignoreTemplate = await fs.readFile(
-        path.join(__dirname, "templates", ".dockerignore"),
-        "utf-8"
-      );
+      const dockerfileTemplate = await fs.readFile(path.join(__dirname, 'templates', 'Dockerfile'), 'utf-8');
+      const dockerignoreTemplate = await fs.readFile(path.join(__dirname, 'templates', '.dockerignore'), 'utf-8');
 
       // Read docker-compose template
-      const dockerComposeTemplate = await fs.readFile(
-        path.join(__dirname, "templates", "docker-compose.yml"),
-        "utf-8"
-      );
+      const dockerComposeTemplate = await fs.readFile(path.join(__dirname, 'templates', 'docker-compose.yml'), 'utf-8');
 
       // Generate database-specific sections
-      let databaseDependsOn = "";
-      let databaseService = "";
-      let volumesSection = "";
+      let databaseDependsOn = '';
+      let databaseService = '';
+      let volumesSection = '';
 
-      if (config.architecture.database !== "none") {
+      if (config.architecture.database !== 'none') {
         databaseDependsOn = `    depends_on:
       - db`;
 
         switch (config.architecture.database) {
-          case "postgres":
+          case 'postgres':
             databaseService = `  db:
     image: postgres:17-alpine
     environment:
@@ -632,7 +621,7 @@ class NextMCPServer {
   postgres_data:`;
             break;
 
-          case "mysql":
+          case 'mysql':
             databaseService = `  db:
     image: mysql:9
     environment:
@@ -648,7 +637,7 @@ class NextMCPServer {
   mysql_data:`;
             break;
 
-          case "mongodb":
+          case 'mongodb':
             databaseService = `  db:
     image: mongo:6.0
     environment:
@@ -665,46 +654,36 @@ class NextMCPServer {
 
       // Replace template placeholders
       const dockerCompose = dockerComposeTemplate
-        .replace("__DATABASE_DEPENDS_ON__", databaseDependsOn)
-        .replace("__DATABASE_SERVICE__", databaseService)
-        .replace("__VOLUMES_SECTION__", volumesSection);
+        .replace('__DATABASE_DEPENDS_ON__', databaseDependsOn)
+        .replace('__DATABASE_SERVICE__', databaseService)
+        .replace('__VOLUMES_SECTION__', volumesSection);
 
-      await fs.writeFile(
-        path.join(projectPath, "Dockerfile"),
-        dockerfileTemplate
-      );
-
-      await fs.writeFile(
-        path.join(projectPath, ".dockerignore"),
-        dockerignoreTemplate
-      );
-
-      await fs.writeFile(
-        path.join(projectPath, "docker-compose.yml"),
-        dockerCompose
-      );
+      await fs.writeFile(path.join(projectPath, 'Dockerfile'), dockerfileTemplate);
+      await fs.writeFile(path.join(projectPath, '.dockerignore'), dockerignoreTemplate);
+      await fs.writeFile(path.join(projectPath, 'docker-compose.yml'), dockerCompose);
 
       return {
         content: [
           {
-            type: "text",
+            type: 'text',
             text: `✅ Generated Docker configuration:\n- Dockerfile (from template)\n- docker-compose.yml with ${config.architecture.database} database setup`,
           },
         ],
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [
           {
-            type: "text",
+            type: 'text',
             text: `❌ Failed to generate Docker configuration: ${errorMessage}`,
           },
         ],
       };
     }
   }
+
+  /**
 
   private async generateNextJSConfig(
     projectPath: string,
