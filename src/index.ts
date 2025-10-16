@@ -32,7 +32,7 @@ interface ProjectConfig {
     appRouter: boolean;
     typescript: boolean;
     packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun';
-    database: 'none' | 'postgres' | 'mysql' | 'mongodb';
+    database: 'none' | 'postgres' | 'mysql' | 'mongodb' | 'sqlite';
     orm: 'none' | 'prisma' | 'drizzle' | 'mongoose';
     auth: 'none' | 'better-auth';
     uiLibrary: 'none' | 'shadcn';
@@ -92,22 +92,22 @@ class NextMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              projectPath: { type: 'string' },
               config: { type: 'object' },
+              projectPath: { type: 'string' },
             },
-            required: ['projectPath', 'config'],
+            required: ['config', 'projectPath'],
           },
         },
         {
-          name: 'generate_package_json',
-          description: 'Generate package.json with appropriate dependencies',
+          name: 'update_package_json',
+          description: 'Update package.json with appropriate dependencies',
           inputSchema: {
             type: 'object',
             properties: {
-              projectPath: { type: 'string' },
               config: { type: 'object' },
+              projectPath: { type: 'string' },
             },
-            required: ['projectPath', 'config'],
+            required: ['config', 'projectPath'],
           },
         },
         {
@@ -116,10 +116,10 @@ class NextMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              projectPath: { type: 'string' },
               config: { type: 'object' },
+              projectPath: { type: 'string' },
             },
-            required: ['projectPath', 'config'],
+            required: ['config', 'projectPath'],
           },
         },
         {
@@ -128,10 +128,10 @@ class NextMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              projectPath: { type: 'string' },
               config: { type: 'object' },
+              projectPath: { type: 'string' },
             },
-            required: ['projectPath', 'config'],
+            required: ['config', 'projectPath'],
           },
         },
         {
@@ -140,10 +140,10 @@ class NextMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              projectPath: { type: 'string' },
               config: { type: 'object' },
+              projectPath: { type: 'string' },
             },
-            required: ['projectPath', 'config'],
+            required: ['config', 'projectPath'],
           },
         },
         {
@@ -152,10 +152,10 @@ class NextMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              projectPath: { type: 'string' },
               config: { type: 'object' },
+              projectPath: { type: 'string' },
             },
-            required: ['projectPath', 'config'],
+            required: ['config', 'projectPath'],
           },
         },
         {
@@ -164,10 +164,10 @@ class NextMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              projectPath: { type: 'string' },
               config: { type: 'object' },
+              projectPath: { type: 'string' },
             },
-            required: ['projectPath', 'config'],
+            required: ['config', 'projectPath'],
           },
         },
         {
@@ -176,10 +176,10 @@ class NextMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              projectPath: { type: 'string' },
               config: { type: 'object' },
+              projectPath: { type: 'string' },
             },
-            required: ['projectPath', 'config'],
+            required: ['config', 'projectPath'],
           },
         },
         {
@@ -189,7 +189,7 @@ class NextMCPServer {
             type: 'object',
             properties: {
               projectPath: { type: 'string' },
-              packageManager: { type: 'string', enum: ['npm', 'pnpm', 'yarn'] },
+              packageManager: { type: 'string', enum: ['npm', 'pnpm', 'yarn', 'bun'] },
             },
             required: ['projectPath'],
           },
@@ -211,10 +211,10 @@ class NextMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              projectPath: { type: 'string' },
               config: { type: 'object' },
+              projectPath: { type: 'string' },
             },
-            required: ['projectPath', 'config'],
+            required: ['config', 'projectPath'],
           },
         },
       ],
@@ -239,42 +239,21 @@ class NextMCPServer {
           case 'scaffold_project':
             return await this.scaffoldProject(args.config as ProjectConfig, args.targetPath as string);
           case 'create_directory_structure':
-            return await this.createDirectoryStructure(args.projectPath as string, args.config as ProjectConfig);
-          // case "generate_package_json":
-          //   return await this.updatePackageJson(
-          //     args.projectPath as string,
-          //     args.config as ProjectConfig
-          //   );
+            return await this.createDirectoryStructure(args.config as ProjectConfig, args.projectPath as string);
+          case 'update_package_json':
+            return await this.updatePackageJson(args.config as ProjectConfig, args.projectPath as string);
           // case "generate_dockerfile":
-          //   return await this.generateDockerfile(
-          //     args.projectPath as string,
-          //     args.config as ProjectConfig
-          //   );
+          //   return await this.generateDockerfile(args.config as ProjectConfig, args.projectPath as string);
           // case "generate_nextjs_config":
-          //   return await this.generateNextJSConfig(
-          //     args.projectPath as string,
-          //     args.config as ProjectConfig
-          //   );
+          //   return await this.generateNextJSConfig(args.config as ProjectConfig, args.projectPath as string);
           // case "generate_base_components":
-          //   return await this.generateBaseComponents(
-          //     args.projectPath as string,
-          //     args.config as ProjectConfig
-          //   );
+          //   return await this.generateBaseComponents(args.config as ProjectConfig, args.projectPath as string);
           // case "setup_database":
-          //   return await this.setupDatabase(
-          //     args.projectPath as string,
-          //     args.config as ProjectConfig
-          //   );
+          //   return await this.setupDatabase(args.config as ProjectConfig, args.projectPath as string);
           // case "setup_authentication":
-          //   return await this.setupAuthentication(
-          //     args.projectPath as string,
-          //     args.config as ProjectConfig
-          //   );
+          //   return await this.setupAuthentication(args.config as ProjectConfig, args.projectPath as string);
           // case "generate_ci_cd":
-          //   return await this.generateCICD(
-          //     args.projectPath as string,
-          //     args.config as ProjectConfig
-          //   );
+          //   return await this.generateCICD(args.config as ProjectConfig, args.projectPath as string);
           // case "install_dependencies":
           //   return await this.installDependencies(
           //     args.projectPath as string,
@@ -283,10 +262,7 @@ class NextMCPServer {
           // case "validate_project":
           //   return await this.validateProject(args.projectPath as string);
           // case "generate_readme":
-          //   return await this.generateReadme(
-          //     args.projectPath as string,
-          //     args.config as ProjectConfig
-          //   );
+          //   return await this.generateReadme(args.config as ProjectConfig, args.projectPath as string);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -407,7 +383,7 @@ class NextMCPServer {
     return flags.join(' ');
   }
 
-  private async createDirectoryStructure(projectPath: string, config: ProjectConfig) {
+  private async createDirectoryStructure(config: ProjectConfig, projectPath: string) {
     // Additional directories that create-next-app doesn't create
     const additionalDirectories = [
       'src/components/ui',
@@ -448,18 +424,6 @@ class NextMCPServer {
       }
     }
 
-    // Initialize git repository (since we skipped it in create-next-app)
-    try {
-      const gitAddOut = execSync('git add .', { cwd: projectPath, stdio: ['ignore', 'pipe', 'pipe'] });
-      const gitCommitOut = execSync('git commit -m "chore: initial commit from scaffolding"', {
-        cwd: projectPath,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      logger.info(`Git initialized:\n${gitAddOut.toString()}\n${gitCommitOut.toString()}`);
-    } catch (error) {
-      logger.error('Git initialization failed, continuing without git', error);
-    }
-
     return {
       content: [
         {
@@ -470,42 +434,38 @@ class NextMCPServer {
     };
   }
 
-  /**
-  private async updatePackageJson(projectPath: string, config: ProjectConfig) {
+  private async updatePackageJson(config: ProjectConfig, projectPath: string) {
     try {
       // Read the existing package.json created by create-next-app
-      const packageJsonPath = path.join(projectPath, "package.json");
-      const existingPackageJson = JSON.parse(
-        await fs.readFile(packageJsonPath, "utf-8")
-      );
+      const packageJsonPath = path.join(projectPath, 'package.json');
+      const existingPackageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
 
       // Add additional scripts
       const additionalScripts = {
-        "type-check": "tsc --noEmit",
-        "lint:fix": "next lint --fix",
-        "docker:build": `docker build -t ${config.name} .`,
-        "docker:run": `docker run -p 3000:3000 ${config.name}`,
-        "docker:dev": "docker-compose -f docker-compose.yml up",
+        'type-check': 'tsc --noEmit',
+        'lint:fix': 'next lint --fix',
+        'docker:build': `docker build -t ${config.name} .`,
+        'docker:run': `docker run -p 3000:3000 ${config.name}`,
+        'docker:dev': 'docker-compose -f docker-compose.yml up',
         test: 'echo "No test command specified"',
-        "test:watch": 'echo "No test watch command specified"',
-        "test:ui": 'echo "No test UI command specified"',
-        "test:e2e": 'echo "No e2e test command specified"',
-        "test:e2e:ui": 'echo "No e2e test UI command specified"',
+        'test:watch': 'echo "No test watch command specified"',
+        'test:ui': 'echo "No test UI command specified"',
+        'test:e2e': 'echo "No e2e test command specified"',
+        'test:e2e:ui': 'echo "No e2e test UI command specified"',
       };
 
-      if (config.architecture.testing === "vitest") {
-        additionalScripts.test = "vitest";
-        additionalScripts["test:watch"] = "vitest --watch";
-        additionalScripts["test:ui"] = "vitest --ui";
-      } else if (config.architecture.testing === "jest") {
-        additionalScripts.test = "jest";
-        additionalScripts["test:watch"] = "jest --watch";
-      } else if (config.architecture.testing === "playwright") {
-        additionalScripts["test:e2e"] = "playwright test";
-        additionalScripts["test:e2e:ui"] = "playwright test --ui";
+      if (config.architecture.testing === 'vitest') {
+        additionalScripts.test = 'vitest';
+        additionalScripts['test:watch'] = 'vitest --watch';
+        additionalScripts['test:ui'] = 'vitest --ui';
+      } else if (config.architecture.testing === 'jest') {
+        additionalScripts.test = 'jest';
+        additionalScripts['test:watch'] = 'jest --watch';
+      } else if (config.architecture.testing === 'playwright') {
+        additionalScripts['test:e2e'] = 'playwright test';
+        additionalScripts['test:e2e:ui'] = 'playwright test --ui';
       }
 
-      // Merge scripts
       existingPackageJson.scripts = {
         ...existingPackageJson.scripts,
         ...additionalScripts,
@@ -516,55 +476,71 @@ class NextMCPServer {
       const additionalDevDeps: Record<string, string> = {};
 
       // State Management
-      if (config.architecture.stateManagement === "zustand") {
-        additionalDeps.zustand = "^5.0.8";
-      } else if (config.architecture.stateManagement === "redux") {
-        additionalDeps["@reduxjs/toolkit"] = "^2.5.0";
-        additionalDeps["react-redux"] = "^9.2.0";
-        additionalDevDeps["@types/react-redux"] = "^7.1.34";
+      if (config.architecture.stateManagement === 'zustand') {
+        additionalDeps.zustand = '^5.0.8';
+      } else if (config.architecture.stateManagement === 'redux') {
+        additionalDeps['@reduxjs/toolkit'] = '^2.5.0';
+        additionalDeps['react-redux'] = '^9.2.0';
+        additionalDevDeps['@types/react-redux'] = '^7.1.34';
       }
 
       // Database + ORM
-      if (config.architecture.orm === "prisma") {
-        additionalDeps["@prisma/client"] = "^6.16.2";
-        additionalDevDeps.prisma = "^6.16.2";
-      } else if (config.architecture.orm === "drizzle") {
-        additionalDeps["drizzle-orm"] = "^0.44.5";
-        additionalDevDeps["drizzle-kit"] = "^0.31.5";
-      } else if (config.architecture.orm === "mongoose") {
-        additionalDeps.mongoose = "^8.18.2";
+      if (config.architecture.orm === 'prisma') {
+        additionalDeps['@prisma/client'] = '^6.17.1';
+        additionalDevDeps.prisma = '^6.17.1';
+      } else if (config.architecture.orm === 'drizzle') {
+        additionalDeps['drizzle-orm'] = '^0.44.6';
+        additionalDevDeps['drizzle-kit'] = '^0.31.5';
+
+        if (config.architecture.database === 'postgres') {
+          additionalDeps.pg = '^8.16.3';
+          additionalDeps.dotenv = '^17.2.3';
+        }
+
+        if (config.architecture.database === 'mysql') {
+          additionalDeps.mysql2 = '^3.15.2';
+        }
+
+        if (config.architecture.database === 'sqlite') {
+          additionalDeps['better-sqlite3'] = '^12.4.1';
+          additionalDevDeps['@types/better-sqlite3'] = '^7.6.13';
+        }
+      } else if (config.architecture.orm === 'mongoose') {
+        additionalDeps.mongoose = '^8.19.1';
       }
 
-      if (
-        config.architecture.database === "postgres" &&
-        config.architecture.orm === "none"
-      ) {
-        additionalDeps.pg = "^8.16.3";
-      } else if (config.architecture.database === "mysql") {
-        additionalDeps.mysql2 = "^3.15.1";
-      } else if (config.architecture.database === "mongodb") {
-        additionalDeps.mongodb = "^6.3.0";
+      if (config.architecture.orm === 'none') {
+        if (config.architecture.database === 'postgres') {
+          additionalDeps.pg = '^8.16.3';
+        } else if (config.architecture.database === 'mysql') {
+          additionalDeps.mysql2 = '^3.15.2';
+        } else if (config.architecture.database === 'mongodb') {
+          additionalDeps.mongodb = '^6.20.0';
+        } else if (config.architecture.database === 'sqlite') {
+          additionalDeps['better-sqlite3'] = '^12.4.1';
+          additionalDevDeps['@types/better-sqlite3'] = '^7.6.13';
+        }
       }
 
       // Authentication
-      if (config.architecture.auth === "better-auth") {
-        additionalDeps["better-auth"] = "^1.3.22";
+      if (config.architecture.auth === 'better-auth') {
+        additionalDeps['better-auth'] = '^1.3.27';
       }
 
       // Testing
-      if (config.architecture.testing === "vitest") {
-        additionalDevDeps.vitest = "^1.0.4";
-        additionalDevDeps["@vitejs/plugin-react"] = "^4.2.1";
-        additionalDevDeps["@testing-library/react"] = "^14.1.2";
-        additionalDevDeps["@testing-library/jest-dom"] = "^6.1.6";
-        additionalDevDeps.jsdom = "^23.0.1";
-      } else if (config.architecture.testing === "jest") {
-        additionalDevDeps.jest = "^29.7.0";
-        additionalDevDeps["jest-environment-jsdom"] = "^29.7.0";
-        additionalDevDeps["@testing-library/react"] = "^14.1.2";
-        additionalDevDeps["@testing-library/jest-dom"] = "^6.1.6";
-      } else if (config.architecture.testing === "playwright") {
-        additionalDevDeps["@playwright/test"] = "^1.40.1";
+      if (config.architecture.testing === 'vitest') {
+        additionalDevDeps.vitest = '^1.0.4';
+        additionalDevDeps['@vitejs/plugin-react'] = '^4.2.1';
+        additionalDevDeps['@testing-library/react'] = '^14.1.2';
+        additionalDevDeps['@testing-library/jest-dom'] = '^6.1.6';
+        additionalDevDeps.jsdom = '^23.0.1';
+      } else if (config.architecture.testing === 'jest') {
+        additionalDevDeps.jest = '^29.7.0';
+        additionalDevDeps['jest-environment-jsdom'] = '^29.7.0';
+        additionalDevDeps['@testing-library/react'] = '^14.1.2';
+        additionalDevDeps['@testing-library/jest-dom'] = '^6.1.6';
+      } else if (config.architecture.testing === 'playwright') {
+        additionalDevDeps['@playwright/test'] = '^1.40.1';
       }
 
       // Merge dependencies
@@ -584,10 +560,7 @@ class NextMCPServer {
       }
 
       // Write the updated package.json
-      await fs.writeFile(
-        packageJsonPath,
-        JSON.stringify(existingPackageJson, null, 2)
-      );
+      await fs.writeFile(packageJsonPath, JSON.stringify(existingPackageJson, null, 2));
 
       const addedDepsCount = Object.keys(additionalDeps).length;
       const addedDevDepsCount = Object.keys(additionalDevDeps).length;
@@ -596,18 +569,17 @@ class NextMCPServer {
       return {
         content: [
           {
-            type: "text",
+            type: 'text',
             text: `✅ Updated package.json with:\n- ${addedDepsCount} additional dependencies\n- ${addedDevDepsCount} additional dev dependencies\n- ${addedScriptsCount} additional scripts`,
           },
         ],
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [
           {
-            type: "text",
+            type: 'text',
             text: `❌ Failed to update package.json: ${errorMessage}`,
           },
         ],
@@ -615,7 +587,8 @@ class NextMCPServer {
     }
   }
 
-  private async generateDockerfile(projectPath: string, config: ProjectConfig) {
+  /**
+  private async generateDockerfile(config: ProjectConfig, projectPath: string) {
     try {
       // Read Dockerfile template
       const dockerfileTemplate = await fs.readFile(
@@ -973,7 +946,7 @@ export { Button };
     }
   }
 
-  private async setupDatabase(projectPath: string, config: ProjectConfig) {
+  private async setupDatabase(config: ProjectConfig, projectPath: string) {
     if (config.architecture.database === "none") {
       return {
         content: [
@@ -1047,7 +1020,7 @@ export const authConfig = {
     };
   }
 
-  private async generateCICD(projectPath: string, config: ProjectConfig) {
+  private async generateCICD(config: ProjectConfig, projectPath: string) {
     const ciWorkflow = `name: CI/CD Pipeline
 
 on:
@@ -1176,7 +1149,7 @@ jobs:
     };
   }
 
-  private async generateReadme(projectPath: string, config: ProjectConfig) {
+  private async generateReadme(config: ProjectConfig, projectPath: string) {
     const readme = `# ${config.name}
 
 ${config.description || "A Next.js application"}
