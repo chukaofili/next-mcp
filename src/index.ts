@@ -838,8 +838,10 @@ class NextMCPServer {
       // Note: If uiLibrary is 'shadcn', call the 'setup_shadcn' tool separately
       // to initialize shadcn/ui and install all components
 
+      const useShadcn = config.architecture.uiLibrary === 'shadcn';
+
       // Update the existing page.tsx with our custom content using Tailwind CSS
-      const pageTsx = `export default function Home() {
+      const pageTsx = `${useShadcn ? "import { Button } from '@/components/ui/button';\n\n" : ''}export default function Home() {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-8">
       <div className="max-w-4xl mx-auto text-center">
@@ -907,7 +909,17 @@ class NextMCPServer {
         </div>
 
         <div className="mt-12 flex flex-col sm:flex-row gap-4 justify-center">
-          <a
+          ${
+            useShadcn
+              ? `<Button asChild>
+            <a href="/api/health">Test API Route</a>
+          </Button>
+          <Button variant="outline" asChild>
+            <a href="https://nextjs.org/docs" target="_blank" rel="noopener noreferrer">
+              Read the Docs
+            </a>
+          </Button>`
+              : `<a
             href="/api/health"
             className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
           >
@@ -920,7 +932,8 @@ class NextMCPServer {
             className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
           >
             Read the Docs
-          </a>
+          </a>`
+          }
         </div>
       </div>
     </main>
@@ -992,13 +1005,28 @@ export { Button };
       await fs.mkdir(path.join(projectPath, 'src/app/api/health'), { recursive: true });
       await fs.writeFile(path.join(projectPath, 'src/app/page.tsx'), pageTsx);
       await fs.writeFile(path.join(projectPath, 'src/app/api/health/route.ts'), healthApiRoute);
-      await fs.writeFile(path.join(projectPath, 'src/components/ui/button.tsx'), buttonComponent);
+
+      // Only create custom button component if not using shadcn
+      if (!useShadcn) {
+        await fs.writeFile(path.join(projectPath, 'src/components/ui/button.tsx'), buttonComponent);
+      }
+
+      const components = [
+        '- Enhanced home page with feature showcase',
+        '- Added health check API route',
+      ];
+
+      if (useShadcn) {
+        components.push('- Using shadcn/ui Button component (call setup_shadcn tool to install)');
+      } else {
+        components.push('- Created reusable Button component with Tailwind CSS');
+      }
 
       return {
         content: [
           {
             type: 'text',
-            text: `✅ Generated base components with Tailwind CSS:\n- Enhanced home page with feature showcase\n- Added health check API route\n- Created reusable Button component`,
+            text: `✅ Generated base components:\n${components.join('\n')}`,
           },
         ],
       };
