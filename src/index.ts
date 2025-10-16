@@ -2,6 +2,7 @@
 import { execSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -10,6 +11,10 @@ import { adjectives, colors, Config, names, uniqueNamesGenerator } from 'unique-
 import winston from 'winston';
 
 import details from '../package.json' with { type: 'json' };
+
+// ES module equivalent of __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Configure logger
 const logger = winston.createLogger({
@@ -128,10 +133,9 @@ class NextMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              config: { type: 'object' },
               projectPath: { type: 'string' },
             },
-            required: ['config', 'projectPath'],
+            required: ['projectPath'],
           },
         },
         {
@@ -244,8 +248,8 @@ class NextMCPServer {
             return await this.updatePackageJson(args.config as ProjectConfig, args.projectPath as string);
           case 'generate_dockerfile':
             return await this.generateDockerfile(args.config as ProjectConfig, args.projectPath as string);
-          // case "generate_nextjs_config":
-          //   return await this.generateNextJSConfig(args.config as ProjectConfig, args.projectPath as string);
+          case 'generate_nextjs_config':
+            return await this.generateNextJSConfig(args.projectPath as string);
           // case "generate_base_components":
           //   return await this.generateBaseComponents(args.config as ProjectConfig, args.projectPath as string);
           // case "setup_database":
@@ -443,10 +447,10 @@ class NextMCPServer {
       // Add additional scripts
       const additionalScripts = {
         'type-check': 'tsc --noEmit',
-        'lint:fix': 'next lint --fix',
         'docker:build': `docker build -t ${config.name} .`,
         'docker:run': `docker run -p 3000:3000 ${config.name}`,
-        'docker:dev': 'docker-compose -f docker-compose.yml up',
+        'docker:dev:up': 'docker-compose -f docker-compose.yml up',
+        'docker:dev:down': 'docker-compose -f docker-compose.yml down',
         test: 'echo "No test command specified"',
         'test:watch': 'echo "No test watch command specified"',
         'test:ui': 'echo "No test UI command specified"',
@@ -683,47 +687,29 @@ class NextMCPServer {
     }
   }
 
-  /**
-
-  private async generateNextJSConfig(
-    projectPath: string,
-    config: ProjectConfig
-  ) {
+  private async generateNextJSConfig(projectPath: string) {
     try {
       // Read template files
-      const nextConfigTemplate = await fs.readFile(
-        path.join(__dirname, "templates", "next.config.template"),
-        "utf-8"
-      );
+      const nextConfigTemplate = await fs.readFile(path.join(__dirname, 'templates', 'next.config.template'), 'utf-8');
 
       // Write core configuration files
-      await fs.writeFile(
-        path.join(projectPath, "next.config.ts"),
-        nextConfigTemplate
-      );
-
-      const filesCreated = ["next.config.ts"];
-
-      // Handle Tailwind CSS configuration if specified
-      if (config.architecture.uiLibrary === "shadcn") {
-        // ADD SHdcn
-      }
+      await fs.writeFile(path.join(projectPath, 'next.config.ts'), nextConfigTemplate);
+      const filesCreated = ['next.config.ts'];
 
       return {
         content: [
           {
-            type: "text",
-            text: `✅ Generated Next.js configuration files (from templates):\n${filesCreated.map((f) => `- ${f}`).join("\n")}`,
+            type: 'text',
+            text: `✅ Generated Next.js configuration files (from templates):\n${filesCreated.map((f) => `- ${f}`).join('\n')}`,
           },
         ],
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [
           {
-            type: "text",
+            type: 'text',
             text: `❌ Failed to generate Next.js configuration: ${errorMessage}`,
           },
         ],
@@ -731,6 +717,7 @@ class NextMCPServer {
     }
   }
 
+  /**
   private async generateBaseComponents(
     projectPath: string,
     config: ProjectConfig
