@@ -6,6 +6,7 @@ import path from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { adjectives, colors, Config, names, uniqueNamesGenerator } from 'unique-names-generator';
 import winston from 'winston';
 
 import details from '../package.json' with { type: 'json' };
@@ -17,33 +18,26 @@ const logger = winston.createLogger({
   transports: [new winston.transports.File({ filename: 'next-mcp.log' })],
 });
 
-// Add console transport in development
-if (process.env.NODE_ENV !== 'production') {
-  logger.add(
-    new winston.transports.Console({
-      format: winston.format.simple(),
-    })
-  );
-}
+const uniqueNamesGeneratorConfig: Config = {
+  dictionaries: [adjectives, colors, names],
+  length: 2,
+  separator: '-',
+  style: 'lowerCase',
+};
 
 interface ProjectConfig {
   name: string;
   description: string;
-  features: string[];
-  deployment: {
-    platform: 'vercel' | 'aws' | 'gcp' | 'azure';
-    containerRegistry?: string;
-    domain?: string;
-  };
   architecture: {
     appRouter: boolean;
     typescript: boolean;
+    packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun';
     database: 'none' | 'postgres' | 'mysql' | 'mongodb';
     orm: 'none' | 'prisma' | 'drizzle' | 'mongoose';
     auth: 'none' | 'better-auth';
     uiLibrary: 'none' | 'shadcn';
-    stateManagement: 'zustand' | 'redux' | 'context';
-    testing: 'jest' | 'vitest' | 'playwright';
+    stateManagement: 'none' | 'zustand' | 'redux';
+    testing: 'none' | 'jest' | 'vitest' | 'playwright';
   };
 }
 
@@ -80,8 +74,6 @@ class NextMCPServer {
                 properties: {
                   name: { type: 'string' },
                   description: { type: 'string' },
-                  features: { type: 'array', items: { type: 'string' } },
-                  deployment: { type: 'object' },
                   architecture: { type: 'object' },
                 },
                 required: ['name', 'architecture'],
@@ -246,11 +238,8 @@ class NextMCPServer {
         switch (name) {
           case 'scaffold_project':
             return await this.scaffoldProject(args.config as ProjectConfig, args.targetPath as string);
-          // case "create_directory_structure":
-          //   return await this.createDirectoryStructure(
-          //     args.projectPath as string,
-          //     args.config as ProjectConfig
-          //   );
+          case 'create_directory_structure':
+            return await this.createDirectoryStructure(args.projectPath as string, args.config as ProjectConfig);
           // case "generate_package_json":
           //   return await this.updatePackageJson(
           //     args.projectPath as string,
@@ -315,16 +304,40 @@ class NextMCPServer {
     });
   }
 
+  private applyConfigDefaults(config: ProjectConfig): ProjectConfig {
+    return {
+      name: config.name || `${uniqueNamesGenerator(uniqueNamesGeneratorConfig)}-app`,
+      description: config.description || 'A Next.js application scaffolded with and AI Agent MCP',
+      architecture: {
+        appRouter: config.architecture?.appRouter ?? true,
+        typescript: config.architecture?.typescript ?? true,
+        packageManager: config.architecture?.packageManager || 'pnpm',
+        database: config.architecture?.database || 'postgres',
+        orm: config.architecture?.orm || 'prisma',
+        auth: config.architecture?.auth || 'better-auth',
+        uiLibrary: config.architecture?.uiLibrary || 'shadcn',
+        stateManagement: config.architecture?.stateManagement || 'none',
+        testing: config.architecture?.testing || 'none',
+      },
+    };
+  }
+
   private async scaffoldProject(config: ProjectConfig, targetPath: string) {
-    const projectPath = path.join(targetPath, config.name);
+    // Apply defaults to the configuration
+    const fullConfig = this.applyConfigDefaults(config);
+    const projectPath = path.join(targetPath, fullConfig.name);
 
     try {
       // Build create-next-app command based on configuration
-      const createCommand = this.buildCreateNextAppCommand(config);
+      const createCommand = this.buildCreateNextAppCommand(fullConfig);
       logger.info(`Executing: ${createCommand}`);
 
       // Run create-next-app
-      execSync(createCommand, { stdio: 'inherit', cwd: targetPath });
+      const out = execSync(createCommand, {
+        cwd: targetPath,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const stdout = out.toString();
 
       // Verify the project was created
       await fs.access(projectPath);
@@ -333,7 +346,7 @@ class NextMCPServer {
         content: [
           {
             type: 'text',
-            text: `✅ Successfully created Next.js project at ${projectPath}\nCommand executed: ${createCommand}`,
+            text: `✅ Successfully created Next.js project at ${projectPath}\n\n[Configuration]:\n${JSON.stringify(fullConfig, null, 2)}\n\n[Command executed]: ${createCommand}\n\n[Output]:\n${stdout}`,
           },
         ],
       };
@@ -353,7 +366,7 @@ class NextMCPServer {
 
   private buildCreateNextAppCommand(config: ProjectConfig): string {
     const flags = ['npx create-next-app@latest', `./${config.name}`];
-
+    logger.info(`Building create-next-app command for config: ${JSON.stringify(config)}`);
     if (config.architecture.typescript) {
       flags.push('--ts');
     } else {
@@ -381,45 +394,48 @@ class NextMCPServer {
     // Set import alias
     flags.push('--import-alias "@/*"');
 
-    // Use pnpm as package manager
-    flags.push('--use-pnpm');
-
-    // We'll initialize git ourselves later
-    flags.push('--no-git');
+    if (config.architecture.packageManager === 'pnpm') {
+      flags.push('--use-pnpm');
+    } else if (config.architecture.packageManager === 'yarn') {
+      flags.push('--use-yarn');
+    } else if (config.architecture.packageManager === 'bun') {
+      flags.push('--use-bun');
+    } else {
+      flags.push('--use-npm');
+    }
 
     return flags.join(' ');
   }
 
-  /**
-
-  private async createDirectoryStructure(
-    projectPath: string,
-    config: ProjectConfig
-  ) {
+  private async createDirectoryStructure(projectPath: string, config: ProjectConfig) {
     // Additional directories that create-next-app doesn't create
     const additionalDirectories = [
-      "src/components/ui",
-      "src/components/forms",
-      "src/lib",
-      "src/hooks",
-      "src/tests",
-      ".github/workflows",
+      'src/components/ui',
+      'src/components/forms',
+      'src/lib',
+      'src/hooks',
+      '.github/workflows',
     ];
 
     // Add stores directory if using external state management
-    if (config.architecture.stateManagement !== "context") {
-      additionalDirectories.push("src/stores");
+    if (config.architecture.stateManagement !== 'none') {
+      additionalDirectories.push('src/stores');
     }
 
     // Add database-related directories
-    if (config.architecture.database !== "none") {
-      additionalDirectories.push("src/lib/db");
+    if (config.architecture.database !== 'none') {
+      additionalDirectories.push('src/lib/db');
     }
 
     // Add auth-related directories
-    if (config.architecture.auth !== "none") {
-      additionalDirectories.push("src/lib/auth");
-      additionalDirectories.push("src/components/auth");
+    if (config.architecture.auth !== 'none') {
+      additionalDirectories.push('src/lib/auth');
+      additionalDirectories.push('src/components/auth');
+    }
+
+    // Add testing-related directories
+    if (config.architecture.testing !== 'none') {
+      additionalDirectories.push('src/tests');
     }
 
     // Create the additional directories
@@ -428,32 +444,33 @@ class NextMCPServer {
         await fs.mkdir(path.join(projectPath, dir), { recursive: true });
       } catch (error) {
         // Directory might already exist, continue
-        logger.error(`Note: Directory ${dir} might already exist`);
+        logger.error(`Note: Directory ${dir} might already exist`, error);
       }
     }
 
     // Initialize git repository (since we skipped it in create-next-app)
     try {
-      execSync("git init", { cwd: projectPath, stdio: "pipe" });
-      execSync("git add .", { cwd: projectPath, stdio: "pipe" });
-      execSync('git commit -m "chore: initial commit from scaffolding"', {
+      const gitAddOut = execSync('git add .', { cwd: projectPath, stdio: ['ignore', 'pipe', 'pipe'] });
+      const gitCommitOut = execSync('git commit -m "chore: initial commit from scaffolding"', {
         cwd: projectPath,
-        stdio: "pipe",
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
+      logger.info(`Git initialized:\n${gitAddOut.toString()}\n${gitCommitOut.toString()}`);
     } catch (error) {
-      logger.error("Git initialization failed, continuing without git");
+      logger.error('Git initialization failed, continuing without git', error);
     }
 
     return {
       content: [
         {
-          type: "text",
+          type: 'text',
           text: `✅ Created ${additionalDirectories.length} additional directories and initialized git repository`,
         },
       ],
     };
   }
 
+  /**
   private async updatePackageJson(projectPath: string, config: ProjectConfig) {
     try {
       // Read the existing package.json created by create-next-app
@@ -1265,6 +1282,24 @@ ${config.architecture.testing !== "jest" ? "- `pnpm test` - Run tests" : ""}
     logger.info('Next.js Scaffolding MCP server running on stdio');
   }
 }
+
+process.on('SIGINT', async () => {
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  process.exit(0);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
+  process.exit(1);
+});
 
 const server = new NextMCPServer();
 server.run().catch(logger.error);

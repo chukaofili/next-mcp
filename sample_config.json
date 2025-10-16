@@ -1,0 +1,11 @@
+{
+  "architecture": {
+    "database": "postgres",
+    "orm": "prisma",
+    "auth": "better-auth",
+    "uiLibrary": "shadcn",
+    "stateManagement": "context",
+    "testing": "vitest"
+  },
+  "targetPath": "/Users/apollo/projects/tools/mcps/server"
+}
