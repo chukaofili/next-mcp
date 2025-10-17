@@ -222,20 +222,11 @@ export default defineConfig({
 ```typescript
 import { __IMPORTS__ } from 'drizzle-orm/__DIALECT_CORE__';
 
-// Example User table (can be extended)
-export const users = __TABLE_FUNCTION__('users', {
-  id: __ID_TYPE__('id').__PRIMARY_KEY__,
-  email: __TEXT_TYPE__('email').__NOT_NULL__.__UNIQUE__,
-  name: __TEXT_TYPE__('name'),
-  createdAt: __TIMESTAMP_TYPE__('created_at').__DEFAULT_NOW__.__NOT_NULL__,
-  updatedAt: __TIMESTAMP_TYPE__('updated_at').__DEFAULT_NOW__.__NOT_NULL__,
-});
-
-export type User = typeof users.$inferSelect;
-export type NewUser = typeof users.$inferInsert;
+// Schema will be populated by better-auth when authentication is set up
+// Add your custom tables here
 ```
 
-**Placeholders vary by database dialect**
+**Note**: Schema starts empty. Better-auth will add its tables when authentication is configured.
 
 #### `src/templates/database/drizzle/client.ts.template`
 
@@ -258,6 +249,9 @@ export { db };
 ```typescript
 export { db } from './client';
 export * from './schema';
+
+// Re-export common types for convenience
+export type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
 ```
 
 ### Mongoose Templates
@@ -312,42 +306,22 @@ async function connectDB() {
 export default connectDB;
 ```
 
-#### `src/templates/database/mongoose/models/user.ts.template`
+#### `src/templates/database/mongoose/models/.gitkeep`
 
-```typescript
-import mongoose, { model, models, Schema } from 'mongoose';
-
-export interface IUser {
-  email: string;
-  name?: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-const UserSchema = new Schema<IUser>(
-  {
-    email: {
-      type: String,
-      required: true,
-      unique: true,
-    },
-    name: {
-      type: String,
-    },
-  },
-  {
-    timestamps: true,
-  }
-);
-
-export const User = models.User || model<IUser>('User', UserSchema);
 ```
+# Models directory - better-auth will add authentication models here
+# Add your custom Mongoose models to this directory
+```
+
+**Note**: Models directory starts empty. Better-auth will add its models when authentication is configured.
 
 #### `src/templates/database/mongoose/index.ts.template`
 
 ```typescript
 export { default as connectDB } from './connection';
-export * from './models/user';
+
+// Export models here as they are created
+// Example: export * from './models/user';
 ```
 
 ### Direct Database Driver Templates
@@ -604,53 +578,28 @@ await fs.appendFile(path.join(projectPath, '.env.local'), envContent);
 // Run prisma init with CLI using the selected package manager
 const provider = getPrismaProvider(config.architecture.database);
 const runner = getPackageRunner(config.architecture.packageManager);
-const prismaInitCommand = `${runner} prisma init --datasource-provider ${provider}`;
+const prismaInitCommand = `${runner} prisma init --generator-provider prisma-client --output	../src/lib/db/generated/prisma --datasource-provider ${provider}`;
 
 try {
   execSync(prismaInitCommand, {
     cwd: projectPath,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  logger.info(`Prisma initialized with provider: ${provider} using ${runner}`);
+  logger.info(
+    `Prisma initialized with provider: ${provider} using ${runner}, with output to src/lib/db/generated/prisma`
+  );
 } catch (error) {
   logger.error('Failed to initialize Prisma:', error);
   throw new Error(`Prisma initialization failed: ${error.message}`);
 }
 
-// Update schema.prisma to use custom output directory
-const schemaPath = path.join(projectPath, 'prisma/schema.prisma');
-let schemaContent = await fs.readFile(schemaPath, 'utf-8');
-
-// Update generator to use custom output
-schemaContent = schemaContent.replace(
-  /generator client \{[\s\S]*?\}/,
-  `generator client {
-  provider = "prisma-client-js"
-  output   = "../src/lib/db/generated/prisma"
-}`
-);
-
-await fs.writeFile(schemaPath, schemaContent);
-
 // Write Prisma client wrapper
-const clientTemplate = await fs.readFile(
-  path.join(__dirname, 'templates/database/prisma/client.ts.template'),
-  'utf-8'
-);
-await fs.writeFile(
-  path.join(projectPath, 'src/lib/db/client.ts'),
-  clientTemplate
-);
+const clientTemplate = await fs.readFile(path.join(__dirname, 'templates/database/prisma/client.ts.template'), 'utf-8');
+await fs.writeFile(path.join(projectPath, 'src/lib/db/client.ts'), clientTemplate);
 
 // Write index
-const indexTemplate = await fs.readFile(
-  path.join(__dirname, 'templates/database/prisma/index.ts.template'),
-  'utf-8'
-);
-await fs.writeFile(
-  path.join(projectPath, 'src/lib/db/index.ts'),
-  indexTemplate
-);
+const indexTemplate = await fs.readFile(path.join(__dirname, 'templates/database/prisma/index.ts.template'), 'utf-8');
+await fs.writeFile(path.join(projectPath, 'src/lib/db/index.ts'), indexTemplate);
 
 // Add generated folder to .gitignore
 const gitignorePath = path.join(projectPath, '.gitignore');
