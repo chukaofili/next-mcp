@@ -420,7 +420,6 @@ class NextMCPServer {
 
     // Add auth-related directories
     if (config.architecture.auth !== 'none') {
-      additionalDirectories.push('src/lib/auth');
       additionalDirectories.push('src/components/auth');
     }
 
