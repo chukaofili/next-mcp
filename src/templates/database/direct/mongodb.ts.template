@@ -1,0 +1,25 @@
+import { MongoClient } from 'mongodb';
+
+const connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error('DATABASE_URL environment variable is not set');
+}
+
+const client = new MongoClient(connectionString);
+
+let cachedDb: any = null;
+
+export async function connectToDatabase() {
+  if (cachedDb) {
+    return cachedDb;
+  }
+
+  await client.connect();
+  const db = client.db();
+  cachedDb = db;
+
+  return db;
+}
+
+export const db = { connect: connectToDatabase };
