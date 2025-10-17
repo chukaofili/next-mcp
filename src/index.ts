@@ -266,14 +266,14 @@ class NextMCPServer {
             return await this.generateBaseComponents(args.config as ProjectConfig, args.projectPath as string);
           case 'setup_shadcn':
             return await this.setupShadcn(args.config as ProjectConfig, args.projectPath as string);
-          // case "setup_database":
-          //   return await this.setupDatabase(args.config as ProjectConfig, args.projectPath as string);
-          // case "setup_authentication":
-          //   return await this.setupAuthentication(args.config as ProjectConfig, args.projectPath as string);
-          // case "generate_ci_cd":
-          //   return await this.generateCICD(args.config as ProjectConfig, args.projectPath as string);
+          case 'setup_database':
+            return await this.setupDatabase(args.config as ProjectConfig, args.projectPath as string);
+          case 'setup_authentication':
+            return await this.setupAuthentication(args.config as ProjectConfig, args.projectPath as string);
           case 'install_dependencies':
             return await this.installDependencies(args.config as ProjectConfig, args.projectPath as string);
+          // case "generate_ci_cd":
+          //   return await this.generateCICD(args.config as ProjectConfig, args.projectPath as string);
           // case "validate_project":
           //   return await this.validateProject(args.projectPath as string);
           // case "generate_readme":
@@ -605,11 +605,17 @@ class NextMCPServer {
   private async generateDockerfile(config: ProjectConfig, projectPath: string) {
     try {
       // Read Dockerfile template
-      const dockerfileTemplate = await fs.readFile(path.join(__dirname, 'templates', 'Dockerfile'), 'utf-8');
-      const dockerignoreTemplate = await fs.readFile(path.join(__dirname, 'templates', '.dockerignore'), 'utf-8');
+      const dockerfileTemplate = await fs.readFile(path.join(__dirname, 'templates', 'docker', 'Dockerfile'), 'utf-8');
+      const dockerignoreTemplate = await fs.readFile(
+        path.join(__dirname, 'templates', 'docker', '.dockerignore'),
+        'utf-8'
+      );
 
       // Read docker-compose template
-      const dockerComposeTemplate = await fs.readFile(path.join(__dirname, 'templates', 'docker-compose.yml'), 'utf-8');
+      const dockerComposeTemplate = await fs.readFile(
+        path.join(__dirname, 'templates', 'docker', 'docker-compose.yml'),
+        'utf-8'
+      );
 
       // Generate database-specific sections
       let databaseDependsOn = '';
@@ -1011,10 +1017,7 @@ export { Button };
         await fs.writeFile(path.join(projectPath, 'src/components/ui/button.tsx'), buttonComponent);
       }
 
-      const components = [
-        '- Enhanced home page with feature showcase',
-        '- Added health check API route',
-      ];
+      const components = ['- Enhanced home page with feature showcase', '- Added health check API route'];
 
       if (useShadcn) {
         components.push('- Using shadcn/ui Button component (call setup_shadcn tool to install)');
@@ -1043,14 +1046,13 @@ export { Button };
     }
   }
 
-  /**
   private async setupDatabase(config: ProjectConfig, projectPath: string) {
-    if (config.architecture.database === "none") {
+    if (config.architecture.database === 'none') {
       return {
         content: [
           {
-            type: "text",
-            text: "No database configuration needed",
+            type: 'text',
+            text: 'No database configuration needed',
           },
         ],
       };
@@ -1067,28 +1069,25 @@ export const dbConfig = {
 }
 `;
 
-    await fs.writeFile(path.join(projectPath, "src/lib/db.ts"), dbConfig);
+    await fs.writeFile(path.join(projectPath, 'src/lib/db.ts'), dbConfig);
 
     return {
       content: [
         {
-          type: "text",
+          type: 'text',
           text: `Generated ${config.architecture.database} database configuration`,
         },
       ],
     };
   }
 
-  private async setupAuthentication(
-    projectPath: string,
-    config: ProjectConfig
-  ) {
-    if (config.architecture.auth === "none") {
+  private async setupAuthentication(config: ProjectConfig, projectPath: string) {
+    if (config.architecture.auth === 'none') {
       return {
         content: [
           {
-            type: "text",
-            text: "No authentication configuration needed",
+            type: 'text',
+            text: 'No authentication configuration needed',
           },
         ],
       };
@@ -1106,17 +1105,19 @@ export const authConfig = {
 }
 `;
 
-    await fs.writeFile(path.join(projectPath, "src/lib/auth.ts"), authConfig);
+    await fs.writeFile(path.join(projectPath, 'src/lib/auth.ts'), authConfig);
 
     return {
       content: [
         {
-          type: "text",
+          type: 'text',
           text: `Generated ${config.architecture.auth} authentication configuration`,
         },
       ],
     };
   }
+
+  /**
 
   private async generateCICD(config: ProjectConfig, projectPath: string) {
     const ciWorkflow = `name: CI/CD Pipeline
