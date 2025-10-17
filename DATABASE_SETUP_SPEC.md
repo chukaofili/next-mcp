@@ -403,61 +403,9 @@ export default db;
 
 ---
 
-## 5. Drizzle Schema Templates by Database
+## 5. Drizzle Client Templates by Database
 
-### PostgreSQL Schema
-
-```typescript
-import { pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
-
-export const users = pgTable('users', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  email: text('email').notNull().unique(),
-  name: text('name'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
-```
-
-### MySQL Schema
-
-```typescript
-import { mysqlTable, text, timestamp, varchar } from 'drizzle-orm/mysql-core';
-
-export const users = mysqlTable('users', {
-  id: varchar('id', { length: 36 })
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  email: varchar('email', { length: 255 }).notNull().unique(),
-  name: varchar('name', { length: 255 }),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
-```
-
-### SQLite Schema
-
-```typescript
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
-
-export const users = sqliteTable('users', {
-  id: text('id')
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  email: text('email').notNull().unique(),
-  name: text('name'),
-  createdAt: integer('created_at', { mode: 'timestamp' })
-    .$defaultFn(() => new Date())
-    .notNull(),
-  updatedAt: integer('updated_at', { mode: 'timestamp' })
-    .$defaultFn(() => new Date())
-    .notNull(),
-});
-```
-
----
-
-## 6. Drizzle Client Templates by Database
+**Note**: Schema templates are kept minimal (see section 4). Better-auth will generate appropriate tables when authentication is configured.
 
 ### PostgreSQL Client
 
@@ -503,7 +451,7 @@ export const db = drizzle(sqlite, { schema });
 
 ---
 
-## 7. Implementation Steps for `setupDatabase` Method
+## 6. Implementation Steps for `setupDatabase` Method
 
 ### Step 1: Validate Configuration
 
@@ -626,12 +574,24 @@ const configContent = drizzleConfigTemplate.replace('__DIALECT__', dialect).repl
 
 await fs.writeFile(path.join(projectPath, 'drizzle.config.ts'), configContent);
 
-// Generate schema
-const schemaContent = generateDrizzleSchema(config.architecture.database);
+// Read schema template
+const schemaTemplate = await fs.readFile(
+  path.join(__dirname, 'templates/database/drizzle/schema.ts.template'),
+  'utf-8'
+);
+
+// Generate schema with proper imports based on database
+const schemaContent = generateDrizzleSchemaImports(config.architecture.database, schemaTemplate);
 await fs.writeFile(path.join(projectPath, 'src/lib/db/schema.ts'), schemaContent);
 
-// Generate client
-const clientContent = generateDrizzleClient(config.architecture.database);
+// Read client template
+const clientTemplate = await fs.readFile(
+  path.join(__dirname, 'templates/database/drizzle/client.ts.template'),
+  'utf-8'
+);
+
+// Generate client with proper driver based on database
+const clientContent = generateDrizzleClient(config.architecture.database, clientTemplate);
 await fs.writeFile(path.join(projectPath, 'src/lib/db/client.ts'), clientContent);
 
 // Generate index
@@ -651,12 +611,9 @@ const connectionTemplate = await fs.readFile(
 );
 await fs.writeFile(path.join(projectPath, 'src/lib/db/connection.ts'), connectionTemplate);
 
-// Generate User model
-const userModelTemplate = await fs.readFile(
-  path.join(__dirname, 'templates/database/mongoose/models/user.ts.template'),
-  'utf-8'
-);
-await fs.writeFile(path.join(projectPath, 'src/lib/db/models/user.ts'), userModelTemplate);
+// Create models directory with .gitkeep
+const gitkeepContent = '# Models directory - better-auth will add authentication models here\n# Add your custom Mongoose models to this directory\n';
+await fs.writeFile(path.join(projectPath, 'src/lib/db/models/.gitkeep'), gitkeepContent);
 
 // Generate index
 const indexTemplate = await fs.readFile(path.join(__dirname, 'templates/database/mongoose/index.ts.template'), 'utf-8');
@@ -690,7 +647,7 @@ return {
 
 ---
 
-## 8. Helper Functions
+## 7. Helper Functions
 
 ### `getDatabaseUrl(config: ProjectConfig): string`
 
@@ -751,6 +708,90 @@ function getPrismaProvider(database: string): string {
 ```
 
 **Note**: These provider names match Prisma's `--datasource-provider` flag values.
+
+### `generateDrizzleSchemaImports(database: string, template: string): string`
+
+```typescript
+function generateDrizzleSchemaImports(database: string, template: string): string {
+  // Map database to appropriate imports and dialect core
+  const importMap = {
+    postgres: {
+      dialectCore: 'pg-core',
+      imports: 'pgTable, uuid, text, timestamp',
+    },
+    mysql: {
+      dialectCore: 'mysql-core',
+      imports: 'mysqlTable, varchar, text, timestamp',
+    },
+    sqlite: {
+      dialectCore: 'sqlite-core',
+      imports: 'sqliteTable, text, integer',
+    },
+  };
+
+  const config = importMap[database] || importMap.postgres;
+
+  return template
+    .replace('__IMPORTS__', config.imports)
+    .replace('__DIALECT_CORE__', config.dialectCore);
+}
+```
+
+### `generateDrizzleClient(database: string, template: string): string`
+
+```typescript
+function generateDrizzleClient(database: string, template: string): string {
+  let driverImport = '';
+  let connectionCode = '';
+
+  switch (database) {
+    case 'postgres':
+      driverImport = `import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import * as schema from './schema';
+
+const pool = new Pool({
+  connectionString,
+});`;
+      connectionCode = `export const db = drizzle(pool, { schema });`;
+      break;
+
+    case 'mysql':
+      driverImport = `import { drizzle } from 'drizzle-orm/mysql2';
+import mysql from 'mysql2/promise';
+import * as schema from './schema';
+
+const poolConnection = mysql.createPool({
+  uri: connectionString,
+});`;
+      connectionCode = `export const db = drizzle(poolConnection, { schema, mode: 'default' });`;
+      break;
+
+    case 'sqlite':
+      driverImport = `import { drizzle } from 'drizzle-orm/better-sqlite3';
+import Database from 'better-sqlite3';
+import * as schema from './schema';
+
+const sqlite = new Database('dev.db');`;
+      connectionCode = `export const db = drizzle(sqlite, { schema });`;
+      break;
+
+    default:
+      driverImport = `import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import * as schema from './schema';
+
+const pool = new Pool({
+  connectionString,
+});`;
+      connectionCode = `export const db = drizzle(pool, { schema });`;
+  }
+
+  return template
+    .replace('__DRIVER_IMPORT__', driverImport)
+    .replace('__CONNECTION_CODE__', connectionCode);
+}
+```
 
 ### `getDrizzleDialect(database: string): string`
 
@@ -813,7 +854,7 @@ function generateInstructions(config: ProjectConfig): string {
 
 ---
 
-## 9. Testing Checklist
+## 8. Testing Checklist
 
 ### Core Functionality
 
@@ -859,7 +900,7 @@ function generateInstructions(config: ProjectConfig): string {
 
 ---
 
-## 10. Summary
+## 9. Summary
 
 This specification provides a complete blueprint for database setup that:
 
