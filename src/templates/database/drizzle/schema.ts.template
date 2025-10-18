@@ -1,0 +1,4 @@
+import { __IMPORTS__ } from 'drizzle-orm/__DIALECT_CORE__';
+
+// Schema will be populated by better-auth when authentication is set up
+// Add your custom tables here

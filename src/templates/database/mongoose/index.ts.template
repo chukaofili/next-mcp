@@ -1,0 +1,4 @@
+export { default as connectDB } from './connection';
+
+// Export models here as they are created
+// Example: export * from './models/user';

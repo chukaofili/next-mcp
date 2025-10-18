@@ -1,0 +1,11 @@
+__DRIVER_IMPORT__
+
+const connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error('DATABASE_URL environment variable is not set');
+}
+
+__CONNECTION_CODE__
+
+export { db };

@@ -1,0 +1,47 @@
+/** @type {import('prettier').Config} */
+/** @type {import("@ianvs/prettier-plugin-sort-imports").PrettierConfig} */
+
+const config = {
+  endOfLine: 'lf',
+  semi: true,
+  singleQuote: true,
+  tabWidth: 2,
+  useTabs: false,
+  trailingComma: 'es5',
+  printWidth: 120,
+  plugins: ['@ianvs/prettier-plugin-sort-imports'],
+  importOrderParserPlugins: ['typescript'],
+  importOrderTypeScriptVersion: '5.9.3',
+  importOrder: [
+    '^node:$',
+    '',
+    '^(react/(.*)$)|^(react$)',
+    '^(next/(.*)$)|^(next$)',
+    '<THIRD_PARTY_MODULES>',
+    '',
+    '^@/types$',
+    '^@/types/(.*)$',
+    '^@/config$',
+    '^@/config/(.*)$',
+    '^@/paths$',
+    '^@/data/(.*)$',
+    '^@/lib$',
+    '^@/lib/(.*)$',
+    '^@/actions$',
+    '^@/actions/(.*)$',
+    '^@/contexts$',
+    '^@/contexts/(.*)$',
+    '^@/hooks$',
+    '^@/hooks/(.*)$',
+    '^@/design-system$',
+    '^@/design-system/(.*)$',
+    '^@/components$',
+    '^@/components/(.*)$',
+    '^@/styles$',
+    '^@/styles/(.*)$',
+    '',
+    '^[./]',
+  ],
+};
+
+export default config;

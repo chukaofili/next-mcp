@@ -1,0 +1,5 @@
+export { db } from './client';
+export * from './schema';
+
+// Re-export common types for convenience
+export type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
