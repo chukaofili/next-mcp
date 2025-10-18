@@ -1,0 +1,23 @@
+import { betterAuth } from 'better-auth';
+
+__ADAPTER_IMPORT__
+
+export const auth = betterAuth({
+  database: __DATABASE_CONFIG__,
+  emailAndPassword: {
+    enabled: true,
+  },
+  socialProviders: {
+    // Uncomment and configure OAuth providers as needed
+    // github: {
+    //   clientId: process.env.GITHUB_CLIENT_ID || "",
+    //   clientSecret: process.env.GITHUB_CLIENT_SECRET || "",
+    // },
+    // google: {
+    //   clientId: process.env.GOOGLE_CLIENT_ID || "",
+    //   clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+    // },
+  },
+});
+
+export type Session = typeof auth.$Infer.Session;

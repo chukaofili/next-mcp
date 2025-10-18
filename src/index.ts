@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -317,6 +318,75 @@ class NextMCPServer {
     };
   }
 
+  private getPackageRunner(packageManager: string): string {
+    switch (packageManager) {
+      case 'pnpm':
+        return 'pnpm exec';
+      case 'yarn':
+        return 'yarn';
+      case 'bun':
+        return 'bunx';
+      case 'npm':
+      default:
+        return 'npx';
+    }
+  }
+
+  private getPackageRunnerDlx(packageManager: string): string {
+    switch (packageManager) {
+      case 'pnpm':
+        return 'pnpm dlx';
+      case 'yarn':
+        return 'yarn dlx';
+      case 'bun':
+        return 'bunx';
+      case 'npm':
+      default:
+        return 'npx';
+    }
+  }
+
+  private getDatabaseUrl(config: ProjectConfig): string {
+    const { database } = config.architecture;
+    const projectName = config.name;
+
+    switch (database) {
+      case 'postgres':
+        return `postgresql://postgres:postgres@localhost:5432/${projectName}?schema=public`;
+      case 'mysql':
+        return `mysql://root:password@localhost:3306/${projectName}`;
+      case 'sqlite':
+        return 'file:./dev.db';
+      case 'mongodb':
+        return `mongodb://localhost:27017/${projectName}`;
+      default:
+        return '';
+    }
+  }
+
+  private getPrismaProvider(database: string): string {
+    const providerMap: Record<string, string> = {
+      postgres: 'postgresql',
+      mysql: 'mysql',
+      sqlite: 'sqlite',
+      mongodb: 'mongodb',
+    };
+    return providerMap[database] || 'postgresql';
+  }
+
+  private getDrizzleProvider(database: string): string {
+    switch (database) {
+      case 'postgres':
+        return 'pg';
+      case 'mysql':
+        return 'mysql';
+      case 'sqlite':
+        return 'sqlite';
+      default:
+        return 'pg';
+    }
+  }
+
   private async scaffoldProject(config: ProjectConfig, targetPath: string) {
     // Apply defaults to the configuration
     const fullConfig = this.applyConfigDefaults(config);
@@ -549,6 +619,7 @@ class NextMCPServer {
       // Authentication
       if (config.architecture.auth === 'better-auth') {
         additionalDeps['better-auth'] = '^1.3.27';
+        additionalDeps['@daveyplate/better-auth-ui'] = 'latest';
       }
 
       // Testing
@@ -1047,62 +1118,6 @@ export { Button };
     }
   }
 
-  private getPackageRunner(packageManager: string): string {
-    switch (packageManager) {
-      case 'pnpm':
-        return 'pnpm exec';
-      case 'yarn':
-        return 'yarn';
-      case 'bun':
-        return 'bunx';
-      case 'npm':
-      default:
-        return 'npx';
-    }
-  }
-
-  private getPackageRunnerDlx(packageManager: string): string {
-    switch (packageManager) {
-      case 'pnpm':
-        return 'pnpm dlx';
-      case 'yarn':
-        return 'yarn dlx';
-      case 'bun':
-        return 'bunx';
-      case 'npm':
-      default:
-        return 'npx';
-    }
-  }
-
-  private getDatabaseUrl(config: ProjectConfig): string {
-    const { database } = config.architecture;
-    const projectName = config.name;
-
-    switch (database) {
-      case 'postgres':
-        return `postgresql://postgres:postgres@localhost:5432/${projectName}?schema=public`;
-      case 'mysql':
-        return `mysql://root:password@localhost:3306/${projectName}`;
-      case 'sqlite':
-        return 'file:./dev.db';
-      case 'mongodb':
-        return `mongodb://localhost:27017/${projectName}`;
-      default:
-        return '';
-    }
-  }
-
-  private getPrismaProvider(database: string): string {
-    const providerMap: Record<string, string> = {
-      postgres: 'postgresql',
-      mysql: 'mysql',
-      sqlite: 'sqlite',
-      mongodb: 'mongodb',
-    };
-    return providerMap[database] || 'postgresql';
-  }
-
   private generateDrizzleSchemaImports(database: string, template: string): string {
     const importMap: Record<string, { dialectCore: string; imports: string }> = {
       postgres: {
@@ -1495,6 +1510,86 @@ const pool = new Pool({
     return instructions;
   }
 
+  // Authentication Helper Functions
+  private getAdapterConfig(config: ProjectConfig): { adapterImport: string; databaseConfig: string } {
+    const { database, orm } = config.architecture;
+
+    if (orm === 'prisma') {
+      return {
+        adapterImport: `import { prismaAdapter } from "better-auth/adapters/prisma";
+import { db } from "@/lib/db";`,
+        databaseConfig: `prismaAdapter(db, {
+    provider: "${this.getPrismaProvider(database)}",
+  })`,
+      };
+    }
+
+    if (orm === 'drizzle') {
+      return {
+        adapterImport: `import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { db } from "@/lib/db";`,
+        databaseConfig: `drizzleAdapter(db, {
+    provider: "${this.getDrizzleProvider(database)}",
+  })`,
+      };
+    }
+
+    // Direct database connection
+    if (database === 'postgres') {
+      return {
+        adapterImport: `import { Pool } from "pg";
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});`,
+        databaseConfig: `pool`,
+      };
+    }
+
+    if (database === 'mysql') {
+      return {
+        adapterImport: `import mysql from "mysql2/promise";
+
+const pool = mysql.createPool(process.env.DATABASE_URL);`,
+        databaseConfig: `pool`,
+      };
+    }
+
+    if (database === 'sqlite') {
+      return {
+        adapterImport: `import Database from "better-sqlite3";
+
+const db = new Database("./dev.db");`,
+        databaseConfig: `db`,
+      };
+    }
+
+    // Fallback for mongodb or other
+    return {
+      adapterImport: `// Direct database connection`,
+      databaseConfig: `process.env.DATABASE_URL`,
+    };
+  }
+
+  private getAuthSchemaCommand(): string {
+    return 'npx @better-auth/cli@latest generate';
+  }
+
+  private getAuthMigrationCommand(config: ProjectConfig): string {
+    const { orm, packageManager } = config.architecture;
+    const packageRunner = this.getPackageRunner(packageManager);
+
+    if (orm === 'prisma') {
+      return `${packageRunner} prisma migrate dev -n setup_authentication`;
+    }
+
+    if (orm === 'drizzle') {
+      return `${packageRunner} drizzle-kit generate && ${packageRunner} drizzle-kit migrate`;
+    }
+
+    return 'npx @better-auth/cli@latest migrate';
+  }
+
   private async setupAuthentication(config: ProjectConfig, projectPath: string) {
     if (config.architecture.auth === 'none') {
       return {
@@ -1507,28 +1602,330 @@ const pool = new Pool({
       };
     }
 
-    // Generate auth configuration
-    const authConfig = `// Authentication configuration
-export const authConfig = {
-  providers: [],
-  callbacks: {},
-  pages: {
-    signIn: '/auth/signin',
-    signUp: '/auth/signup',
-  },
+    // Verify database is configured
+    if (config.architecture.database === 'none') {
+      throw new Error('Better Auth requires a database. Please select a database option.');
+    }
+
+    try {
+      // Step 1: Create directory structure
+      const authDirs = [
+        'src/lib',
+        'src/providers',
+        'src/app/api/auth/[...all]',
+        'src/app/auth/[path]',
+        'src/app/account/[path]',
+        'src/components/auth',
+      ];
+
+      for (const dir of authDirs) {
+        await fs.mkdir(path.join(projectPath, dir), { recursive: true });
+      }
+
+      // Update .env files (smart merge with existing DATABASE_URL)
+      const envFiles = ['.env', '.env.example', '.env.local'];
+      // Step 2: Generate environment variables
+      for (const envFile of envFiles) {
+        const secret = randomBytes(32).toString('base64');
+        const authEnvVars = `
+  # Better Auth Configuration
+  BETTER_AUTH_SECRET="${secret}"
+  BETTER_AUTH_URL=http://localhost:3000
+  NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
+  
+  # OAuth Providers (optional)
+  # GITHUB_CLIENT_ID=
+  # GITHUB_CLIENT_SECRET=
+  # GOOGLE_CLIENT_ID=
+  # GOOGLE_CLIENT_SECRET=
+  `;
+        const envPath = path.join(projectPath, envFile);
+        let envContent = await fs.readFile(envPath, 'utf-8').catch(() => '');
+
+        // Add auth vars if not present
+        if (!envContent.includes('BETTER_AUTH_SECRET')) {
+          envContent += authEnvVars;
+          await fs.writeFile(envPath, envContent);
+        }
+      }
+
+      // Step 3: Generate auth configuration files
+      const { adapterImport, databaseConfig } = this.getAdapterConfig(config);
+
+      // Read and process auth.ts template
+      const authTemplate = await fs.readFile(path.join(__dirname, 'templates/auth/auth.ts.template'), 'utf-8');
+      const authContent = authTemplate
+        .replace('__ADAPTER_IMPORT__', adapterImport)
+        .replace('__DATABASE_CONFIG__', databaseConfig);
+
+      await fs.writeFile(path.join(projectPath, 'src/lib/auth.ts'), authContent);
+
+      // Copy auth-client.ts
+      const authClientTemplate = await fs.readFile(
+        path.join(__dirname, 'templates/auth/auth-client.ts.template'),
+        'utf-8'
+      );
+      await fs.writeFile(path.join(projectPath, 'src/lib/auth-client.ts'), authClientTemplate);
+
+      // Step 4: Generate API route
+      const routeTemplate = await fs.readFile(path.join(__dirname, 'templates/auth/auth-route.ts.template'), 'utf-8');
+      await fs.writeFile(path.join(projectPath, 'src/app/api/auth/[...all]/route.ts'), routeTemplate);
+
+      // Step 5: Generate AuthUIProvider
+      const authProviderTemplate = await fs.readFile(
+        path.join(__dirname, 'templates/auth/auth-ui-provider.tsx.template'),
+        'utf-8'
+      );
+      await fs.writeFile(path.join(projectPath, 'src/providers/auth-ui-provider.tsx'), authProviderTemplate);
+
+      // Step 6: Generate dynamic auth pages
+      const authPageTemplate = await fs.readFile(
+        path.join(__dirname, 'templates/auth/auth-page.tsx.template'),
+        'utf-8'
+      );
+      await fs.writeFile(path.join(projectPath, 'src/app/auth/[path]/page.tsx'), authPageTemplate);
+
+      // Step 7: Generate dynamic account pages
+      const accountPageTemplate = await fs.readFile(
+        path.join(__dirname, 'templates/auth/account-page.tsx.template'),
+        'utf-8'
+      );
+      await fs.writeFile(path.join(projectPath, 'src/app/account/[path]/page.tsx'), accountPageTemplate);
+
+      // Step 8: Generate UserButton component
+      const userButtonTemplate = await fs.readFile(
+        path.join(__dirname, 'templates/auth/user-button.tsx.template'),
+        'utf-8'
+      );
+      await fs.writeFile(path.join(projectPath, 'src/components/auth/user-button.tsx'), userButtonTemplate);
+
+      // Step 9: Update root layout to include AuthProvider
+      const layoutPath = path.join(projectPath, 'src/app/layout.tsx');
+      let layoutContent = await fs.readFile(layoutPath, 'utf-8');
+
+      if (!layoutContent.includes('AuthProvider')) {
+        // Add import at the top
+        const importStatement = `import { AuthProvider } from "@/providers/auth-ui-provider";\n`;
+        layoutContent = layoutContent.replace(/^(import.*\n)*/, (match) => match + importStatement);
+
+        // Wrap children with AuthProvider
+        layoutContent = layoutContent.replace(/<body[^>]*>([\s\S]*?)<\/body>/, (match, content) =>
+          match.replace(content, `\n        <AuthProvider>${content}</AuthProvider>\n      `)
+        );
+
+        await fs.writeFile(layoutPath, layoutContent);
+      }
+
+      // Step 10: Update globals.css with better-auth-ui import
+      const globalsCssPath = path.join(projectPath, 'src/app/globals.css');
+      let globalsCss = await fs.readFile(globalsCssPath, 'utf-8');
+
+      if (!globalsCss.includes('@daveyplate/better-auth-ui/css')) {
+        globalsCss = `@import "@daveyplate/better-auth-ui/css";\n\n${globalsCss}`;
+        await fs.writeFile(globalsCssPath, globalsCss);
+      }
+
+      // Step 11: Run schema generation and migration
+      const { database } = config.architecture;
+      let schemaGenerated = false;
+      let migrationRan = false;
+
+      // MongoDB doesn't need migrations (schema-less)
+      const shouldRunMigrations = database !== 'mongodb';
+
+      if (shouldRunMigrations) {
+        // Generate auth schema
+        const schemaCmd = this.getAuthSchemaCommand();
+        logger.info(`Running auth schema generation: ${schemaCmd}`);
+
+        try {
+          const schemaOut = execSync(schemaCmd, {
+            cwd: projectPath,
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          logger.info(`Auth schema generation output: ${schemaOut.toString()}`);
+          schemaGenerated = true;
+        } catch (error) {
+          const execError = error as { status?: number; stderr?: Buffer; stdout?: Buffer; message: string };
+          logger.error('[auth schema generation failed]:', {
+            command: schemaCmd,
+            status: execError.status,
+            stderr: execError.stderr?.toString(),
+            stdout: execError.stdout?.toString(),
+            message: execError.message,
+          });
+          // Don't throw - let user know in instructions
+          logger.warn('Auth schema generation failed - user will need to run manually');
+        }
+
+        // Run migrations if schema was generated successfully
+        if (schemaGenerated) {
+          const migrationCmd = this.getAuthMigrationCommand(config);
+          logger.info(`Running auth migrations: ${migrationCmd}`);
+
+          try {
+            const migrationOut = execSync(migrationCmd, {
+              cwd: projectPath,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            logger.info(`Auth migration output: ${migrationOut.toString()}`);
+            migrationRan = true;
+          } catch (error) {
+            const execError = error as { status?: number; stderr?: Buffer; stdout?: Buffer; message: string };
+            logger.error('[auth migration failed]:', {
+              command: migrationCmd,
+              status: execError.status,
+              stderr: execError.stderr?.toString(),
+              stdout: execError.stdout?.toString(),
+              message: execError.message,
+            });
+            // Don't throw - let user know in instructions
+            logger.warn('Auth migration failed - user will need to run manually');
+          }
+        }
+      }
+
+      // Step 12: Generate success message with instructions
+      let nextSteps = '';
+
+      if (database === 'mongodb') {
+        // MongoDB doesn't need migrations
+        nextSteps = `✅ MongoDB adapter configured - no migrations needed!
+
+📋 Next Steps:
+
+1. Start your development server:
+   ${config.architecture.packageManager} dev
+
+2. Visit http://localhost:3000/auth/sign-up to create your first user
+
+ℹ️  Note: MongoDB is schema-less, so no migration commands are required.`;
+      } else if (shouldRunMigrations) {
+        // For all databases that ran auto-migrations
+        if (schemaGenerated && migrationRan) {
+          nextSteps = `✅ Database schema and migrations have been generated and applied automatically!
+
+📋 Next Steps:
+
+1. Start your development server:
+   ${config.architecture.packageManager} dev
+
+2. Visit http://localhost:3000/auth/sign-up to create your first user`;
+        } else if (schemaGenerated && !migrationRan) {
+          nextSteps = `⚠️  Schema generated but migration failed. Please run manually:
+
+📋 Next Steps:
+
+1. Run database migrations:
+   ${this.getAuthMigrationCommand(config)}
+
+2. Start your development server:
+   ${config.architecture.packageManager} dev
+
+3. Visit http://localhost:3000/auth/sign-up to create your first user`;
+        } else {
+          nextSteps = `⚠️  Auto-setup failed. Please run these commands manually:
+
+📋 Next Steps:
+
+1. Generate the database schema:
+   ${this.getAuthSchemaCommand()}
+
+2. Run database migrations:
+   ${this.getAuthMigrationCommand(config)}
+
+3. Start your development server:
+   ${config.architecture.packageManager} dev
+
+4. Visit http://localhost:3000/auth/sign-up to create your first user`;
+        }
+      } else {
+        // Fallback (should not reach here due to MongoDB check above)
+        nextSteps = `📋 Next Steps:
+
+1. Start your development server:
+   ${config.architecture.packageManager} dev
+
+2. Visit http://localhost:3000/auth/sign-up to create your first user`;
+      }
+
+      const instructions = `✅ Better Auth + Better Auth UI has been configured successfully!
+
+${nextSteps}
+
+📚 Documentation:
+- Better Auth: https://www.better-auth.com/docs
+- Better Auth UI: https://better-auth-ui.com
+- Email & Password Auth: https://www.better-auth.com/docs/authentication/email-password
+
+🎨 Available Auth Routes:
+- /auth/sign-in - Sign in page
+- /auth/sign-up - Sign up page
+- /auth/forgot-password - Password reset
+- /auth/two-factor - 2FA setup
+- /account/profile - User profile settings
+- /account/security - Security settings
+- /account/sessions - Active sessions
+
+🔐 Features Enabled:
+- Email & Password Authentication with beautiful UI
+- Session Management
+- Account Settings Pages
+- User Profile Management
+- Pre-styled shadcn/ui components
+- Ready-to-use UserButton component
+
+📁 Generated Files:
+- src/lib/auth.ts (server config)
+- src/lib/auth-client.ts (client)
+- src/providers/auth-ui-provider.tsx (UI provider)
+- src/app/api/auth/[...all]/route.ts (API handler)
+- src/app/auth/[path]/page.tsx (dynamic auth pages)
+- src/app/account/[path]/page.tsx (account settings)
+- src/components/auth/user-button.tsx (UserButton wrapper)
+- Updated src/app/layout.tsx (AuthProvider wrapper)
+- Updated src/app/globals.css (better-auth-ui styles)
+
+💡 Quick Start:
+Add the UserButton to your layout/navbar:
+
+import { UserButton } from "@/components/auth/user-button";
+
+export default function Header() {
+  return (
+    <header>
+      <nav>
+        {/* Your navigation */}
+        <UserButton />
+      </nav>
+    </header>
+  );
 }
 `;
 
-    await fs.writeFile(path.join(projectPath, 'src/lib/auth.ts'), authConfig);
+      logger.info('Authentication setup completed successfully');
+      logger.info(instructions);
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Generated ${config.architecture.auth} authentication configuration`,
-        },
-      ],
-    };
+      return {
+        content: [
+          {
+            type: 'text',
+            text: instructions,
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Authentication setup failed: ${errorMessage}`);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Failed to set up authentication: ${errorMessage}`,
+          },
+        ],
+      };
+    }
   }
 
   /**
