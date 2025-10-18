@@ -1317,15 +1317,38 @@ const pool = new Pool({
       logger.info('[prisma init skipped]: Prisma schema already exists, skipping prisma init');
     }
 
+    // Copy client template
     const clientTemplatePath = path.join(__dirname, 'templates/database/prisma/client.ts.template');
     const clientTemplate = await fs.readFile(clientTemplatePath, 'utf-8');
     const clientPath = path.join(projectPath, 'src/lib/db/client.ts');
     await fs.writeFile(clientPath, clientTemplate);
 
+    // Copy index template
     const indexTemplatePath = path.join(__dirname, 'templates/database/prisma/index.ts.template');
     const indexTemplate = await fs.readFile(indexTemplatePath, 'utf-8');
     const indexPath = path.join(projectPath, 'src/lib/db/index.ts');
     await fs.writeFile(indexPath, indexTemplate);
+
+    // Run prisma generate to create the Prisma client
+    const prismaGenerateCmd = `${packageRunner} prisma generate`;
+    logger.info('Running prisma generate...');
+    try {
+      const generateOut = execSync(prismaGenerateCmd, {
+        cwd: projectPath,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      logger.info(`Prisma generate output: ${generateOut.toString()}`);
+    } catch (error) {
+      const execError = error as { status?: number; stderr?: Buffer; stdout?: Buffer; message: string };
+      logger.error('[prisma generate failed]:', {
+        command: prismaGenerateCmd,
+        status: execError.status,
+        stderr: execError.stderr?.toString(),
+        stdout: execError.stdout?.toString(),
+        message: execError.message,
+      });
+      throw new Error(`[prisma generate failed]: ${execError.stderr?.toString() || execError.message}`);
+    }
   }
 
   private async setupDrizzle(config: ProjectConfig, projectPath: string) {
@@ -1428,10 +1451,11 @@ const pool = new Pool({
     instructions += `Next steps:\n`;
 
     if (orm === 'prisma') {
-      instructions += `1. Update your schema in prisma/schema.prisma\n`;
-      instructions += `2. Run: ${packageRunner} prisma generate\n`;
+      instructions += `1. Prisma client has been generated and is ready to use!\n`;
+      instructions += `2. Update your schema in prisma/schema.prisma (optional)\n`;
       instructions += `3. Run: ${packageRunner} prisma db push (or prisma migrate dev)\n`;
-      instructions += `4. Import and use: import { db } from '@/lib/db'\n`;
+      instructions += `4. After schema changes, run: ${packageRunner} prisma generate\n`;
+      instructions += `5. Import and use: import { db } from '@/lib/db'\n`;
     } else if (orm === 'drizzle') {
       instructions += `1. Define your schema in src/lib/db/schema.ts\n`;
       instructions += `2. Run: ${packageRunner} drizzle-kit generate\n`;
@@ -1448,7 +1472,7 @@ const pool = new Pool({
       instructions += `3. Refer to the ${database} documentation for query syntax\n`;
     }
 
-    instructions += `\nEnvironment variable added to .env:\n`;
+    instructions += `\nEnvironment variable added to .env`;
 
     return instructions;
   }
