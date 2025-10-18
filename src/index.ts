@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execSync } from 'node:child_process';
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -1223,7 +1223,6 @@ const pool = new Pool({
     }
 
     try {
-      // Create directory structure
       const dbDirs = ['src/lib/db'];
 
       if (orm === 'drizzle') {
@@ -1236,39 +1235,31 @@ const pool = new Pool({
         await fs.mkdir(path.join(projectPath, dir), { recursive: true });
       }
 
-      // Generate environment variables
       const databaseUrl = this.getDatabaseUrl(config);
       const envEntry = `DATABASE_URL="${databaseUrl}"`;
 
-      // Update or add DATABASE_URL to .env.example
       const envExamplePath = path.join(projectPath, '.env.example');
       let envExampleContent = '';
       envExampleContent = await fs.readFile(envExamplePath, 'utf-8').catch(() => '');
 
       if (envExampleContent.includes('DATABASE_URL=')) {
-        // Replace existing DATABASE_URL
         envExampleContent = envExampleContent.replace(/DATABASE_URL=.*/g, envEntry);
       } else {
-        // Add new DATABASE_URL
         envExampleContent += `\n# Database Configuration\n${envEntry}\n`;
       }
       await fs.writeFile(envExamplePath, envExampleContent);
 
-      // Update or add DATABASE_URL to .env.local
       const envLocalPath = path.join(projectPath, '.env.local');
       let envLocalContent = '';
       envLocalContent = await fs.readFile(envLocalPath, 'utf-8').catch(() => '');
 
       if (envLocalContent.includes('DATABASE_URL=')) {
-        // Replace existing DATABASE_URL
         envLocalContent = envLocalContent.replace(/DATABASE_URL=.*/g, envEntry);
       } else {
-        // Add new DATABASE_URL
         envLocalContent += `\n# Database Configuration\n${envEntry}\n`;
       }
       await fs.writeFile(envLocalPath, envLocalContent);
 
-      // Generate ORM-specific configuration
       if (orm === 'prisma') {
         await this.setupPrisma(config, projectPath);
       } else if (orm === 'drizzle') {
@@ -1299,7 +1290,7 @@ const pool = new Pool({
         content: [
           {
             type: 'text',
-            text: `❌ Failed to set up database: ${errorMessage}`,
+            text: `Failed to set up database: ${errorMessage}`,
           },
         ],
       };
@@ -1311,18 +1302,7 @@ const pool = new Pool({
     const packageRunner = this.getPackageRunner(config.architecture.packageManager);
     const provider = this.getPrismaProvider(database);
 
-    // Check if prisma schema already exists
-    const schemaPath = path.join(projectPath, 'prisma', 'schema.prisma');
-    let schemaExists = false;
-    try {
-      await fs.access(schemaPath);
-      schemaExists = true;
-      logger.info('Prisma schema already exists, skipping prisma init');
-    } catch {
-      // Schema doesn't exist, need to run prisma init
-    }
-
-    if (!schemaExists) {
+    if (!existsSync(path.join(projectPath, 'prisma', 'schema.prisma'))) {
       const prismaInitCmd = `${packageRunner} prisma init --datasource-provider ${provider} --generator-provider prisma-client --output ../src/lib/db/generated/prisma`;
 
       try {
@@ -1342,19 +1322,17 @@ const pool = new Pool({
         });
         throw new Error(`[prisma init failed]: ${execError.stdout?.toString() || execError.message}`);
       }
+    } else {
+      logger.info('[prisma init skipped]: Prisma schema already exists, skipping prisma init');
     }
 
-    // Copy client template
     const clientTemplatePath = path.join(__dirname, 'templates/database/prisma/client.ts.template');
     const clientTemplate = await fs.readFile(clientTemplatePath, 'utf-8');
-
     const clientPath = path.join(projectPath, 'src/lib/db/client.ts');
     await fs.writeFile(clientPath, clientTemplate);
 
-    // Copy index template
     const indexTemplatePath = path.join(__dirname, 'templates/database/prisma/index.ts.template');
     const indexTemplate = await fs.readFile(indexTemplatePath, 'utf-8');
-
     const indexPath = path.join(projectPath, 'src/lib/db/index.ts');
     await fs.writeFile(indexPath, indexTemplate);
   }
