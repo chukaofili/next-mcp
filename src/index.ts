@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -356,7 +356,8 @@ class NextMCPServer {
   }
 
   private buildCreateNextAppCommand(config: ProjectConfig): string {
-    const flags = ['npx create-next-app@latest', `./${config.name}`];
+    const packageRunner = this.getPackageRunner(config.architecture.packageManager);
+    const flags = [`${packageRunner} create-next-app@latest`, `./${config.name}`];
     logger.info(`Building create-next-app command for config: ${JSON.stringify(config)}`);
     if (config.architecture.typescript) {
       flags.push('--ts');
@@ -757,25 +758,8 @@ class NextMCPServer {
 
     try {
       const packageManager = config.architecture.packageManager;
+      const pkgRunner = this.getPackageRunnerDlx(packageManager);
       const results: string[] = [];
-
-      // Determine the correct package runner command
-      let pkgRunner: string;
-      switch (packageManager) {
-        case 'pnpm':
-          pkgRunner = 'pnpm dlx';
-          break;
-        case 'yarn':
-          pkgRunner = 'yarn dlx';
-          break;
-        case 'bun':
-          pkgRunner = 'bunx';
-          break;
-        case 'npm':
-        default:
-          pkgRunner = 'npx';
-          break;
-      }
 
       // Step 1: Initialize shadcn/ui with default configuration
       logger.info(`Initializing shadcn/ui with ${packageManager}...`);
@@ -1045,6 +1029,164 @@ export { Button };
     }
   }
 
+  // Helper functions for database setup
+  private getPackageRunner(packageManager: string): string {
+    switch (packageManager) {
+      case 'pnpm':
+        return 'pnpm exec';
+      case 'yarn':
+        return 'yarn';
+      case 'bun':
+        return 'bunx';
+      case 'npm':
+      default:
+        return 'npx';
+    }
+  }
+
+  private getPackageRunnerDlx(packageManager: string): string {
+    switch (packageManager) {
+      case 'pnpm':
+        return 'pnpm dlx';
+      case 'yarn':
+        return 'yarn dlx';
+      case 'bun':
+        return 'bunx';
+      case 'npm':
+      default:
+        return 'npx';
+    }
+  }
+
+  private getDatabaseUrl(config: ProjectConfig): string {
+    const { database } = config.architecture;
+    const projectName = config.name;
+
+    switch (database) {
+      case 'postgres':
+        return `postgresql://postgres:postgres@localhost:5432/${projectName}`;
+      case 'mysql':
+        return `mysql://root:password@localhost:3306/${projectName}`;
+      case 'sqlite':
+        return 'file:./dev.db';
+      case 'mongodb':
+        return `mongodb://localhost:27017/${projectName}`;
+      default:
+        return '';
+    }
+  }
+
+  private getPrismaProvider(database: string): string {
+    const providerMap: Record<string, string> = {
+      postgres: 'postgresql',
+      mysql: 'mysql',
+      sqlite: 'sqlite',
+      mongodb: 'mongodb',
+    };
+    return providerMap[database] || 'postgresql';
+  }
+
+  private generateDrizzleSchemaImports(database: string, template: string): string {
+    const importMap: Record<string, { dialectCore: string; imports: string }> = {
+      postgres: {
+        dialectCore: 'pg-core',
+        imports: 'pgTable, uuid, text, timestamp',
+      },
+      mysql: {
+        dialectCore: 'mysql-core',
+        imports: 'mysqlTable, varchar, text, timestamp',
+      },
+      sqlite: {
+        dialectCore: 'sqlite-core',
+        imports: 'sqliteTable, text, integer',
+      },
+    };
+
+    const config = importMap[database] || importMap.postgres;
+
+    return template.replace('__IMPORTS__', config.imports).replace('__DIALECT_CORE__', config.dialectCore);
+  }
+
+  private generateDrizzleClient(database: string, template: string): string {
+    let driverImport = '';
+    let connectionCode = '';
+
+    switch (database) {
+      case 'postgres':
+        driverImport = `import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import * as schema from './schema';
+
+const pool = new Pool({
+  connectionString,
+});`;
+        connectionCode = `export const db = drizzle(pool, { schema });`;
+        break;
+
+      case 'mysql':
+        driverImport = `import { drizzle } from 'drizzle-orm/mysql2';
+import mysql from 'mysql2/promise';
+import * as schema from './schema';
+
+const poolConnection = mysql.createPool({
+  uri: connectionString,
+});`;
+        connectionCode = `export const db = drizzle(poolConnection, { schema, mode: 'default' });`;
+        break;
+
+      case 'sqlite':
+        driverImport = `import { drizzle } from 'drizzle-orm/better-sqlite3';
+import Database from 'better-sqlite3';
+import * as schema from './schema';
+
+const sqlite = new Database('dev.db');`;
+        connectionCode = `export const db = drizzle(sqlite, { schema });`;
+        break;
+
+      default:
+        driverImport = `import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import * as schema from './schema';
+
+const pool = new Pool({
+  connectionString,
+});`;
+        connectionCode = `export const db = drizzle(pool, { schema });`;
+    }
+
+    return template.replace('__DRIVER_IMPORT__', driverImport).replace('__CONNECTION_CODE__', connectionCode);
+  }
+
+  private getDrizzleDialect(database: string): string {
+    const dialectMap: Record<string, string> = {
+      postgres: 'postgresql',
+      mysql: 'mysql',
+      sqlite: 'sqlite',
+    };
+    return dialectMap[database] || 'postgresql';
+  }
+
+  private getDrizzleCredentials(database: string): string {
+    switch (database) {
+      case 'postgres':
+        return `{
+    url: process.env.DATABASE_URL!,
+  }`;
+      case 'mysql':
+        return `{
+    url: process.env.DATABASE_URL!,
+  }`;
+      case 'sqlite':
+        return `{
+    url: './dev.db',
+  }`;
+      default:
+        return `{
+    url: process.env.DATABASE_URL!,
+  }`;
+    }
+  }
+
   private async setupDatabase(config: ProjectConfig, projectPath: string) {
     if (config.architecture.database === 'none') {
       return {
@@ -1057,27 +1199,263 @@ export { Button };
       };
     }
 
-    // Generate database configuration based on selected database
-    const dbConfig = `// Database configuration
-export const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || '${config.name}',
-  username: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres',
-}
-`;
+    const { orm, database } = config.architecture;
 
-    await fs.writeFile(path.join(projectPath, 'src/lib/db.ts'), dbConfig);
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Generated ${config.architecture.database} database configuration`,
-        },
-      ],
+    // Validate ORM/Database compatibility
+    const validCombinations: Record<string, string[]> = {
+      prisma: ['postgres', 'mysql', 'sqlite', 'mongodb'],
+      drizzle: ['postgres', 'mysql', 'sqlite'],
+      mongoose: ['mongodb'],
+      none: ['postgres', 'mysql', 'sqlite', 'mongodb'],
     };
+
+    if (orm !== 'none' && !validCombinations[orm]?.includes(database)) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              `Invalid combination: ${orm} does not support ${database}. ` +
+              `Valid databases for ${orm}: ${validCombinations[orm].join(', ')}`,
+          },
+        ],
+      };
+    }
+
+    try {
+      // Create directory structure
+      const dbDirs = ['src/lib/db'];
+
+      if (orm === 'drizzle') {
+        dbDirs.push('drizzle/migrations');
+      } else if (orm === 'mongoose') {
+        dbDirs.push('src/lib/db/models');
+      }
+
+      for (const dir of dbDirs) {
+        await fs.mkdir(path.join(projectPath, dir), { recursive: true });
+      }
+
+      // Generate environment variables
+      const databaseUrl = this.getDatabaseUrl(config);
+      const envContent = `\n# Database Configuration\nDATABASE_URL="${databaseUrl}"\n`;
+
+      await fs.appendFile(path.join(projectPath, '.env.example'), envContent);
+      await fs.appendFile(path.join(projectPath, '.env.local'), envContent);
+
+      // Generate ORM-specific configuration
+      if (orm === 'prisma') {
+        await this.setupPrisma(config, projectPath);
+      } else if (orm === 'drizzle') {
+        await this.setupDrizzle(config, projectPath);
+      } else if (orm === 'mongoose') {
+        await this.setupMongoose(config, projectPath);
+      } else {
+        await this.setupDirectDriver(config, projectPath);
+      }
+
+      // Generate success message with instructions
+      const instructions = this.generateDatabaseInstructions(config);
+      logger.info('Database setup completed successfully');
+      logger.info(instructions);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: instructions,
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Database setup failed: ${errorMessage}`);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ Failed to set up database: ${errorMessage}`,
+          },
+        ],
+      };
+    }
+  }
+
+  private async setupPrisma(config: ProjectConfig, projectPath: string) {
+    const database = config.architecture.database;
+    const packageRunner = this.getPackageRunner(config.architecture.packageManager);
+    const provider = this.getPrismaProvider(database);
+
+    // Run prisma init with custom output directory
+    const prismaInitCmd = `${packageRunner} prisma init --datasource-provider ${provider} --generator-provider prisma-client --output ../src/lib/db/generated/prisma`;
+
+    // Execute prisma init in project directory
+    // exec(
+    //   prismaInitCmd,
+    //   {
+    //     cwd: projectPath,
+    //   },
+    //   (error, stdout, stderr) => {
+    //     if (error) {
+    //       if (stderr) logger.error(`[prisma:init err]: ${stderr}`);
+    //       if (stdout) logger.error(`[prisma:init out]: ${stdout}`);
+    //       throw new Error(`[prisma:init failed]: ${String(error)}`);
+    //     }
+    //     if (stdout) logger.info(`[prisma:init ok]: ${stdout}`);
+    //   }
+    // );
+
+    const out = spawnSync(prismaInitCmd, {
+      cwd: projectPath,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    if (out.error) {
+      logger.info(`[prisma:init error]:`, out.error);
+      throw out.error;
+    }
+
+    logger.info(`[prisma:init stdout]:`, out.stdout);
+
+    // Copy client template
+    const clientTemplatePath = path.join(__dirname, 'templates/database/prisma/client.ts.template');
+    const clientTemplate = await fs.readFile(clientTemplatePath, 'utf-8');
+
+    const clientPath = path.join(projectPath, 'src/lib/db/client.ts');
+    await fs.writeFile(clientPath, clientTemplate);
+
+    // Copy index template
+    const indexTemplatePath = path.join(__dirname, 'templates/database/prisma/index.ts.template');
+    const indexTemplate = await fs.readFile(indexTemplatePath, 'utf-8');
+
+    const indexPath = path.join(projectPath, 'src/lib/db/index.ts');
+    await fs.writeFile(indexPath, indexTemplate);
+  }
+
+  private async setupDrizzle(config: ProjectConfig, projectPath: string) {
+    const database = config.architecture.database;
+
+    // Read and process drizzle config template
+    const configTemplatePath = path.join(__dirname, 'templates/database/drizzle/drizzle.config.ts.template');
+    let configTemplate = await fs.readFile(configTemplatePath, 'utf-8');
+
+    configTemplate = configTemplate
+      .replace(/\{\{DIALECT\}\}/g, this.getDrizzleDialect(database))
+      .replace(/__DB_CREDENTIALS__/g, this.getDrizzleCredentials(database));
+
+    const configPath = path.join(projectPath, 'drizzle.config.ts');
+    await fs.writeFile(configPath, configTemplate);
+
+    // Read and process schema template
+    const schemaTemplatePath = path.join(__dirname, 'templates/database/drizzle/schema.ts.template');
+    let schemaTemplate = await fs.readFile(schemaTemplatePath, 'utf-8');
+
+    schemaTemplate = this.generateDrizzleSchemaImports(database, schemaTemplate);
+
+    const schemaPath = path.join(projectPath, 'src/lib/db/schema.ts');
+    await fs.writeFile(schemaPath, schemaTemplate);
+
+    // Read and process client template
+    const clientTemplatePath = path.join(__dirname, 'templates/database/drizzle/client.ts.template');
+    let clientTemplate = await fs.readFile(clientTemplatePath, 'utf-8');
+
+    clientTemplate = this.generateDrizzleClient(database, clientTemplate);
+
+    const clientPath = path.join(projectPath, 'src/lib/db/client.ts');
+    await fs.writeFile(clientPath, clientTemplate);
+
+    // Copy index template
+    const indexTemplatePath = path.join(__dirname, 'templates/database/drizzle/index.ts.template');
+    const indexTemplate = await fs.readFile(indexTemplatePath, 'utf-8');
+
+    const indexPath = path.join(projectPath, 'src/lib/db/index.ts');
+    await fs.writeFile(indexPath, indexTemplate);
+  }
+
+  private async setupMongoose(_config: ProjectConfig, projectPath: string) {
+    // Copy connection template
+    const connectionTemplatePath = path.join(__dirname, 'templates/database/mongoose/connection.ts.template');
+    const connectionTemplate = await fs.readFile(connectionTemplatePath, 'utf-8');
+
+    const connectionPath = path.join(projectPath, 'src/lib/db/connection.ts');
+    await fs.writeFile(connectionPath, connectionTemplate);
+
+    // Create models directory with .gitkeep
+    const modelsDir = path.join(projectPath, 'src/lib/db/models');
+    await fs.mkdir(modelsDir, { recursive: true });
+    await fs.writeFile(path.join(modelsDir, '.gitkeep'), '');
+
+    // Copy index template
+    const indexTemplatePath = path.join(__dirname, 'templates/database/mongoose/index.ts.template');
+    const indexTemplate = await fs.readFile(indexTemplatePath, 'utf-8');
+
+    const indexPath = path.join(projectPath, 'src/lib/db/index.ts');
+    await fs.writeFile(indexPath, indexTemplate);
+  }
+
+  private async setupDirectDriver(config: ProjectConfig, projectPath: string) {
+    const database = config.architecture.database;
+
+    // Determine which template to use
+    let templateName: string;
+    if (database === 'postgres') {
+      templateName = 'postgres.ts.template';
+    } else if (database === 'mysql') {
+      templateName = 'mysql.ts.template';
+    } else if (database === 'sqlite') {
+      templateName = 'sqlite.ts.template';
+    } else if (database === 'mongodb') {
+      templateName = 'mongodb.ts.template';
+    } else {
+      throw new Error(`Unsupported database: ${database}`);
+    }
+
+    // Copy template
+    const templatePath = path.join(__dirname, `templates/database/direct/${templateName}`);
+    const template = await fs.readFile(templatePath, 'utf-8');
+
+    const dbPath = path.join(projectPath, 'src/lib/db/index.ts');
+    await fs.writeFile(dbPath, template);
+  }
+
+  private async generateDatabaseInstructions(config: ProjectConfig): Promise<string> {
+    const orm = config.architecture.orm || 'none';
+    const database = config.architecture.database;
+    const packageRunner = this.getPackageRunner(config.architecture.packageManager);
+
+    let instructions = `Database setup completed successfully!\n\n`;
+    instructions += `Configuration:\n`;
+    instructions += `- Database: ${database}\n`;
+    instructions += `- ORM: ${orm}\n`;
+    instructions += `- Files created in: src/lib/db/\n\n`;
+
+    instructions += `Next steps:\n`;
+
+    if (orm === 'prisma') {
+      instructions += `1. Update your schema in prisma/schema.prisma\n`;
+      instructions += `2. Run: ${packageRunner} prisma generate\n`;
+      instructions += `3. Run: ${packageRunner} prisma db push (or prisma migrate dev)\n`;
+      instructions += `4. Import and use: import { db } from '@/lib/db'\n`;
+    } else if (orm === 'drizzle') {
+      instructions += `1. Define your schema in src/lib/db/schema.ts\n`;
+      instructions += `2. Run: ${packageRunner} drizzle-kit generate\n`;
+      instructions += `3. Run: ${packageRunner} drizzle-kit push (or migrate)\n`;
+      instructions += `4. Import and use: import { db } from '@/lib/db'\n`;
+    } else if (orm === 'mongoose') {
+      instructions += `1. Create your models in src/lib/db/models/\n`;
+      instructions += `2. Import connection: import { connectDB } from '@/lib/db'\n`;
+      instructions += `3. Call connectDB() before using models\n`;
+      instructions += `4. Export and use your models from the models directory\n`;
+    } else {
+      instructions += `1. Import the database client: import { db } from '@/lib/db'\n`;
+      instructions += `2. Use the provided query helpers or pool directly\n`;
+      instructions += `3. Refer to the ${database} documentation for query syntax\n`;
+    }
+
+    instructions += `\nEnvironment variable added to .env:\n`;
+    instructions += `DATABASE_URL="${this.getDatabaseUrl(config)}"\n`;
+
+    return instructions;
   }
 
   private async setupAuthentication(config: ProjectConfig, projectPath: string) {
@@ -1185,7 +1563,7 @@ jobs:
     try {
       const installOutput = execSync(`${config.architecture.packageManager} install`, {
         cwd: projectPath,
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
 
       logger.info(`Dependencies installed using ${config.architecture.packageManager}: ${installOutput.toString()}`);

@@ -526,20 +526,14 @@ await fs.appendFile(path.join(projectPath, '.env.local'), envContent);
 // Run prisma init with CLI using the selected package manager
 const provider = getPrismaProvider(config.architecture.database);
 const runner = getPackageRunner(config.architecture.packageManager);
-const prismaInitCommand = `${runner} prisma init --generator-provider prisma-client --output	../src/lib/db/generated/prisma --datasource-provider ${provider}`;
+const prismaInitCommand = `${runner} prisma init --datasource-provider ${provider} --generator-provider prisma-client --output ../src/lib/db/generated/prisma`;
 
-try {
-  execSync(prismaInitCommand, {
-    cwd: projectPath,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  logger.info(
-    `Prisma initialized with provider: ${provider} using ${runner}, with output to src/lib/db/generated/prisma`
-  );
-} catch (error) {
-  logger.error('Failed to initialize Prisma:', error);
-  throw new Error(`Prisma initialization failed: ${error.message}`);
-}
+// Execute prisma init - the output flag sets the custom location in the schema automatically
+const out = execSync(prismaInitCommand, {
+  cwd: projectPath,
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+logger.info(`Prisma init output: ${out.toString()}`);
 
 // Write Prisma client wrapper
 const clientTemplate = await fs.readFile(path.join(__dirname, 'templates/database/prisma/client.ts.template'), 'utf-8');
@@ -548,15 +542,9 @@ await fs.writeFile(path.join(projectPath, 'src/lib/db/client.ts'), clientTemplat
 // Write index
 const indexTemplate = await fs.readFile(path.join(__dirname, 'templates/database/prisma/index.ts.template'), 'utf-8');
 await fs.writeFile(path.join(projectPath, 'src/lib/db/index.ts'), indexTemplate);
-
-// Add generated folder to .gitignore
-const gitignorePath = path.join(projectPath, '.gitignore');
-let gitignoreContent = await fs.readFile(gitignorePath, 'utf-8');
-if (!gitignoreContent.includes('src/lib/db/generated')) {
-  gitignoreContent += '\n# Prisma generated client\n/src/lib/db/generated/\n';
-  await fs.writeFile(gitignorePath, gitignoreContent);
-}
 ```
+
+**Note**: The `--output` flag in the `prisma init` command automatically configures the custom output path in the generated `schema.prisma` file. No post-processing of the schema file is needed.
 
 #### For Drizzle
 
@@ -864,10 +852,9 @@ function generateInstructions(config: ProjectConfig): string {
 
 ### Prisma
 
-- [ ] `npx prisma init` runs successfully
+- [ ] `npx prisma init` runs successfully with `--output` flag
 - [ ] `prisma/schema.prisma` is created with correct provider
-- [ ] Schema has custom output directory configured (`../src/lib/db/generated/prisma`)
-- [ ] Generated folder is added to .gitignore
+- [ ] Schema has custom output directory configured automatically by CLI (`../src/lib/db/generated/prisma`)
 - [ ] `src/lib/db/client.ts` imports from custom location
 - [ ] Prisma client generates to `src/lib/db/generated/prisma`
 - [ ] `npx prisma generate` completes without errors
