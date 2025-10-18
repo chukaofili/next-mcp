@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execSync, spawnSync } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1238,10 +1238,35 @@ const pool = new Pool({
 
       // Generate environment variables
       const databaseUrl = this.getDatabaseUrl(config);
-      const envContent = `\n# Database Configuration\nDATABASE_URL="${databaseUrl}"\n`;
+      const envEntry = `DATABASE_URL="${databaseUrl}"`;
 
-      await fs.appendFile(path.join(projectPath, '.env.example'), envContent);
-      await fs.appendFile(path.join(projectPath, '.env.local'), envContent);
+      // Update or add DATABASE_URL to .env.example
+      const envExamplePath = path.join(projectPath, '.env.example');
+      let envExampleContent = '';
+      envExampleContent = await fs.readFile(envExamplePath, 'utf-8').catch(() => '');
+
+      if (envExampleContent.includes('DATABASE_URL=')) {
+        // Replace existing DATABASE_URL
+        envExampleContent = envExampleContent.replace(/DATABASE_URL=.*/g, envEntry);
+      } else {
+        // Add new DATABASE_URL
+        envExampleContent += `\n# Database Configuration\n${envEntry}\n`;
+      }
+      await fs.writeFile(envExamplePath, envExampleContent);
+
+      // Update or add DATABASE_URL to .env.local
+      const envLocalPath = path.join(projectPath, '.env.local');
+      let envLocalContent = '';
+      envLocalContent = await fs.readFile(envLocalPath, 'utf-8').catch(() => '');
+
+      if (envLocalContent.includes('DATABASE_URL=')) {
+        // Replace existing DATABASE_URL
+        envLocalContent = envLocalContent.replace(/DATABASE_URL=.*/g, envEntry);
+      } else {
+        // Add new DATABASE_URL
+        envLocalContent += `\n# Database Configuration\n${envEntry}\n`;
+      }
+      await fs.writeFile(envLocalPath, envLocalContent);
 
       // Generate ORM-specific configuration
       if (orm === 'prisma') {
@@ -1286,36 +1311,38 @@ const pool = new Pool({
     const packageRunner = this.getPackageRunner(config.architecture.packageManager);
     const provider = this.getPrismaProvider(database);
 
-    // Run prisma init with custom output directory
-    const prismaInitCmd = `${packageRunner} prisma init --datasource-provider ${provider} --generator-provider prisma-client --output ../src/lib/db/generated/prisma`;
-
-    // Execute prisma init in project directory
-    // exec(
-    //   prismaInitCmd,
-    //   {
-    //     cwd: projectPath,
-    //   },
-    //   (error, stdout, stderr) => {
-    //     if (error) {
-    //       if (stderr) logger.error(`[prisma:init err]: ${stderr}`);
-    //       if (stdout) logger.error(`[prisma:init out]: ${stdout}`);
-    //       throw new Error(`[prisma:init failed]: ${String(error)}`);
-    //     }
-    //     if (stdout) logger.info(`[prisma:init ok]: ${stdout}`);
-    //   }
-    // );
-
-    const out = spawnSync(prismaInitCmd, {
-      cwd: projectPath,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    if (out.error) {
-      logger.info(`[prisma:init error]:`, out.error);
-      throw out.error;
+    // Check if prisma schema already exists
+    const schemaPath = path.join(projectPath, 'prisma', 'schema.prisma');
+    let schemaExists = false;
+    try {
+      await fs.access(schemaPath);
+      schemaExists = true;
+      logger.info('Prisma schema already exists, skipping prisma init');
+    } catch {
+      // Schema doesn't exist, need to run prisma init
     }
 
-    logger.info(`[prisma:init stdout]:`, out.stdout);
+    if (!schemaExists) {
+      const prismaInitCmd = `${packageRunner} prisma init --datasource-provider ${provider} --generator-provider prisma-client --output ../src/lib/db/generated/prisma`;
+
+      try {
+        const out = execSync(prismaInitCmd, {
+          cwd: projectPath,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        logger.info(`Prisma init output: ${out.toString()}`);
+      } catch (error) {
+        const execError = error as { status?: number; stderr?: Buffer; stdout?: Buffer; message: string };
+        logger.error('[prisma init failed]:', {
+          command: prismaInitCmd,
+          status: execError.status,
+          stderr: execError.stderr?.toString(),
+          stdout: execError.stdout?.toString(),
+          message: execError.message,
+        });
+        throw new Error(`[prisma init failed]: ${execError.stdout?.toString() || execError.message}`);
+      }
+    }
 
     // Copy client template
     const clientTemplatePath = path.join(__dirname, 'templates/database/prisma/client.ts.template');
