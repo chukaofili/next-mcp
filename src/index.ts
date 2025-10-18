@@ -1029,7 +1029,6 @@ export { Button };
     }
   }
 
-  // Helper functions for database setup
   private getPackageRunner(packageManager: string): string {
     switch (packageManager) {
       case 'pnpm':
@@ -1064,7 +1063,7 @@ export { Button };
 
     switch (database) {
       case 'postgres':
-        return `postgresql://postgres:postgres@localhost:5432/${projectName}`;
+        return `postgresql://postgres:postgres@localhost:5432/${projectName}?schema=public`;
       case 'mysql':
         return `mysql://root:password@localhost:3306/${projectName}`;
       case 'sqlite':
@@ -1238,27 +1237,19 @@ const pool = new Pool({
       const databaseUrl = this.getDatabaseUrl(config);
       const envEntry = `DATABASE_URL="${databaseUrl}"`;
 
-      const envExamplePath = path.join(projectPath, '.env.example');
-      let envExampleContent = '';
-      envExampleContent = await fs.readFile(envExamplePath, 'utf-8').catch(() => '');
+      // Update or add DATABASE_URL to both .env files
+      const envFiles = ['.env', '.env.example', '.env.local'];
+      for (const envFile of envFiles) {
+        const envPath = path.join(projectPath, envFile);
+        let envContent = await fs.readFile(envPath, 'utf-8').catch(() => '');
 
-      if (envExampleContent.includes('DATABASE_URL=')) {
-        envExampleContent = envExampleContent.replace(/DATABASE_URL=.*/g, envEntry);
-      } else {
-        envExampleContent += `\n# Database Configuration\n${envEntry}\n`;
+        if (envContent.includes('DATABASE_URL=')) {
+          envContent = envContent.replace(/DATABASE_URL=.*/g, envEntry);
+        } else {
+          envContent += `\n# Database Configuration\n${envEntry}\n`;
+        }
+        await fs.writeFile(envPath, envContent);
       }
-      await fs.writeFile(envExamplePath, envExampleContent);
-
-      const envLocalPath = path.join(projectPath, '.env.local');
-      let envLocalContent = '';
-      envLocalContent = await fs.readFile(envLocalPath, 'utf-8').catch(() => '');
-
-      if (envLocalContent.includes('DATABASE_URL=')) {
-        envLocalContent = envLocalContent.replace(/DATABASE_URL=.*/g, envEntry);
-      } else {
-        envLocalContent += `\n# Database Configuration\n${envEntry}\n`;
-      }
-      await fs.writeFile(envLocalPath, envLocalContent);
 
       if (orm === 'prisma') {
         await this.setupPrisma(config, projectPath);
@@ -1423,7 +1414,7 @@ const pool = new Pool({
     await fs.writeFile(dbPath, template);
   }
 
-  private async generateDatabaseInstructions(config: ProjectConfig): Promise<string> {
+  private generateDatabaseInstructions(config: ProjectConfig): string {
     const orm = config.architecture.orm || 'none';
     const database = config.architecture.database;
     const packageRunner = this.getPackageRunner(config.architecture.packageManager);
@@ -1458,7 +1449,6 @@ const pool = new Pool({
     }
 
     instructions += `\nEnvironment variable added to .env:\n`;
-    instructions += `DATABASE_URL="${this.getDatabaseUrl(config)}"\n`;
 
     return instructions;
   }
