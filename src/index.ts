@@ -1582,7 +1582,7 @@ const db = new Database("./dev.db");`,
   }
 
   private getAuthSchemaCommand(): string {
-    return 'npx @better-auth/cli@latest generate';
+    return 'npx @better-auth/cli@latest generate -y --config src/lib/auth.ts';
   }
 
   private getAuthMigrationCommand(config: ProjectConfig): string {
@@ -1597,7 +1597,7 @@ const db = new Database("./dev.db");`,
       return `${packageRunner} drizzle-kit generate && ${packageRunner} drizzle-kit migrate`;
     }
 
-    return 'npx @better-auth/cli@latest migrate';
+    return 'npx @better-auth/cli@latest migrate -y --config src/lib/auth.ts';
   }
 
   private async setupAuthentication(config: ProjectConfig, projectPath: string) {
@@ -1638,17 +1638,17 @@ const db = new Database("./dev.db");`,
       for (const envFile of envFiles) {
         const secret = randomBytes(32).toString('base64');
         const authEnvVars = `
-  # Better Auth Configuration
-  BETTER_AUTH_SECRET="${secret}"
-  BETTER_AUTH_URL=http://localhost:3000
-  NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
-  
-  # OAuth Providers (optional)
-  # GITHUB_CLIENT_ID=
-  # GITHUB_CLIENT_SECRET=
-  # GOOGLE_CLIENT_ID=
-  # GOOGLE_CLIENT_SECRET=
-  `;
+# Better Auth Configuration
+BETTER_AUTH_SECRET="${secret}"
+BETTER_AUTH_URL=http://localhost:3000
+NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
+
+# OAuth Providers (optional)
+# GITHUB_CLIENT_ID=
+# GITHUB_CLIENT_SECRET=
+# GOOGLE_CLIENT_ID=
+# GOOGLE_CLIENT_SECRET=
+`;
         const envPath = path.join(projectPath, envFile);
         let envContent = await fs.readFile(envPath, 'utf-8').catch(() => '');
 
