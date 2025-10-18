@@ -30,6 +30,10 @@ const uniqueNamesGeneratorConfig: Config = {
   style: 'lowerCase',
 };
 
+// Prisma configuration constants
+const PRISMA_OUTPUT_PATH = '../src/lib/db/generated/prisma';
+const PRISMA_GENERATED_DIR = 'src/lib/db/generated';
+
 interface ProjectConfig {
   name: string;
   description: string;
@@ -456,7 +460,7 @@ class NextMCPServer {
       const existingPackageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
 
       // Add additional scripts
-      const additionalScripts = {
+      const additionalScripts: Record<string, string> = {
         'type-check': 'tsc --noEmit',
         'docker:build': `docker build -t ${config.name} .`,
         'docker:run': `docker run -p 3000:3000 ${config.name}`,
@@ -479,6 +483,11 @@ class NextMCPServer {
       } else if (config.architecture.testing === 'playwright') {
         additionalScripts['test:e2e'] = 'playwright test';
         additionalScripts['test:e2e:ui'] = 'playwright test --ui';
+      }
+
+      // Add prebuild script for Prisma generate
+      if (config.architecture.orm === 'prisma') {
+        additionalScripts.prebuild = 'prisma generate';
       }
 
       existingPackageJson.scripts = {
@@ -689,7 +698,16 @@ class NextMCPServer {
         .replace('__VOLUMES_SECTION__', volumesSection);
 
       await fs.writeFile(path.join(projectPath, 'Dockerfile'), dockerfileTemplate);
-      await fs.writeFile(path.join(projectPath, '.dockerignore'), dockerignoreTemplate);
+
+      // Add Prisma generated folder to .dockerignore if ORM is Prisma
+      let finalDockerignore = dockerignoreTemplate;
+      if (config.architecture.orm === 'prisma') {
+        if (!finalDockerignore.includes(PRISMA_GENERATED_DIR)) {
+          finalDockerignore += `\n# Prisma generated client\n${PRISMA_GENERATED_DIR}\n`;
+          logger.info('Added Prisma generated folder to .dockerignore');
+        }
+      }
+      await fs.writeFile(path.join(projectPath, '.dockerignore'), finalDockerignore);
       await fs.writeFile(path.join(projectPath, 'docker-compose.yml'), dockerCompose);
 
       return {
@@ -1294,7 +1312,7 @@ const pool = new Pool({
     const provider = this.getPrismaProvider(database);
 
     if (!existsSync(path.join(projectPath, 'prisma', 'schema.prisma'))) {
-      const prismaInitCmd = `${packageRunner} prisma init --datasource-provider ${provider} --generator-provider prisma-client --output ../src/lib/db/generated/prisma`;
+      const prismaInitCmd = `${packageRunner} prisma init --datasource-provider ${provider} --generator-provider prisma-client --output ${PRISMA_OUTPUT_PATH}`;
 
       try {
         const out = execSync(prismaInitCmd, {
