@@ -346,6 +346,42 @@ class NextMCPServer {
     }
   }
 
+  /**
+   * Execute a shell command with comprehensive error logging
+   * @param command The command to execute
+   * @param projectPath The working directory for the command
+   * @param commandLabel A human-readable label for logging (e.g., "prisma init", "auth schema generation")
+   * @returns Object with success flag and optional output
+   */
+  private execCommand(
+    command: string,
+    projectPath: string,
+    commandLabel: string
+  ): { success: boolean; output?: string } {
+    logger.info(`Running ${commandLabel}: ${command}`);
+
+    try {
+      const output = execSync(command, {
+        cwd: projectPath,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const outputStr = output.toString();
+      logger.info(`${commandLabel} output: ${outputStr}`);
+      return { success: true, output: outputStr };
+    } catch (error) {
+      const execError = error as { status?: number; stderr?: Buffer; stdout?: Buffer; message: string };
+      logger.error(`[${commandLabel} failed]:`, {
+        command,
+        status: execError.status,
+        stderr: execError.stderr?.toString(),
+        stdout: execError.stdout?.toString(),
+        message: execError.message,
+      });
+      logger.warn(`${commandLabel} failed - user will need to run manually`);
+      return { success: false };
+    }
+  }
+
   private getDatabaseUrl(config: ProjectConfig): string {
     const { database } = config.architecture;
     const projectName = config.name;
@@ -1328,23 +1364,10 @@ const pool = new Pool({
 
     if (!existsSync(path.join(projectPath, 'prisma', 'schema.prisma'))) {
       const prismaInitCmd = `${packageRunner} prisma init --datasource-provider ${provider} --generator-provider prisma-client --output ${PRISMA_OUTPUT_PATH}`;
+      const result = this.execCommand(prismaInitCmd, projectPath, 'prisma init');
 
-      try {
-        const out = execSync(prismaInitCmd, {
-          cwd: projectPath,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
-        logger.info(`Prisma init output: ${out.toString()}`);
-      } catch (error) {
-        const execError = error as { status?: number; stderr?: Buffer; stdout?: Buffer; message: string };
-        logger.error('[prisma init failed]:', {
-          command: prismaInitCmd,
-          status: execError.status,
-          stderr: execError.stderr?.toString(),
-          stdout: execError.stdout?.toString(),
-          message: execError.message,
-        });
-        throw new Error(`[prisma init failed]: ${execError.stdout?.toString() || execError.message}`);
+      if (!result.success) {
+        throw new Error('[prisma init failed]: Check logs for details');
       }
     } else {
       logger.info('[prisma init skipped]: Prisma schema already exists, skipping prisma init');
@@ -1364,23 +1387,10 @@ const pool = new Pool({
 
     // Run prisma generate to create the Prisma client
     const prismaGenerateCmd = `${packageRunner} prisma generate`;
-    logger.info('Running prisma generate...');
-    try {
-      const generateOut = execSync(prismaGenerateCmd, {
-        cwd: projectPath,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      logger.info(`Prisma generate output: ${generateOut.toString()}`);
-    } catch (error) {
-      const execError = error as { status?: number; stderr?: Buffer; stdout?: Buffer; message: string };
-      logger.error('[prisma generate failed]:', {
-        command: prismaGenerateCmd,
-        status: execError.status,
-        stderr: execError.stderr?.toString(),
-        stdout: execError.stdout?.toString(),
-        message: execError.message,
-      });
-      throw new Error(`[prisma generate failed]: ${execError.stderr?.toString() || execError.message}`);
+    const result = this.execCommand(prismaGenerateCmd, projectPath, 'prisma generate');
+
+    if (!result.success) {
+      throw new Error('[prisma generate failed]: Check logs for details');
     }
   }
 
@@ -1736,52 +1746,14 @@ const db = new Database("./dev.db");`,
       if (shouldRunMigrations) {
         // Generate auth schema
         const schemaCmd = this.getAuthSchemaCommand();
-        logger.info(`Running auth schema generation: ${schemaCmd}`);
-
-        try {
-          const schemaOut = execSync(schemaCmd, {
-            cwd: projectPath,
-            stdio: ['ignore', 'pipe', 'pipe'],
-          });
-          logger.info(`Auth schema generation output: ${schemaOut.toString()}`);
-          schemaGenerated = true;
-        } catch (error) {
-          const execError = error as { status?: number; stderr?: Buffer; stdout?: Buffer; message: string };
-          logger.error('[auth schema generation failed]:', {
-            command: schemaCmd,
-            status: execError.status,
-            stderr: execError.stderr?.toString(),
-            stdout: execError.stdout?.toString(),
-            message: execError.message,
-          });
-          // Don't throw - let user know in instructions
-          logger.warn('Auth schema generation failed - user will need to run manually');
-        }
+        const schemaResult = this.execCommand(schemaCmd, projectPath, 'auth schema generation');
+        schemaGenerated = schemaResult.success;
 
         // Run migrations if schema was generated successfully
         if (schemaGenerated) {
           const migrationCmd = this.getAuthMigrationCommand(config);
-          logger.info(`Running auth migrations: ${migrationCmd}`);
-
-          try {
-            const migrationOut = execSync(migrationCmd, {
-              cwd: projectPath,
-              stdio: ['ignore', 'pipe', 'pipe'],
-            });
-            logger.info(`Auth migration output: ${migrationOut.toString()}`);
-            migrationRan = true;
-          } catch (error) {
-            const execError = error as { status?: number; stderr?: Buffer; stdout?: Buffer; message: string };
-            logger.error('[auth migration failed]:', {
-              command: migrationCmd,
-              status: execError.status,
-              stderr: execError.stderr?.toString(),
-              stdout: execError.stdout?.toString(),
-              message: execError.message,
-            });
-            // Don't throw - let user know in instructions
-            logger.warn('Auth migration failed - user will need to run manually');
-          }
+          const migrationResult = this.execCommand(migrationCmd, projectPath, 'auth migration');
+          migrationRan = migrationResult.success;
         }
       }
 
