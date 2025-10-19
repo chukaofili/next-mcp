@@ -133,8 +133,8 @@ class NextMCPServer {
           },
         },
         {
-          name: 'generate_nextjs_config',
-          description: 'Generate Next.js configuration files',
+          name: 'generate_nextjs_custom_code',
+          description: 'Generate Next.js configuration files, and add custom paths and code snippets',
           inputSchema: {
             type: 'object',
             properties: {
@@ -265,8 +265,8 @@ class NextMCPServer {
             return await this.updatePackageJson(args.config as ProjectConfig, args.projectPath as string);
           case 'generate_dockerfile':
             return await this.generateDockerfile(args.config as ProjectConfig, args.projectPath as string);
-          case 'generate_nextjs_config':
-            return await this.generateNextJSConfig(args.projectPath as string);
+          case 'generate_nextjs_custom_code':
+            return await this.generateNextJSCustomCode(args.projectPath as string);
           case 'generate_base_components':
             return await this.generateBaseComponents(args.config as ProjectConfig, args.projectPath as string);
           case 'setup_shadcn':
@@ -845,14 +845,31 @@ class NextMCPServer {
     }
   }
 
-  private async generateNextJSConfig(projectPath: string) {
+  private async generateNextJSCustomCode(projectPath: string) {
     try {
-      // Read template files
-      const nextConfigTemplate = await fs.readFile(path.join(__dirname, 'templates', 'next.config.template'), 'utf-8');
+      const customeDirs = ['src/app/privacy', 'src/app/terms'];
 
-      // Write core configuration files
-      await fs.writeFile(path.join(projectPath, 'next.config.ts'), nextConfigTemplate);
-      const filesCreated = ['next.config.ts'];
+      for (const dir of customeDirs) {
+        await fs.mkdir(path.join(projectPath, dir), { recursive: true });
+      }
+
+      // Read template files
+      // Define template-to-destination mappings
+      const templateMappings = [
+        { template: 'next.config.template', destination: 'next.config.ts' },
+        { template: 'privacy-page.tsx.template', destination: path.join('src', 'app', 'privacy', 'page.tsx') },
+        { template: 'terms-page.tsx.template', destination: path.join('src', 'app', 'terms', 'page.tsx') },
+      ];
+
+      // Read and write all template files in parallel
+      await Promise.all(
+        templateMappings.map(async ({ template, destination }) => {
+          const content = await fs.readFile(path.join(__dirname, 'templates', template), 'utf-8');
+          await fs.writeFile(path.join(projectPath, destination), content);
+        })
+      );
+
+      const filesCreated = templateMappings.map(({ destination }) => destination);
 
       return {
         content: [
@@ -864,7 +881,7 @@ class NextMCPServer {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('Unexpected error during generateNextJSConfig:', errorMessage);
+      logger.error('Unexpected error during generateNextJSCustomCode:', errorMessage);
       return {
         content: [
           {
