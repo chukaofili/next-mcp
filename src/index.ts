@@ -434,11 +434,14 @@ class NextMCPServer {
       logger.info(`Executing: ${createCommand}`);
 
       // Run create-next-app
-      const out = execSync(createCommand, {
-        cwd: targetPath,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      const stdout = out.toString();
+      const result = this.execCommand(createCommand, targetPath, 'create-next-app');
+
+      if (!result.success) {
+        throw new Error('[create-next-app failed]: Check logs for details');
+      }
+
+      const stdout = result.output || '';
+      logger.info(`create-next-app completed successfully: ${stdout}`);
 
       // Verify the project was created
       await fs.access(projectPath);
@@ -2003,24 +2006,27 @@ jobs:
 */
   private async installDependencies(config: ProjectConfig, projectPath: string) {
     try {
-      const installOutput = execSync(`${config.architecture.packageManager} install`, {
-        cwd: projectPath,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      const installCommand = `${config.architecture.packageManager} install`;
+      const result = this.execCommand(installCommand, projectPath, 'install dependencies');
 
-      logger.info(`Dependencies installed using ${config.architecture.packageManager}: ${installOutput.toString()}`);
+      if (!result.success) {
+        throw new Error('[dependency installation failed]: Check logs for details');
+      }
+
+      const output = result.output || '';
+      logger.info(`Dependencies installed using ${config.architecture.packageManager}: ${output}`);
 
       return {
         content: [
           {
             type: 'text',
-            text: `Successfully installed dependencies using ${config.architecture.packageManager}\n\n[Output]:\n${installOutput.toString()}`,
+            text: `Successfully installed dependencies using ${config.architecture.packageManager}\n\n[Output]:\n${output}`,
           },
         ],
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('Unexpected error during shadcn/ui setup:', errorMessage);
+      logger.error('Unexpected error during dependency installation:', errorMessage);
       return {
         content: [
           {
