@@ -13,5 +13,11 @@ interface AccountPageProps {
 
 export default async function AccountPage({ params }: AccountPageProps) {
   const { path } = await params;
-  return <AccountView path={path} />;
+  return (
+    <main className="flex min-h-screen items-center justify-center">
+      <div className="container flex grow flex-col items-center justify-center self-center p-4 md:p-6">
+        <AccountView path={path} />
+      </div>
+    </main>
+  );
 }

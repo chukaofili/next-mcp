@@ -1689,16 +1689,11 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       await fs.writeFile(path.join(projectPath, 'src/providers/auth-ui-provider.tsx'), authProviderTemplate);
 
       // Step 6: Generate dynamic auth pages & layout
-      const authLayoutTemplate = await fs.readFile(
-        path.join(__dirname, 'templates/auth/auth-layout.tsx.template'),
-        'utf-8'
-      );
       const authPageTemplate = await fs.readFile(
         path.join(__dirname, 'templates/auth/auth-page.tsx.template'),
         'utf-8'
       );
       await fs.writeFile(path.join(projectPath, 'src/app/auth/[path]/page.tsx'), authPageTemplate);
-      await fs.writeFile(path.join(projectPath, 'src/app/auth/layout.tsx'), authLayoutTemplate);
 
       // Step 7: Generate dynamic account pages
       const accountPageTemplate = await fs.readFile(
