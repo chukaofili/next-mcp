@@ -952,7 +952,7 @@ class NextMCPServer {
 
           // Add Toaster component after childeren
           layoutContent = layoutContent.replace(/<body[^>]*>([\s\S]*?)<\/body>/, (match, content) =>
-            match.replace(content, `${content}  <Toaster />\n      `)
+            match.replace(content, `${content}  <Toaster position="top-center" />\n      `)
           );
 
           await fs.writeFile(layoutPath, layoutContent);
