@@ -1,6 +1,14 @@
 import { AccountView } from "@daveyplate/better-auth-ui";
 import { accountViewPaths } from "@daveyplate/better-auth-ui/server";
 
+/**
+ * provides the following account paths:
+ * - security
+ * - settings
+ * - api-keys
+ * - organizations
+ */
+
 export const dynamicParams = false;
 
 export function generateStaticParams() {
