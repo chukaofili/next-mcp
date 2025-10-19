@@ -952,7 +952,7 @@ class NextMCPServer {
 
           // Add Toaster component after childeren
           layoutContent = layoutContent.replace(/<body[^>]*>([\s\S]*?)<\/body>/, (match, content) =>
-            match.replace(content, ` ${content}<Toaster />\n      `)
+            match.replace(content, `${content}  <Toaster />\n      `)
           );
 
           await fs.writeFile(layoutPath, layoutContent);
@@ -1757,11 +1757,8 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
         const importStatement = `import { AuthProvider } from "@/providers/auth-ui-provider";\n`;
         layoutContent = layoutContent.replace(/^(import.*\n)*/, (match) => match + importStatement);
 
-        // Wrap children with AuthProvider
-        layoutContent = layoutContent.replace(/<body[^>]*>([\s\S]*?)<\/body>/, (match, content) =>
-          match.replace(content, `<AuthProvider>${content}</AuthProvider>`)
-        );
-
+        // Wrap {children} with <AuthProvider>{children}</AuthProvider>
+        layoutContent = layoutContent.replace(/\{children\}/, '<AuthProvider>{children}</AuthProvider>');
         await fs.writeFile(layoutPath, layoutContent);
       }
 
