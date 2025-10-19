@@ -887,19 +887,20 @@ class NextMCPServer {
 
     try {
       const packageManager = config.architecture.packageManager;
-      const pkgRunner = this.getPackageRunnerDlx(packageManager);
+      const packageRunner = this.getPackageRunnerDlx(packageManager);
       const results: string[] = [];
 
       // Step 1: Initialize shadcn/ui with default configuration
       logger.info(`Initializing shadcn/ui with ${packageManager}...`);
       try {
-        const initCommand = `${pkgRunner} shadcn@latest init -y -d`;
-        const initOutput = execSync(initCommand, {
-          cwd: projectPath,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
+        const shadcnInitCommand = `${packageRunner} shadcn@latest init -y -d`;
+        const result = this.execCommand(shadcnInitCommand, projectPath, 'shadcn init');
+
+        if (!result.success) {
+          throw new Error('[shadcn init failed]: Check logs for details');
+        }
+
         results.push(`✅ Initialized shadcn/ui with default configuration using ${packageManager}`);
-        logger.info(`shadcn/ui init output: ${initOutput.toString()}`);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error('Failed to initialize shadcn/ui:', errorMessage);
@@ -916,12 +917,14 @@ class NextMCPServer {
       // Step 2: Install all shadcn/ui components using the --all flag
       logger.info(`Installing all shadcn/ui components with ${packageManager}...`);
       try {
-        const addAllCommand = `${pkgRunner} shadcn@latest add --all -y -o`;
-        execSync(addAllCommand, {
-          cwd: projectPath,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
-        results.push('✅ Successfully installed all shadcn/ui components');
+        const shadcnAddAllCommand = `${packageRunner} shadcn@latest add --all -y -o`;
+        const result = this.execCommand(shadcnAddAllCommand, projectPath, 'shadcn add all');
+
+        if (!result.success) {
+          throw new Error('[shadcn init failed]: Check logs for details');
+        }
+
+        results.push(`✅Successfully installed all shadcn/ui components`);
         logger.info(`shadcn/ui add all components executed successfully`);
 
         const globalsCssPath = path.join(projectPath, 'src/app/globals.css');
@@ -946,11 +949,12 @@ class NextMCPServer {
 
           // Add Toaster component after childeren
           layoutContent = layoutContent.replace(/<body[^>]*>([\s\S]*?)<\/body>/, (match, content) =>
-            match.replace(content, `${content}\n        <Toaster />\n      `)
+            match.replace(content, ` ${content}<Toaster />\n      `)
           );
 
           await fs.writeFile(layoutPath, layoutContent);
         }
+        logger.info('Updated globals.css and layout.tsx for shadcn/ui');
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error('Failed to install shadcn/ui components:', errorMessage);
@@ -1752,7 +1756,7 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
 
         // Wrap children with AuthProvider
         layoutContent = layoutContent.replace(/<body[^>]*>([\s\S]*?)<\/body>/, (match, content) =>
-          match.replace(content, `\n        <AuthProvider>${content}</AuthProvider>\n      `)
+          match.replace(content, `<AuthProvider>${content}</AuthProvider>`)
         );
 
         await fs.writeFile(layoutPath, layoutContent);
