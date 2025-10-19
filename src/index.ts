@@ -652,6 +652,10 @@ class NextMCPServer {
         }
       }
 
+      if (config.architecture.uiLibrary === 'shadcn') {
+        additionalDeps['@tanstack/react-table'] = '^8.21.3';
+      }
+
       // Authentication
       if (config.architecture.auth === 'better-auth') {
         additionalDeps['better-auth'] = '^1.3.27';
@@ -919,6 +923,34 @@ class NextMCPServer {
         });
         results.push('✅ Successfully installed all shadcn/ui components');
         logger.info(`shadcn/ui add all components executed successfully`);
+
+        const globalsCssPath = path.join(projectPath, 'src/app/globals.css');
+        let globalsCss = await fs.readFile(globalsCssPath, 'utf-8');
+
+        if (!globalsCss.includes('--chart-1: oklch(0.646 0.222 41.116)')) {
+          globalsCss = `${globalsCss}\n@layer base {\n  :root {\n    --chart-1: oklch(0.646 0.222 41.116);\n    --chart-2: oklch(0.6 0.118 184.704);\n    --chart-3: oklch(0.398 0.07 227.392);\n    --chart-4: oklch(0.828 0.189 84.429);\n    --chart-5: oklch(0.769 0.188 70.08);\n  }\n\n  .dark {\n    --chart-1: oklch(0.488 0.243 264.376);\n    --chart-2: oklch(0.696 0.17 162.48);\n    --chart-3: oklch(0.769 0.188 70.08);\n    --chart-4: oklch(0.627 0.265 303.9);\n    --chart-5: oklch(0.645 0.246 16.439);\n  }\n}`;
+        }
+
+        if (!globalsCss.includes('--sidebar: oklch(0.985 0 0);')) {
+          globalsCss = `${globalsCss}\n@layer base {\n  :root {\n    --sidebar: oklch(0.985 0 0);\n    --sidebar-foreground: oklch(0.145 0 0);\n    --sidebar-primary: oklch(0.205 0 0);\n    --sidebar-primary-foreground: oklch(0.985 0 0);\n    --sidebar-accent: oklch(0.97 0 0);\n    --sidebar-accent-foreground: oklch(0.205 0 0);\n    --sidebar-border: oklch(0.922 0 0);\n    --sidebar-ring: oklch(0.708 0 0);\n  }\n\n  .dark {\n    --sidebar: oklch(0.205 0 0);\n    --sidebar-foreground: oklch(0.985 0 0);\n    --sidebar-primary: oklch(0.488 0.243 264.376);\n    --sidebar-primary-foreground: oklch(0.985 0 0);\n    --sidebar-accent: oklch(0.269 0 0);\n    --sidebar-accent-foreground: oklch(0.985 0 0);\n    --sidebar-border: oklch(1 0 0 / 10%);\n    --sidebar-ring: oklch(0.439 0 0);\n  }\n}`;
+        }
+
+        await fs.writeFile(globalsCssPath, globalsCss);
+
+        const layoutPath = path.join(projectPath, 'src/app/layout.tsx');
+        let layoutContent = await fs.readFile(layoutPath, 'utf-8');
+        if (!layoutContent.includes('Toaster')) {
+          // Add import at the top
+          const importStatement = `import { Toaster } from "@/components/ui/sonner";\n`;
+          layoutContent = layoutContent.replace(/^(import.*\n)*/, (match) => match + importStatement);
+
+          // Add Toaster component after childeren
+          layoutContent = layoutContent.replace(/<body[^>]*>([\s\S]*?)<\/body>/, (match, content) =>
+            match.replace(content, `${content}\n        <Toaster />\n      `)
+          );
+
+          await fs.writeFile(layoutPath, layoutContent);
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error('Failed to install shadcn/ui components:', errorMessage);
