@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+
+/** TODO:
+ * - Add dark mode toggle
+ * - Add side bar or horizontal bar for navigation
+ * - Add user profile management
+ * - User button from better-auth-ui
+ */
 import { execSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, promises as fs } from 'node:fs';
