@@ -893,9 +893,9 @@ class NextMCPServer {
 
   private async generateNextJSCustomCode(projectPath: string) {
     try {
-      const customeDirs = ['src/app/privacy', 'src/app/terms'];
+      const customDirs = ['src/app/privacy', 'src/app/terms'];
 
-      for (const dir of customeDirs) {
+      for (const dir of customDirs) {
         await fs.mkdir(path.join(projectPath, dir), { recursive: true });
       }
 
