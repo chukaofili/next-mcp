@@ -1013,7 +1013,7 @@ class NextMCPServer {
           const importStatement = `import { Toaster } from "@/components/ui/sonner";\n`;
           layoutContent = layoutContent.replace(/^(import.*\n)*/, (match) => match + importStatement);
 
-          // Add Toaster component after childeren
+          // Add Toaster component after children
           layoutContent = layoutContent.replace(/<body[^>]*>([\s\S]*?)<\/body>/, (match, content) =>
             match.replace(content, `${content}  <Toaster position="top-center" />\n      `)
           );
