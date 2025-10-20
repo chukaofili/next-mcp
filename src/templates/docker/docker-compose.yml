@@ -3,10 +3,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_BETTER_AUTH_URL=${NEXT_PUBLIC_BETTER_AUTH_URL:-http://localhost:3000}
+        - NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID}
+__PRISMA_COMMAND__
+__PRISMA_VOLUMES__
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
       - NODE_ENV=production
+      __DATABASE_ENV__
 __DATABASE_DEPENDS_ON__
 
 __DATABASE_SERVICE__

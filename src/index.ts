@@ -744,13 +744,25 @@ class NextMCPServer {
       let databaseDependsOn = '';
       let databaseService = '';
       let volumesSection = '';
+      let databaseEnv = '';
+      let prismaCommand = '';
+      let prismaVolumes = '';
+
+      // Add Prisma migration command if using Prisma
+      if (config.architecture.orm === 'prisma') {
+        prismaCommand = `    command: sh -c "npx prisma migrate deploy && node server.js"`;
+        prismaVolumes = `    volumes:
+      - ./prisma:/app/prisma
+      - ./node_modules/.prisma:/app/node_modules/.prisma`;
+      }
 
       if (config.architecture.database !== 'none') {
-        databaseDependsOn = `    depends_on:
-      - db`;
-
         switch (config.architecture.database) {
           case 'postgres':
+            databaseDependsOn = `    depends_on:
+      db:
+        condition: service_healthy`;
+            databaseEnv = `- DATABASE_URL=postgresql://postgres:postgres@db:5432/${config.name}`;
             databaseService = `  db:
     image: postgres:17-alpine
     environment:
@@ -758,14 +770,23 @@ class NextMCPServer {
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "6432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data`;
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${config.name}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5`;
             volumesSection = `volumes:
   postgres_data:`;
             break;
 
           case 'mysql':
+            databaseDependsOn = `    depends_on:
+      db:
+        condition: service_healthy`;
+            databaseEnv = `- DATABASE_URL=mysql://mysql:mysql@db:3306/${config.name}`;
             databaseService = `  db:
     image: mysql:9
     environment:
@@ -776,12 +797,21 @@ class NextMCPServer {
     ports:
       - "3306:3306"
     volumes:
-      - mysql_data:/var/lib/mysql`;
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pmysql"]
+      interval: 5s
+      timeout: 5s
+      retries: 5`;
             volumesSection = `volumes:
   mysql_data:`;
             break;
 
           case 'mongodb':
+            databaseDependsOn = `    depends_on:
+      db:
+        condition: service_healthy`;
+            databaseEnv = `- DATABASE_URL=mongodb://db:27017/${config.name}`;
             databaseService = `  db:
     image: mongo:8-noble
     environment:
@@ -789,7 +819,12 @@ class NextMCPServer {
     ports:
       - "27017:27017"
     volumes:
-      - mongodb_data:/data/db`;
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5`;
             volumesSection = `volumes:
   mongodb_data:`;
             break;
@@ -799,6 +834,7 @@ class NextMCPServer {
             // But we need to ensure the database file persists
             databaseDependsOn = `    volumes:
       - sqlite_data:/app/data`;
+            databaseEnv = `- DATABASE_URL=file:/app/data/${config.name}.db`;
             volumesSection = `volumes:
   sqlite_data:`;
             break;
@@ -809,7 +845,10 @@ class NextMCPServer {
       const dockerCompose = dockerComposeTemplate
         .replace('__DATABASE_DEPENDS_ON__', databaseDependsOn)
         .replace('__DATABASE_SERVICE__', databaseService)
-        .replace('__VOLUMES_SECTION__', volumesSection);
+        .replace('__VOLUMES_SECTION__', volumesSection)
+        .replace('__DATABASE_ENV__', databaseEnv)
+        .replace('__PRISMA_COMMAND__', prismaCommand)
+        .replace('__PRISMA_VOLUMES__', prismaVolumes);
 
       await fs.writeFile(path.join(projectPath, 'Dockerfile'), dockerfileTemplate);
 
@@ -1745,25 +1784,33 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       await fs.writeFile(path.join(projectPath, 'src/providers/auth-ui-provider.tsx'), authProviderTemplate);
 
       // Step 6: Generate dynamic auth pages & layout
-      const authPageTemplate = await fs.readFile(
-        path.join(__dirname, 'templates/auth/auth-page.tsx.template'),
-        'utf-8'
-      );
-      await fs.writeFile(path.join(projectPath, 'src/app/auth/[path]/page.tsx'), authPageTemplate);
-
       // Step 7: Generate dynamic account pages
-      const accountPageTemplate = await fs.readFile(
-        path.join(__dirname, 'templates/auth/account-page.tsx.template'),
-        'utf-8'
-      );
-      await fs.writeFile(path.join(projectPath, 'src/app/account/[path]/page.tsx'), accountPageTemplate);
-
       // Step 8: Generate UserButton component
-      const userButtonTemplate = await fs.readFile(
-        path.join(__dirname, 'templates/auth/user-button.tsx.template'),
-        'utf-8'
+      const templateMappings = [
+        {
+          template: path.join('auth', 'auth-page.tsx.template'),
+          destination: path.join('src', 'app', 'auth', '[path]', 'page.tsx'),
+        },
+        {
+          template: path.join('auth', 'account-page.tsx.template'),
+          destination: path.join('src', 'app', 'account', '[path]', 'page.tsx'),
+        },
+        {
+          template: path.join('auth', 'user-button.tsx.template'),
+          destination: path.join('src', 'components', 'auth', 'user-button.tsx'),
+        },
+        {
+          template: path.join('auth', 'middleware.ts.template'),
+          destination: path.join('src', 'middleware.ts'),
+        },
+      ];
+
+      await Promise.all(
+        templateMappings.map(async ({ template, destination }) => {
+          const content = await fs.readFile(path.join(__dirname, 'templates', template), 'utf-8');
+          await fs.writeFile(path.join(projectPath, destination), content);
+        })
       );
-      await fs.writeFile(path.join(projectPath, 'src/components/auth/user-button.tsx'), userButtonTemplate);
 
       // Step 9: Update root layout to include AuthProvider
       const layoutPath = path.join(projectPath, 'src/app/layout.tsx');

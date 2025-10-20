@@ -22,9 +22,16 @@ interface AccountPageProps {
 export default async function AccountPage({ params }: AccountPageProps) {
   const { path } = await params;
   return (
-    <main className="flex min-h-screen items-center justify-center">
-      <div className="container flex grow flex-col items-center justify-center self-center p-4 md:p-6">
-        <AccountView path={path} />
+    <main className="container flex min-h-screen">
+      <div className="flex grow flex-col p-4 md:p-6">
+        <AccountView
+          path={path}
+          classNames={{
+            sidebar: {
+              base: "sticky top-10",
+            },
+          }}
+        />
       </div>
     </main>
   );

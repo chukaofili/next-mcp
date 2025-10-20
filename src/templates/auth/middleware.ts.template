@@ -1,0 +1,39 @@
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { getSessionCookie } from "better-auth/cookies";
+
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // Check if user is trying to access auth pages
+  const authPages = ["/auth/sign-in", "/auth/sign-up"];
+  const isAuthPage = authPages.some((page) => pathname.startsWith(page));
+
+  if (isAuthPage) {
+    // Check if user has a session cookie (no DB hit)
+    const sessionCookie = getSessionCookie(request);
+
+    // If user is authenticated, redirect to home page
+    if (sessionCookie) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/";
+      return NextResponse.redirect(url);
+    }
+  }
+
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - api (API routes)
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - public folder
+     */
+    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
+};

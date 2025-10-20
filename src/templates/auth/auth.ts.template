@@ -1,4 +1,4 @@
-import { betterAuth } from 'better-auth';
+import { betterAuth } from "better-auth";
 
 __ADAPTER_IMPORT__
 
@@ -10,20 +10,17 @@ export const auth = betterAuth({
   session: {
     cookieCache: {
       enabled: true,
-      maxAge: 60 * 60 * 24 * 7,
+      maxAge: 5 * 60,
     },
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // 1 day (every 1 day the session expiration is updated)
   },
   socialProviders: {
     // Uncomment and configure OAuth providers as needed
-    // github: {
-    //   clientId: process.env.GITHUB_CLIENT_ID || "",
-    //   clientSecret: process.env.GITHUB_CLIENT_SECRET || "",
-    // },
     // google: {
-    //   clientId: process.env.GOOGLE_CLIENT_ID || "",
-    //   clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+    //   prompt: "select_account", 
+    //   clientId: process.env.GOOGLE_CLIENT_ID as string,
+    //   clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
     // },
   },
 });

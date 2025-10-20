@@ -22,6 +22,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Declare build arguments for NEXT_PUBLIC_ variables
+ARG NEXT_PUBLIC_BETTER_AUTH_URL
+ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
+
 # Build the application
 RUN if [ -f yarn.lock ]; then yarn build; \
   elif [ -f package-lock.json ]; then npm run build; \

@@ -17,6 +17,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Clear router cache (protected routes)
         router.refresh()
       }}
+      nameRequired
+      emailVerification
       Link={Link}
     >
       {children}
