@@ -1,5 +1,13 @@
 #!/usr/bin/env node
+
+/** TODO:
+ * - Add dark mode toggle
+ * - Add side bar or horizontal bar for navigation
+ * - Add user profile management
+ * - User button from better-auth-ui
+ */
 import { execSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -132,8 +140,8 @@ class NextMCPServer {
           },
         },
         {
-          name: 'generate_nextjs_config',
-          description: 'Generate Next.js configuration files',
+          name: 'generate_nextjs_custom_code',
+          description: 'Generate Next.js configuration files, and add custom paths and code snippets',
           inputSchema: {
             type: 'object',
             properties: {
@@ -264,8 +272,8 @@ class NextMCPServer {
             return await this.updatePackageJson(args.config as ProjectConfig, args.projectPath as string);
           case 'generate_dockerfile':
             return await this.generateDockerfile(args.config as ProjectConfig, args.projectPath as string);
-          case 'generate_nextjs_config':
-            return await this.generateNextJSConfig(args.projectPath as string);
+          case 'generate_nextjs_custom_code':
+            return await this.generateNextJSCustomCode(args.projectPath as string);
           case 'generate_base_components':
             return await this.generateBaseComponents(args.config as ProjectConfig, args.projectPath as string);
           case 'setup_shadcn':
@@ -317,6 +325,111 @@ class NextMCPServer {
     };
   }
 
+  private getPackageRunner(packageManager: string): string {
+    switch (packageManager) {
+      case 'pnpm':
+        return 'pnpm exec';
+      case 'yarn':
+        return 'yarn';
+      case 'bun':
+        return 'bunx';
+      case 'npm':
+      default:
+        return 'npx';
+    }
+  }
+
+  private getPackageRunnerDlx(packageManager: string): string {
+    switch (packageManager) {
+      case 'pnpm':
+        return 'pnpm dlx';
+      case 'yarn':
+        return 'yarn dlx';
+      case 'bun':
+        return 'bunx';
+      case 'npm':
+      default:
+        return 'npx';
+    }
+  }
+
+  /**
+   * Execute a shell command with comprehensive error logging
+   * @param command The command to execute
+   * @param projectPath The working directory for the command
+   * @param commandLabel A human-readable label for logging (e.g., "prisma init", "auth schema generation")
+   * @returns Object with success flag and optional output
+   */
+  private execCommand(
+    command: string,
+    projectPath: string,
+    commandLabel: string
+  ): { success: boolean; output?: string } {
+    logger.info(`Running ${commandLabel}: ${command}`);
+
+    try {
+      const output = execSync(command, {
+        cwd: projectPath,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const outputStr = output.toString();
+      logger.info(`${commandLabel} output: ${outputStr}`);
+      return { success: true, output: outputStr };
+    } catch (error) {
+      const execError = error as { status?: number; stderr?: Buffer; stdout?: Buffer; message: string };
+      logger.error(`[${commandLabel} failed]:`, {
+        command,
+        status: execError.status,
+        stderr: execError.stderr?.toString(),
+        stdout: execError.stdout?.toString(),
+        message: execError.message,
+      });
+      logger.warn(`${commandLabel} failed - user will need to run manually`);
+      return { success: false };
+    }
+  }
+
+  private getDatabaseUrl(config: ProjectConfig): string {
+    const { database } = config.architecture;
+    const projectName = config.name;
+
+    switch (database) {
+      case 'postgres':
+        return `postgresql://postgres:postgres@localhost:5432/${projectName}?schema=public`;
+      case 'mysql':
+        return `mysql://root:password@localhost:3306/${projectName}`;
+      case 'sqlite':
+        return 'file:./dev.db';
+      case 'mongodb':
+        return `mongodb://localhost:27017/${projectName}`;
+      default:
+        return '';
+    }
+  }
+
+  private getPrismaProvider(database: string): string {
+    const providerMap: Record<string, string> = {
+      postgres: 'postgresql',
+      mysql: 'mysql',
+      sqlite: 'sqlite',
+      mongodb: 'mongodb',
+    };
+    return providerMap[database] || 'postgresql';
+  }
+
+  private getDrizzleProvider(database: string): string {
+    switch (database) {
+      case 'postgres':
+        return 'pg';
+      case 'mysql':
+        return 'mysql';
+      case 'sqlite':
+        return 'sqlite';
+      default:
+        return 'pg';
+    }
+  }
+
   private async scaffoldProject(config: ProjectConfig, targetPath: string) {
     // Apply defaults to the configuration
     const fullConfig = this.applyConfigDefaults(config);
@@ -328,11 +441,14 @@ class NextMCPServer {
       logger.info(`Executing: ${createCommand}`);
 
       // Run create-next-app
-      const out = execSync(createCommand, {
-        cwd: targetPath,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      const stdout = out.toString();
+      const result = this.execCommand(createCommand, targetPath, 'create-next-app');
+
+      if (!result.success) {
+        throw new Error('[create-next-app failed]: Check logs for details');
+      }
+
+      const stdout = result.output || '';
+      logger.info(`create-next-app completed successfully: ${stdout}`);
 
       // Verify the project was created
       await fs.access(projectPath);
@@ -546,9 +662,14 @@ class NextMCPServer {
         }
       }
 
+      if (config.architecture.uiLibrary === 'shadcn') {
+        additionalDeps['@tanstack/react-table'] = '^8.21.3';
+      }
+
       // Authentication
       if (config.architecture.auth === 'better-auth') {
         additionalDeps['better-auth'] = '^1.3.27';
+        additionalDeps['@daveyplate/better-auth-ui'] = 'latest';
       }
 
       // Testing
@@ -630,13 +751,25 @@ class NextMCPServer {
       let databaseDependsOn = '';
       let databaseService = '';
       let volumesSection = '';
+      let databaseEnv = '';
+      let prismaCommand = '';
+      let prismaVolumes = '';
+
+      // Add Prisma migration command if using Prisma
+      if (config.architecture.orm === 'prisma') {
+        prismaCommand = `    command: sh -c "npx prisma migrate deploy && node server.js"`;
+        prismaVolumes = `    volumes:
+      - ./prisma:/app/prisma
+      - ./node_modules/.prisma:/app/node_modules/.prisma`;
+      }
 
       if (config.architecture.database !== 'none') {
-        databaseDependsOn = `    depends_on:
-      - db`;
-
         switch (config.architecture.database) {
           case 'postgres':
+            databaseDependsOn = `    depends_on:
+      db:
+        condition: service_healthy`;
+            databaseEnv = `- DATABASE_URL=postgresql://postgres:postgres@db:5432/${config.name}`;
             databaseService = `  db:
     image: postgres:17-alpine
     environment:
@@ -644,14 +777,23 @@ class NextMCPServer {
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "6432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data`;
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${config.name}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5`;
             volumesSection = `volumes:
   postgres_data:`;
             break;
 
           case 'mysql':
+            databaseDependsOn = `    depends_on:
+      db:
+        condition: service_healthy`;
+            databaseEnv = `- DATABASE_URL=mysql://mysql:mysql@db:3306/${config.name}`;
             databaseService = `  db:
     image: mysql:9
     environment:
@@ -662,12 +804,21 @@ class NextMCPServer {
     ports:
       - "3306:3306"
     volumes:
-      - mysql_data:/var/lib/mysql`;
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pmysql"]
+      interval: 5s
+      timeout: 5s
+      retries: 5`;
             volumesSection = `volumes:
   mysql_data:`;
             break;
 
           case 'mongodb':
+            databaseDependsOn = `    depends_on:
+      db:
+        condition: service_healthy`;
+            databaseEnv = `- DATABASE_URL=mongodb://db:27017/${config.name}`;
             databaseService = `  db:
     image: mongo:8-noble
     environment:
@@ -675,7 +826,12 @@ class NextMCPServer {
     ports:
       - "27017:27017"
     volumes:
-      - mongodb_data:/data/db`;
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5`;
             volumesSection = `volumes:
   mongodb_data:`;
             break;
@@ -685,6 +841,7 @@ class NextMCPServer {
             // But we need to ensure the database file persists
             databaseDependsOn = `    volumes:
       - sqlite_data:/app/data`;
+            databaseEnv = `- DATABASE_URL=file:/app/data/${config.name}.db`;
             volumesSection = `volumes:
   sqlite_data:`;
             break;
@@ -695,7 +852,10 @@ class NextMCPServer {
       const dockerCompose = dockerComposeTemplate
         .replace('__DATABASE_DEPENDS_ON__', databaseDependsOn)
         .replace('__DATABASE_SERVICE__', databaseService)
-        .replace('__VOLUMES_SECTION__', volumesSection);
+        .replace('__VOLUMES_SECTION__', volumesSection)
+        .replace('__DATABASE_ENV__', databaseEnv)
+        .replace('__PRISMA_COMMAND__', prismaCommand)
+        .replace('__PRISMA_VOLUMES__', prismaVolumes);
 
       await fs.writeFile(path.join(projectPath, 'Dockerfile'), dockerfileTemplate);
 
@@ -731,14 +891,31 @@ class NextMCPServer {
     }
   }
 
-  private async generateNextJSConfig(projectPath: string) {
+  private async generateNextJSCustomCode(projectPath: string) {
     try {
-      // Read template files
-      const nextConfigTemplate = await fs.readFile(path.join(__dirname, 'templates', 'next.config.template'), 'utf-8');
+      const customDirs = ['src/app/privacy', 'src/app/terms'];
 
-      // Write core configuration files
-      await fs.writeFile(path.join(projectPath, 'next.config.ts'), nextConfigTemplate);
-      const filesCreated = ['next.config.ts'];
+      for (const dir of customDirs) {
+        await fs.mkdir(path.join(projectPath, dir), { recursive: true });
+      }
+
+      // Read template files
+      // Define template-to-destination mappings
+      const templateMappings = [
+        { template: 'next.config.template', destination: 'next.config.ts' },
+        { template: 'privacy-page.tsx.template', destination: path.join('src', 'app', 'privacy', 'page.tsx') },
+        { template: 'terms-page.tsx.template', destination: path.join('src', 'app', 'terms', 'page.tsx') },
+      ];
+
+      // Read and write all template files in parallel
+      await Promise.all(
+        templateMappings.map(async ({ template, destination }) => {
+          const content = await fs.readFile(path.join(__dirname, 'templates', template), 'utf-8');
+          await fs.writeFile(path.join(projectPath, destination), content);
+        })
+      );
+
+      const filesCreated = templateMappings.map(({ destination }) => destination);
 
       return {
         content: [
@@ -750,7 +927,7 @@ class NextMCPServer {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('Unexpected error during generateNextJSConfig:', errorMessage);
+      logger.error('Unexpected error during generateNextJSCustomCode:', errorMessage);
       return {
         content: [
           {
@@ -776,19 +953,20 @@ class NextMCPServer {
 
     try {
       const packageManager = config.architecture.packageManager;
-      const pkgRunner = this.getPackageRunnerDlx(packageManager);
+      const packageRunner = this.getPackageRunnerDlx(packageManager);
       const results: string[] = [];
 
       // Step 1: Initialize shadcn/ui with default configuration
       logger.info(`Initializing shadcn/ui with ${packageManager}...`);
       try {
-        const initCommand = `${pkgRunner} shadcn@latest init -y -d`;
-        const initOutput = execSync(initCommand, {
-          cwd: projectPath,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
+        const shadcnInitCommand = `${packageRunner} shadcn@latest init -y -d`;
+        const result = this.execCommand(shadcnInitCommand, projectPath, 'shadcn init');
+
+        if (!result.success) {
+          throw new Error('[shadcn init failed]: Check logs for details');
+        }
+
         results.push(`✅ Initialized shadcn/ui with default configuration using ${packageManager}`);
-        logger.info(`shadcn/ui init output: ${initOutput.toString()}`);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error('Failed to initialize shadcn/ui:', errorMessage);
@@ -805,13 +983,44 @@ class NextMCPServer {
       // Step 2: Install all shadcn/ui components using the --all flag
       logger.info(`Installing all shadcn/ui components with ${packageManager}...`);
       try {
-        const addAllCommand = `${pkgRunner} shadcn@latest add --all -y -o`;
-        execSync(addAllCommand, {
-          cwd: projectPath,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
-        results.push('✅ Successfully installed all shadcn/ui components');
+        const shadcnAddAllCommand = `${packageRunner} shadcn@latest add --all -y -o`;
+        const result = this.execCommand(shadcnAddAllCommand, projectPath, 'shadcn add all');
+
+        if (!result.success) {
+          throw new Error('[shadcn init failed]: Check logs for details');
+        }
+
+        results.push(`✅ Successfully installed all shadcn/ui components`);
         logger.info(`shadcn/ui add all components executed successfully`);
+
+        const globalsCssPath = path.join(projectPath, 'src/app/globals.css');
+        let globalsCss = await fs.readFile(globalsCssPath, 'utf-8');
+
+        if (!globalsCss.includes('--chart-1: oklch(0.646 0.222 41.116)')) {
+          globalsCss = `${globalsCss}\n@layer base {\n  :root {\n    --chart-1: oklch(0.646 0.222 41.116);\n    --chart-2: oklch(0.6 0.118 184.704);\n    --chart-3: oklch(0.398 0.07 227.392);\n    --chart-4: oklch(0.828 0.189 84.429);\n    --chart-5: oklch(0.769 0.188 70.08);\n  }\n\n  .dark {\n    --chart-1: oklch(0.488 0.243 264.376);\n    --chart-2: oklch(0.696 0.17 162.48);\n    --chart-3: oklch(0.769 0.188 70.08);\n    --chart-4: oklch(0.627 0.265 303.9);\n    --chart-5: oklch(0.645 0.246 16.439);\n  }\n}`;
+        }
+
+        if (!globalsCss.includes('--sidebar: oklch(0.985 0 0);')) {
+          globalsCss = `${globalsCss}\n@layer base {\n  :root {\n    --sidebar: oklch(0.985 0 0);\n    --sidebar-foreground: oklch(0.145 0 0);\n    --sidebar-primary: oklch(0.205 0 0);\n    --sidebar-primary-foreground: oklch(0.985 0 0);\n    --sidebar-accent: oklch(0.97 0 0);\n    --sidebar-accent-foreground: oklch(0.205 0 0);\n    --sidebar-border: oklch(0.922 0 0);\n    --sidebar-ring: oklch(0.708 0 0);\n  }\n\n  .dark {\n    --sidebar: oklch(0.205 0 0);\n    --sidebar-foreground: oklch(0.985 0 0);\n    --sidebar-primary: oklch(0.488 0.243 264.376);\n    --sidebar-primary-foreground: oklch(0.985 0 0);\n    --sidebar-accent: oklch(0.269 0 0);\n    --sidebar-accent-foreground: oklch(0.985 0 0);\n    --sidebar-border: oklch(1 0 0 / 10%);\n    --sidebar-ring: oklch(0.439 0 0);\n  }\n}`;
+        }
+
+        await fs.writeFile(globalsCssPath, globalsCss);
+
+        const layoutPath = path.join(projectPath, 'src/app/layout.tsx');
+        let layoutContent = await fs.readFile(layoutPath, 'utf-8');
+        if (!layoutContent.includes('Toaster')) {
+          // Add import at the top
+          const importStatement = `import { Toaster } from "@/components/ui/sonner";\n`;
+          layoutContent = layoutContent.replace(/^(import.*\n)*/, (match) => match + importStatement);
+
+          // Add Toaster component after children
+          layoutContent = layoutContent.replace(/<body[^>]*>([\s\S]*?)<\/body>/, (match, content) =>
+            match.replace(content, `${content}  <Toaster position="top-center" />\n      `)
+          );
+
+          await fs.writeFile(layoutPath, layoutContent);
+        }
+        logger.info('Updated globals.css and layout.tsx for shadcn/ui');
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error('Failed to install shadcn/ui components:', errorMessage);
@@ -1047,62 +1256,6 @@ export { Button };
     }
   }
 
-  private getPackageRunner(packageManager: string): string {
-    switch (packageManager) {
-      case 'pnpm':
-        return 'pnpm exec';
-      case 'yarn':
-        return 'yarn';
-      case 'bun':
-        return 'bunx';
-      case 'npm':
-      default:
-        return 'npx';
-    }
-  }
-
-  private getPackageRunnerDlx(packageManager: string): string {
-    switch (packageManager) {
-      case 'pnpm':
-        return 'pnpm dlx';
-      case 'yarn':
-        return 'yarn dlx';
-      case 'bun':
-        return 'bunx';
-      case 'npm':
-      default:
-        return 'npx';
-    }
-  }
-
-  private getDatabaseUrl(config: ProjectConfig): string {
-    const { database } = config.architecture;
-    const projectName = config.name;
-
-    switch (database) {
-      case 'postgres':
-        return `postgresql://postgres:postgres@localhost:5432/${projectName}?schema=public`;
-      case 'mysql':
-        return `mysql://root:password@localhost:3306/${projectName}`;
-      case 'sqlite':
-        return 'file:./dev.db';
-      case 'mongodb':
-        return `mongodb://localhost:27017/${projectName}`;
-      default:
-        return '';
-    }
-  }
-
-  private getPrismaProvider(database: string): string {
-    const providerMap: Record<string, string> = {
-      postgres: 'postgresql',
-      mysql: 'mysql',
-      sqlite: 'sqlite',
-      mongodb: 'mongodb',
-    };
-    return providerMap[database] || 'postgresql';
-  }
-
   private generateDrizzleSchemaImports(database: string, template: string): string {
     const importMap: Record<string, { dialectCore: string; imports: string }> = {
       postgres: {
@@ -1313,23 +1466,10 @@ const pool = new Pool({
 
     if (!existsSync(path.join(projectPath, 'prisma', 'schema.prisma'))) {
       const prismaInitCmd = `${packageRunner} prisma init --datasource-provider ${provider} --generator-provider prisma-client --output ${PRISMA_OUTPUT_PATH}`;
+      const result = this.execCommand(prismaInitCmd, projectPath, 'prisma init');
 
-      try {
-        const out = execSync(prismaInitCmd, {
-          cwd: projectPath,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
-        logger.info(`Prisma init output: ${out.toString()}`);
-      } catch (error) {
-        const execError = error as { status?: number; stderr?: Buffer; stdout?: Buffer; message: string };
-        logger.error('[prisma init failed]:', {
-          command: prismaInitCmd,
-          status: execError.status,
-          stderr: execError.stderr?.toString(),
-          stdout: execError.stdout?.toString(),
-          message: execError.message,
-        });
-        throw new Error(`[prisma init failed]: ${execError.stdout?.toString() || execError.message}`);
+      if (!result.success) {
+        throw new Error('[prisma init failed]: Check logs for details');
       }
     } else {
       logger.info('[prisma init skipped]: Prisma schema already exists, skipping prisma init');
@@ -1349,23 +1489,10 @@ const pool = new Pool({
 
     // Run prisma generate to create the Prisma client
     const prismaGenerateCmd = `${packageRunner} prisma generate`;
-    logger.info('Running prisma generate...');
-    try {
-      const generateOut = execSync(prismaGenerateCmd, {
-        cwd: projectPath,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      logger.info(`Prisma generate output: ${generateOut.toString()}`);
-    } catch (error) {
-      const execError = error as { status?: number; stderr?: Buffer; stdout?: Buffer; message: string };
-      logger.error('[prisma generate failed]:', {
-        command: prismaGenerateCmd,
-        status: execError.status,
-        stderr: execError.stderr?.toString(),
-        stdout: execError.stdout?.toString(),
-        message: execError.message,
-      });
-      throw new Error(`[prisma generate failed]: ${execError.stderr?.toString() || execError.message}`);
+    const result = this.execCommand(prismaGenerateCmd, projectPath, 'prisma generate');
+
+    if (!result.success) {
+      throw new Error('[prisma generate failed]: Check logs for details');
     }
   }
 
@@ -1495,6 +1622,86 @@ const pool = new Pool({
     return instructions;
   }
 
+  // Authentication Helper Functions
+  private getAdapterConfig(config: ProjectConfig): { adapterImport: string; databaseConfig: string } {
+    const { database, orm } = config.architecture;
+
+    if (orm === 'prisma') {
+      return {
+        adapterImport: `import { prismaAdapter } from "better-auth/adapters/prisma";
+import { db } from "@/lib/db";`,
+        databaseConfig: `prismaAdapter(db, {
+    provider: "${this.getPrismaProvider(database)}",
+  })`,
+      };
+    }
+
+    if (orm === 'drizzle') {
+      return {
+        adapterImport: `import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { db } from "@/lib/db";`,
+        databaseConfig: `drizzleAdapter(db, {
+    provider: "${this.getDrizzleProvider(database)}",
+  })`,
+      };
+    }
+
+    // Direct database connection
+    if (database === 'postgres') {
+      return {
+        adapterImport: `import { Pool } from "pg";
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});`,
+        databaseConfig: `pool`,
+      };
+    }
+
+    if (database === 'mysql') {
+      return {
+        adapterImport: `import mysql from "mysql2/promise";
+
+const pool = mysql.createPool(process.env.DATABASE_URL);`,
+        databaseConfig: `pool`,
+      };
+    }
+
+    if (database === 'sqlite') {
+      return {
+        adapterImport: `import Database from "better-sqlite3";
+
+const db = new Database("./dev.db");`,
+        databaseConfig: `db`,
+      };
+    }
+
+    // Fallback for mongodb or other
+    return {
+      adapterImport: `// Direct database connection`,
+      databaseConfig: `process.env.DATABASE_URL`,
+    };
+  }
+
+  private getAuthSchemaCommand(): string {
+    return 'npx @better-auth/cli@latest generate -y --config src/lib/auth.ts';
+  }
+
+  private getAuthMigrationCommand(config: ProjectConfig): string {
+    const { orm, packageManager } = config.architecture;
+    const packageRunner = this.getPackageRunner(packageManager);
+
+    if (orm === 'prisma') {
+      return `${packageRunner} prisma migrate dev -n setup_authentication`;
+    }
+
+    if (orm === 'drizzle') {
+      return `${packageRunner} drizzle-kit generate && ${packageRunner} drizzle-kit migrate`;
+    }
+
+    return 'npx @better-auth/cli@latest migrate -y --config src/lib/auth.ts';
+  }
+
   private async setupAuthentication(config: ProjectConfig, projectPath: string) {
     if (config.architecture.auth === 'none') {
       return {
@@ -1507,28 +1714,297 @@ const pool = new Pool({
       };
     }
 
-    // Generate auth configuration
-    const authConfig = `// Authentication configuration
-export const authConfig = {
-  providers: [],
-  callbacks: {},
-  pages: {
-    signIn: '/auth/signin',
-    signUp: '/auth/signup',
-  },
+    // Verify database is configured
+    if (config.architecture.database === 'none') {
+      throw new Error('Better Auth requires a database. Please select a database option.');
+    }
+
+    try {
+      // Step 1: Create directory structure
+      const authDirs = [
+        'src/lib',
+        'src/providers',
+        'src/app/api/auth/[...all]',
+        'src/app/auth/[path]',
+        'src/app/account/[path]',
+        'src/components/auth',
+      ];
+
+      for (const dir of authDirs) {
+        await fs.mkdir(path.join(projectPath, dir), { recursive: true });
+      }
+
+      // Update .env files (smart merge with existing DATABASE_URL)
+      const envFiles = ['.env', '.env.example', '.env.local'];
+      // Step 2: Generate environment variables
+      for (const envFile of envFiles) {
+        const secret = randomBytes(32).toString('base64');
+        const authEnvVars = `
+# Better Auth Configuration
+BETTER_AUTH_SECRET="${secret}"
+BETTER_AUTH_URL=http://localhost:3000
+NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
+
+# OAuth Providers (optional)
+# GITHUB_CLIENT_ID=
+# GITHUB_CLIENT_SECRET=
+# GOOGLE_CLIENT_ID=
+# GOOGLE_CLIENT_SECRET=
+`;
+        const envPath = path.join(projectPath, envFile);
+        let envContent = await fs.readFile(envPath, 'utf-8').catch(() => '');
+
+        // Add auth vars if not present
+        if (!envContent.includes('BETTER_AUTH_SECRET')) {
+          envContent += authEnvVars;
+          await fs.writeFile(envPath, envContent);
+        }
+      }
+
+      // Step 3: Generate auth configuration files
+      const { adapterImport, databaseConfig } = this.getAdapterConfig(config);
+
+      // Read and process auth.ts template
+      const authTemplate = await fs.readFile(path.join(__dirname, 'templates/auth/auth.ts.template'), 'utf-8');
+      const authContent = authTemplate
+        .replace('__ADAPTER_IMPORT__', adapterImport)
+        .replace('__DATABASE_CONFIG__', databaseConfig);
+
+      await fs.writeFile(path.join(projectPath, 'src/lib/auth.ts'), authContent);
+
+      // Copy auth-client.ts
+      const authClientTemplate = await fs.readFile(
+        path.join(__dirname, 'templates/auth/auth-client.ts.template'),
+        'utf-8'
+      );
+      await fs.writeFile(path.join(projectPath, 'src/lib/auth-client.ts'), authClientTemplate);
+
+      // Step 4: Generate API route
+      const routeTemplate = await fs.readFile(path.join(__dirname, 'templates/auth/auth-route.ts.template'), 'utf-8');
+      await fs.writeFile(path.join(projectPath, 'src/app/api/auth/[...all]/route.ts'), routeTemplate);
+
+      // Step 5: Generate AuthUIProvider
+      const authProviderTemplate = await fs.readFile(
+        path.join(__dirname, 'templates/auth/auth-ui-provider.tsx.template'),
+        'utf-8'
+      );
+      await fs.writeFile(path.join(projectPath, 'src/providers/auth-ui-provider.tsx'), authProviderTemplate);
+
+      // Step 6: Generate dynamic auth pages & layout
+      // Step 7: Generate dynamic account pages
+      // Step 8: Generate UserButton component
+      const templateMappings = [
+        {
+          template: path.join('auth', 'auth-page.tsx.template'),
+          destination: path.join('src', 'app', 'auth', '[path]', 'page.tsx'),
+        },
+        {
+          template: path.join('auth', 'account-page.tsx.template'),
+          destination: path.join('src', 'app', 'account', '[path]', 'page.tsx'),
+        },
+        {
+          template: path.join('auth', 'user-button.tsx.template'),
+          destination: path.join('src', 'components', 'auth', 'user-button.tsx'),
+        },
+        {
+          template: path.join('auth', 'middleware.ts.template'),
+          destination: path.join('src', 'middleware.ts'),
+        },
+      ];
+
+      await Promise.all(
+        templateMappings.map(async ({ template, destination }) => {
+          const content = await fs.readFile(path.join(__dirname, 'templates', template), 'utf-8');
+          await fs.writeFile(path.join(projectPath, destination), content);
+        })
+      );
+
+      // Step 9: Update root layout to include AuthProvider
+      const layoutPath = path.join(projectPath, 'src/app/layout.tsx');
+      let layoutContent = await fs.readFile(layoutPath, 'utf-8');
+
+      if (!layoutContent.includes('AuthProvider')) {
+        // Add import at the top
+        const importStatement = `import { AuthProvider } from "@/providers/auth-ui-provider";\n`;
+        layoutContent = layoutContent.replace(/^(import.*\n)*/, (match) => match + importStatement);
+
+        // Wrap {children} with <AuthProvider>{children}</AuthProvider>
+        layoutContent = layoutContent.replace(/\{children\}/, '<AuthProvider>{children}</AuthProvider>');
+        await fs.writeFile(layoutPath, layoutContent);
+      }
+
+      // Step 10: Update globals.css with better-auth-ui import
+      const globalsCssPath = path.join(projectPath, 'src/app/globals.css');
+      let globalsCss = await fs.readFile(globalsCssPath, 'utf-8');
+
+      if (!globalsCss.includes('@daveyplate/better-auth-ui/css')) {
+        globalsCss = `@import "@daveyplate/better-auth-ui/css";\n\n${globalsCss}`;
+        await fs.writeFile(globalsCssPath, globalsCss);
+      }
+
+      // Step 11: Run schema generation and migration
+      const { database } = config.architecture;
+      let schemaGenerated = false;
+      let migrationRan = false;
+
+      // MongoDB doesn't need migrations (schema-less)
+      const shouldRunMigrations = database !== 'mongodb';
+
+      if (shouldRunMigrations) {
+        // Generate auth schema
+        const schemaCmd = this.getAuthSchemaCommand();
+        const schemaResult = this.execCommand(schemaCmd, projectPath, 'auth schema generation');
+        schemaGenerated = schemaResult.success;
+
+        // Run migrations if schema was generated successfully
+        if (schemaGenerated) {
+          const migrationCmd = this.getAuthMigrationCommand(config);
+          const migrationResult = this.execCommand(migrationCmd, projectPath, 'auth migration');
+          migrationRan = migrationResult.success;
+        }
+      }
+
+      // Step 12: Generate success message with instructions
+      let nextSteps = '';
+
+      if (database === 'mongodb') {
+        // MongoDB doesn't need migrations
+        nextSteps = `✅ MongoDB adapter configured - no migrations needed!
+
+📋 Next Steps:
+
+1. Start your development server:
+   ${config.architecture.packageManager} dev
+
+2. Visit http://localhost:3000/auth/sign-up to create your first user
+
+ℹ️  Note: MongoDB is schema-less, so no migration commands are required.`;
+      } else if (shouldRunMigrations) {
+        // For all databases that ran auto-migrations
+        if (schemaGenerated && migrationRan) {
+          nextSteps = `✅ Database schema and migrations have been generated and applied automatically!
+
+📋 Next Steps:
+
+1. Start your development server:
+   ${config.architecture.packageManager} dev
+
+2. Visit http://localhost:3000/auth/sign-up to create your first user`;
+        } else if (schemaGenerated && !migrationRan) {
+          nextSteps = `⚠️  Schema generated but migration failed. Please run manually:
+
+📋 Next Steps:
+
+1. Run database migrations:
+   ${this.getAuthMigrationCommand(config)}
+
+2. Start your development server:
+   ${config.architecture.packageManager} dev
+
+3. Visit http://localhost:3000/auth/sign-up to create your first user`;
+        } else {
+          nextSteps = `⚠️  Auto-setup failed. Please run these commands manually:
+
+📋 Next Steps:
+
+1. Generate the database schema:
+   ${this.getAuthSchemaCommand()}
+
+2. Run database migrations:
+   ${this.getAuthMigrationCommand(config)}
+
+3. Start your development server:
+   ${config.architecture.packageManager} dev
+
+4. Visit http://localhost:3000/auth/sign-up to create your first user`;
+        }
+      } else {
+        // Fallback (should not reach here due to MongoDB check above)
+        nextSteps = `📋 Next Steps:
+
+1. Start your development server:
+   ${config.architecture.packageManager} dev
+
+2. Visit http://localhost:3000/auth/sign-up to create your first user`;
+      }
+
+      const instructions = `✅ Better Auth + Better Auth UI has been configured successfully!
+
+${nextSteps}
+
+📚 Documentation:
+- Better Auth: https://www.better-auth.com/docs
+- Better Auth UI: https://better-auth-ui.com
+- Email & Password Auth: https://www.better-auth.com/docs/authentication/email-password
+
+🎨 Available Auth Routes:
+- /auth/sign-in - Sign in page
+- /auth/sign-up - Sign up page
+- /auth/forgot-password - Password reset
+- /auth/two-factor - 2FA setup
+- /account/profile - User profile settings
+- /account/security - Security settings
+- /account/sessions - Active sessions
+
+🔐 Features Enabled:
+- Email & Password Authentication with beautiful UI
+- Session Management
+- Account Settings Pages
+- User Profile Management
+- Pre-styled shadcn/ui components
+- Ready-to-use UserButton component
+
+📁 Generated Files:
+- src/lib/auth.ts (server config)
+- src/lib/auth-client.ts (client)
+- src/providers/auth-ui-provider.tsx (UI provider)
+- src/app/api/auth/[...all]/route.ts (API handler)
+- src/app/auth/[path]/page.tsx (dynamic auth pages)
+- src/app/account/[path]/page.tsx (account settings)
+- src/components/auth/user-button.tsx (UserButton wrapper)
+- Updated src/app/layout.tsx (AuthProvider wrapper)
+- Updated src/app/globals.css (better-auth-ui styles)
+
+💡 Quick Start:
+Add the UserButton to your layout/navbar:
+
+import { UserButton } from "@/components/auth/user-button";
+
+export default function Header() {
+  return (
+    <header>
+      <nav>
+        {/* Your navigation */}
+        <UserButton />
+      </nav>
+    </header>
+  );
 }
 `;
 
-    await fs.writeFile(path.join(projectPath, 'src/lib/auth.ts'), authConfig);
+      logger.info('Authentication setup completed successfully');
+      logger.info(instructions);
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Generated ${config.architecture.auth} authentication configuration`,
-        },
-      ],
-    };
+      return {
+        content: [
+          {
+            type: 'text',
+            text: instructions,
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Authentication setup failed: ${errorMessage}`);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Failed to set up authentication: ${errorMessage}`,
+          },
+        ],
+      };
+    }
   }
 
   /**
@@ -1598,24 +2074,27 @@ jobs:
 */
   private async installDependencies(config: ProjectConfig, projectPath: string) {
     try {
-      const installOutput = execSync(`${config.architecture.packageManager} install`, {
-        cwd: projectPath,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      const installCommand = `${config.architecture.packageManager} install`;
+      const result = this.execCommand(installCommand, projectPath, 'install dependencies');
 
-      logger.info(`Dependencies installed using ${config.architecture.packageManager}: ${installOutput.toString()}`);
+      if (!result.success) {
+        throw new Error('[dependency installation failed]: Check logs for details');
+      }
+
+      const output = result.output || '';
+      logger.info(`Dependencies installed using ${config.architecture.packageManager}: ${output}`);
 
       return {
         content: [
           {
             type: 'text',
-            text: `Successfully installed dependencies using ${config.architecture.packageManager}\n\n[Output]:\n${installOutput.toString()}`,
+            text: `Successfully installed dependencies using ${config.architecture.packageManager}\n\n[Output]:\n${output}`,
           },
         ],
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('Unexpected error during shadcn/ui setup:', errorMessage);
+      logger.error('Unexpected error during dependency installation:', errorMessage);
       return {
         content: [
           {
