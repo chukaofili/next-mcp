@@ -990,7 +990,7 @@ class NextMCPServer {
           throw new Error('[shadcn init failed]: Check logs for details');
         }
 
-        results.push(`✅Successfully installed all shadcn/ui components`);
+        results.push(`✅ Successfully installed all shadcn/ui components`);
         logger.info(`shadcn/ui add all components executed successfully`);
 
         const globalsCssPath = path.join(projectPath, 'src/app/globals.css');
