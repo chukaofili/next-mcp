@@ -674,7 +674,7 @@ export default function PrivacyPage() {
       </p>
 
       <ul>
-        <li>By email: daveycodez@gmail.com</li>
+        <li>By email: [REPLACE_EMAIL_HERE]</li>
       </ul>
     </main>
   );
