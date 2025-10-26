@@ -1,6 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import { MCPTestClient } from '../helpers/mcp-test-client.js';
 
 const __filename = fileURLToPath(import.meta.url);
