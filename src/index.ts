@@ -881,9 +881,9 @@ class NextMCPServer {
 
   private async generateNextJSCustomCode(projectPath: string) {
     try {
-      const customeDirs = ['src/app/privacy', 'src/app/terms'];
+      const customDirs = ['src/app/privacy', 'src/app/terms'];
 
-      for (const dir of customeDirs) {
+      for (const dir of customDirs) {
         await fs.mkdir(path.join(projectPath, dir), { recursive: true });
       }
 
@@ -978,7 +978,7 @@ class NextMCPServer {
           throw new Error('[shadcn init failed]: Check logs for details');
         }
 
-        results.push(`✅Successfully installed all shadcn/ui components`);
+        results.push(`✅ Successfully installed all shadcn/ui components`);
         logger.info(`shadcn/ui add all components executed successfully`);
 
         const globalsCssPath = path.join(projectPath, 'src/app/globals.css');
@@ -1001,7 +1001,7 @@ class NextMCPServer {
           const importStatement = `import { Toaster } from "@/components/ui/sonner";\n`;
           layoutContent = layoutContent.replace(/^(import.*\n)*/, (match) => match + importStatement);
 
-          // Add Toaster component after childeren
+          // Add Toaster component after children
           layoutContent = layoutContent.replace(/<body[^>]*>([\s\S]*?)<\/body>/, (match, content) =>
             match.replace(content, `${content}  <Toaster position="top-center" />\n      `)
           );

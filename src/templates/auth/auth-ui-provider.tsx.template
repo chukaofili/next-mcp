@@ -15,7 +15,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       replace={router.replace}
       onSessionChange={() => {
         // Clear router cache (protected routes)
-        router.refresh()
+        router.refresh();
       }}
       nameRequired
       emailVerification
