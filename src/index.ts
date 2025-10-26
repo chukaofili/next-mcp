@@ -1843,8 +1843,8 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
           destination: path.join('src', 'components', 'auth', 'user-button.tsx'),
         },
         {
-          template: path.join('auth', 'middleware.ts.template'),
-          destination: path.join('src', 'middleware.ts'),
+          template: path.join('auth', 'proxy.ts.template'),
+          destination: path.join('src', 'proxy.ts'),
         },
       ];
 
