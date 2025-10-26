@@ -5,6 +5,7 @@
  * - Add side bar or horizontal bar for navigation
  * - Add user profile management
  * - User button from better-auth-ui
+ * - Add organisations support
  */
 import { execSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -199,18 +200,6 @@ class NextMCPServer {
           },
         },
         {
-          name: 'generate_ci_cd',
-          description: 'Generate CI/CD pipeline configuration',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
-        },
-        {
           name: 'install_dependencies',
           description: 'Install npm/pnpm dependencies',
           inputSchema: {
@@ -228,6 +217,7 @@ class NextMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
+              config: { type: 'object' },
               projectPath: { type: 'string' },
             },
             required: ['projectPath'],
@@ -284,10 +274,8 @@ class NextMCPServer {
             return await this.setupAuthentication(args.config as ProjectConfig, args.projectPath as string);
           case 'install_dependencies':
             return await this.installDependencies(args.config as ProjectConfig, args.projectPath as string);
-          // case "generate_ci_cd":
-          //   return await this.generateCICD(args.config as ProjectConfig, args.projectPath as string);
-          // case "validate_project":
-          //   return await this.validateProject(args.projectPath as string);
+          case 'validate_project':
+            return await this.validateProject(args.config as ProjectConfig, args.projectPath as string);
           // case "generate_readme":
           //   return await this.generateReadme(args.config as ProjectConfig, args.projectPath as string);
           default:
@@ -2007,71 +1995,6 @@ export default function Header() {
     }
   }
 
-  /**
-
-  private async generateCICD(config: ProjectConfig, projectPath: string) {
-    const ciWorkflow = `name: CI/CD Pipeline
-
-on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'pnpm'
-    
-    - name: Install dependencies
-      run: pnpm install
-    
-    - name: Run linting
-      run: pnpm lint
-    
-    - name: Run type checking
-      run: pnpm type-check
-    
-    - name: Build application
-      run: pnpm build
-    
-    ${config.architecture.testing !== "jest" ? "- name: Run tests\n      run: pnpm test" : ""}
-  
-  deploy:
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Deploy to ${config.deployment.platform}
-      run: echo "Deploy to ${config.deployment.platform}"
-`;
-
-    await fs.writeFile(
-      path.join(projectPath, ".github/workflows/ci.yml"),
-      ciWorkflow
-    );
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Generated CI/CD pipeline configuration",
-        },
-      ],
-    };
-  }
-*/
   private async installDependencies(config: ProjectConfig, projectPath: string) {
     try {
       const installCommand = `${config.architecture.packageManager} install`;
@@ -2106,43 +2029,46 @@ jobs:
     }
   }
 
-  /**
-  private async validateProject(projectPath: string) {
+  private async validateProject(config: ProjectConfig, projectPath: string) {
     const validationResults = [];
 
     try {
       // Check if package.json exists
-      await fs.access(path.join(projectPath, "package.json"));
-      validationResults.push("✅ package.json exists");
+      await fs.access(path.join(projectPath, 'package.json'));
+      validationResults.push('✅ package.json exists');
 
       // Check if Next.js config exists
-      await fs.access(path.join(projectPath, "next.config.js"));
-      validationResults.push("✅ next.config.js exists");
+      await fs.access(path.join(projectPath, 'next.config.js'));
+      validationResults.push('✅ next.config.js exists');
 
       // Check if TypeScript config exists
-      await fs.access(path.join(projectPath, "tsconfig.json"));
-      validationResults.push("✅ tsconfig.json exists");
+      await fs.access(path.join(projectPath, 'tsconfig.json'));
+      validationResults.push('✅ tsconfig.json exists');
 
-      // Try to build the project
-      execSync("npm run build", { cwd: projectPath, stdio: "pipe" });
-      validationResults.push("✅ Project builds successfully");
+      const runBuildCommand = `${config.architecture.packageManager} run build`;
+      const result = this.execCommand(runBuildCommand, projectPath, 'validate build');
+
+      if (!result.success) {
+        throw new Error('[validate build failed]: Check logs for details');
+      }
+
+      validationResults.push('✅ Project builds successfully');
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-
+      const errorMessage = error instanceof Error ? error.message : String(error);
       validationResults.push(`❌ Validation failed: ${errorMessage}`);
     }
 
     return {
       content: [
         {
-          type: "text",
-          text: validationResults.join("\n"),
+          type: 'text',
+          text: validationResults.join('\n'),
         },
       ],
     };
   }
 
+  /**
   private async generateReadme(config: ProjectConfig, projectPath: string) {
     const readme = `# ${config.name}
 
