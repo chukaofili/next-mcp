@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import path from 'node:path';
-import { createTempDir, cleanupTempDir, createMockConfig, fileExists, readFile } from '../helpers/test-utils.js';
 import { fileURLToPath } from 'node:url';
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
 import { MCPTestClient } from '../helpers/mcp-test-client.js';
+import { cleanupTempDir, createMockConfig, createTempDir, fileExists, readFile } from '../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -93,7 +95,7 @@ describe('README Generation', () => {
       { name: 'npm', devCommand: 'npm run dev' },
       { name: 'yarn', devCommand: 'yarn dev' },
       { name: 'bun', devCommand: 'bun dev' },
-    ];
+    ] as const;
 
     for (const pm of packageManagers) {
       const config = createMockConfig({
@@ -183,7 +185,7 @@ describe('README Generation', () => {
   });
 
   it('should include testing instructions when testing is configured', async () => {
-    const testingFrameworks = ['vitest', 'jest', 'playwright'];
+    const testingFrameworks = ['vitest', 'jest', 'playwright'] as const;
 
     for (const framework of testingFrameworks) {
       const config = createMockConfig({
