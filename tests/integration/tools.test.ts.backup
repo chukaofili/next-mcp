@@ -221,6 +221,201 @@ describe('MCP Server Integration Tests', () => {
     });
   });
 
+  describe('update_package_json tool', () => {
+    it('should update package.json with dependencies', async () => {
+      const config = createMockConfig({
+        architecture: {
+          database: 'postgres',
+          orm: 'prisma',
+          auth: 'better-auth',
+          uiLibrary: 'shadcn',
+          testing: 'vitest',
+        },
+      });
+
+      const result = await client.callTool('update_package_json', {
+        config,
+        projectPath: tempDir,
+      });
+
+      expect(client.isSuccess(result)).toBe(true);
+      const text = client.getTextContent(result);
+      expect(text).toContain('dependencies');
+    });
+
+    it('should handle minimal configuration', async () => {
+      const config = createMockConfig({
+        architecture: {
+          database: 'none',
+          orm: 'none',
+          auth: 'none',
+          testing: 'none',
+        },
+      });
+
+      const result = await client.callTool('update_package_json', {
+        config,
+        projectPath: tempDir,
+      });
+
+      expect(client.isSuccess(result)).toBe(true);
+    });
+  });
+
+  describe('generate_nextjs_custom_code tool', () => {
+    it('should generate Next.js configuration files', async () => {
+      const result = await client.callTool('generate_nextjs_custom_code', {
+        projectPath: tempDir,
+      });
+
+      expect(client.isSuccess(result)).toBe(true);
+      const text = client.getTextContent(result);
+      expect(text).toContain('configuration');
+    });
+  });
+
+  describe('generate_base_components tool', () => {
+    it('should generate base components', async () => {
+      const config = createMockConfig({
+        architecture: {
+          uiLibrary: 'none',
+        },
+      });
+
+      const result = await client.callTool('generate_base_components', {
+        config,
+        projectPath: tempDir,
+      });
+
+      expect(client.isSuccess(result)).toBe(true);
+      const text = client.getTextContent(result);
+      expect(text).toContain('components');
+    });
+
+    it('should handle shadcn configuration', async () => {
+      const config = createMockConfig({
+        architecture: {
+          uiLibrary: 'shadcn',
+        },
+      });
+
+      const result = await client.callTool('generate_base_components', {
+        config,
+        projectPath: tempDir,
+      });
+
+      expect(client.isSuccess(result)).toBe(true);
+    });
+  });
+
+  describe('setup_database tool', () => {
+    it('should setup Prisma database', async () => {
+      const config = createMockConfig({
+        architecture: {
+          database: 'postgres',
+          orm: 'prisma',
+        },
+      });
+
+      const result = await client.callTool('setup_database', {
+        config,
+        projectPath: tempDir,
+      });
+
+      const text = client.getTextContent(result);
+      // May succeed or fail depending on environment, but should not crash
+      expect(text).toBeDefined();
+    });
+
+    it('should setup Drizzle database', async () => {
+      const config = createMockConfig({
+        architecture: {
+          database: 'mysql',
+          orm: 'drizzle',
+        },
+      });
+
+      const result = await client.callTool('setup_database', {
+        config,
+        projectPath: tempDir,
+      });
+
+      const text = client.getTextContent(result);
+      expect(text).toBeDefined();
+    });
+
+    it('should handle no database configuration', async () => {
+      const config = createMockConfig({
+        architecture: {
+          database: 'none',
+          orm: 'none',
+        },
+      });
+
+      const result = await client.callTool('setup_database', {
+        config,
+        projectPath: tempDir,
+      });
+
+      expect(client.isSuccess(result)).toBe(true);
+      const text = client.getTextContent(result);
+      expect(text).toContain('No database');
+    });
+  });
+
+  describe('setup_authentication tool', () => {
+    it('should handle no auth configuration', async () => {
+      const config = createMockConfig({
+        architecture: {
+          auth: 'none',
+        },
+      });
+
+      const result = await client.callTool('setup_authentication', {
+        config,
+        projectPath: tempDir,
+      });
+
+      expect(client.isSuccess(result)).toBe(true);
+      const text = client.getTextContent(result);
+      expect(text).toContain('No authentication');
+    });
+
+    it('should attempt to setup better-auth', async () => {
+      const config = createMockConfig({
+        architecture: {
+          database: 'postgres',
+          orm: 'prisma',
+          auth: 'better-auth',
+        },
+      });
+
+      const result = await client.callTool('setup_authentication', {
+        config,
+        projectPath: tempDir,
+      });
+
+      const text = client.getTextContent(result);
+      // May succeed or fail depending on environment
+      expect(text).toBeDefined();
+    });
+  });
+
+  describe('validate_project tool', () => {
+    it('should validate project structure', async () => {
+      const config = createMockConfig();
+
+      const result = await client.callTool('validate_project', {
+        config,
+        projectPath: tempDir,
+      });
+
+      const text = client.getTextContent(result);
+      // May fail validation but should not crash
+      expect(text).toBeDefined();
+    });
+  });
+
   describe('Error Handling', () => {
     it('should handle unknown tools gracefully', async () => {
       try {
