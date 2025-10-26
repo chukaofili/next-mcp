@@ -1,6 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import { MCPTestClient } from '../../helpers/mcp-test-client.js';
 import { cleanupTempDir, createTempDir, fileExists } from '../../helpers/test-utils.js';
 
@@ -29,23 +31,17 @@ describe('generate_nextjs_custom_code tool', () => {
     });
 
     expect(client.isSuccess(result)).toBe(true);
+
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
-    expect(text.length).toBeGreaterThan(0);
+    expect(text).toContain('Generated Next.js configuration');
 
-    // Check if it indicates success or what files were created
-    // The exact behavior may vary
-  });
+    // Verify that next.config.ts file was created
+    const nextConfigPath = path.join(tempDir, 'next.config.ts');
+    expect(await fileExists(nextConfigPath)).toBe(true);
 
-  it('should handle generation without errors', async () => {
-    const result = await client.callTool('generate_nextjs_custom_code', {
-      projectPath: tempDir,
-    });
-
-    expect(client.isSuccess(result)).toBe(true);
-    // Should not crash
-    expect(result).toBeDefined();
-    const text = client.getTextContent(result);
-    expect(text).toBeDefined();
+    // Verify that privacy and terms pages were created
+    expect(await fileExists(path.join(tempDir, 'src/app/privacy/page.tsx'))).toBe(true);
+    expect(await fileExists(path.join(tempDir, 'src/app/terms/page.tsx'))).toBe(true);
   });
 });
