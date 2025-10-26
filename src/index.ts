@@ -25,11 +25,16 @@ import details from '../package.json' with { type: 'json' };
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+let logTransportFilename = 'next-mcp.log';
+if (process.env.NODE_ENV !== 'test') {
+  logTransportFilename = 'next-mcp-test.log';
+}
+
 // Configure logger
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.json(),
-  transports: [new winston.transports.File({ filename: 'next-mcp.log' })],
+  transports: [new winston.transports.File({ filename: logTransportFilename })],
 });
 
 const uniqueNamesGeneratorConfig: Config = {

@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+
 import { createMockConfig } from '../helpers/test-utils.js';
 
 describe('ProjectConfig', () => {
@@ -7,7 +8,6 @@ describe('ProjectConfig', () => {
 
     expect(config.name).toBe('test-app');
     expect(config.description).toBe('A test Next.js application');
-    expect(config.architecture.appRouter).toBe(true);
     expect(config.architecture.typescript).toBe(true);
     expect(config.architecture.packageManager).toBe('pnpm');
   });
@@ -29,7 +29,7 @@ describe('ProjectConfig', () => {
   });
 
   it('should support all package managers', () => {
-    const packageManagers = ['npm', 'pnpm', 'yarn', 'bun'];
+    const packageManagers = ['npm', 'pnpm', 'yarn', 'bun'] as const;
 
     packageManagers.forEach((pm) => {
       const config = createMockConfig({
@@ -40,7 +40,7 @@ describe('ProjectConfig', () => {
   });
 
   it('should support all database options', () => {
-    const databases = ['none', 'postgres', 'mysql', 'mongodb', 'sqlite'];
+    const databases = ['none', 'postgres', 'mysql', 'mongodb', 'sqlite'] as const;
 
     databases.forEach((db) => {
       const config = createMockConfig({
@@ -51,7 +51,7 @@ describe('ProjectConfig', () => {
   });
 
   it('should support all ORM options', () => {
-    const orms = ['none', 'prisma', 'drizzle', 'mongoose'];
+    const orms = ['none', 'prisma', 'drizzle', 'mongoose'] as const;
 
     orms.forEach((orm) => {
       const config = createMockConfig({
@@ -62,7 +62,7 @@ describe('ProjectConfig', () => {
   });
 
   it('should support all auth options', () => {
-    const authOptions = ['none', 'better-auth'];
+    const authOptions = ['none', 'better-auth'] as const;
 
     authOptions.forEach((auth) => {
       const config = createMockConfig({
@@ -73,7 +73,7 @@ describe('ProjectConfig', () => {
   });
 
   it('should support all UI library options', () => {
-    const uiLibs = ['none', 'shadcn'];
+    const uiLibs = ['none', 'shadcn'] as const;
 
     uiLibs.forEach((lib) => {
       const config = createMockConfig({
@@ -84,7 +84,7 @@ describe('ProjectConfig', () => {
   });
 
   it('should support all testing frameworks', () => {
-    const testFrameworks = ['none', 'jest', 'vitest', 'playwright'];
+    const testFrameworks = ['none', 'jest', 'vitest', 'playwright'] as const;
 
     testFrameworks.forEach((framework) => {
       const config = createMockConfig({

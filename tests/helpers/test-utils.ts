@@ -150,10 +150,9 @@ export async function createNextAppMock(
   options?: {
     name?: string;
     typescript?: boolean;
-    appRouter?: boolean;
   }
 ): Promise<void> {
-  const { name = 'test-project', typescript = true, appRouter = true } = options || {};
+  const { name = 'test-project', typescript = true } = options || {};
 
   // Create package.json
   await createPackageJson(dirPath, { name });
@@ -162,14 +161,13 @@ export async function createNextAppMock(
   await fs.mkdir(path.join(dirPath, 'src'), { recursive: true });
   await fs.mkdir(path.join(dirPath, 'public'), { recursive: true });
 
-  if (appRouter) {
-    // App Router structure
-    await fs.mkdir(path.join(dirPath, 'src/app'), { recursive: true });
-    await fs.mkdir(path.join(dirPath, 'src/app/api'), { recursive: true });
+  // App Router structure
+  await fs.mkdir(path.join(dirPath, 'src/app'), { recursive: true });
+  await fs.mkdir(path.join(dirPath, 'src/app/api'), { recursive: true });
 
-    // Create a basic page.tsx/page.js
-    const pageExt = typescript ? 'tsx' : 'jsx';
-    const pageContent = `export default function Home() {
+  // Create a basic page.tsx/page.js
+  const pageExt = typescript ? 'tsx' : 'jsx';
+  const pageContent = `export default function Home() {
   return (
     <main>
       <h1>Welcome to ${name}</h1>
@@ -177,10 +175,10 @@ export async function createNextAppMock(
   );
 }
 `;
-    await fs.writeFile(path.join(dirPath, `src/app/page.${pageExt}`), pageContent);
+  await fs.writeFile(path.join(dirPath, `src/app/page.${pageExt}`), pageContent);
 
-    // Create layout.tsx/layout.js
-    const layoutContent = `export default function RootLayout({
+  // Create layout.tsx/layout.js
+  const layoutContent = `export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
@@ -192,23 +190,7 @@ export async function createNextAppMock(
   );
 }
 `;
-    await fs.writeFile(path.join(dirPath, `src/app/layout.${pageExt}`), layoutContent);
-  } else {
-    // Pages Router structure
-    await fs.mkdir(path.join(dirPath, 'src/pages'), { recursive: true });
-    await fs.mkdir(path.join(dirPath, 'src/pages/api'), { recursive: true });
-
-    const indexExt = typescript ? 'tsx' : 'jsx';
-    const indexContent = `export default function Home() {
-  return (
-    <div>
-      <h1>Welcome to ${name}</h1>
-    </div>
-  );
-}
-`;
-    await fs.writeFile(path.join(dirPath, `src/pages/index.${indexExt}`), indexContent);
-  }
+  await fs.writeFile(path.join(dirPath, `src/app/layout.${pageExt}`), layoutContent);
 
   // Create next.config file
   const configExt = typescript ? 'ts' : 'js';
