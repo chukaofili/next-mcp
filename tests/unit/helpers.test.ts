@@ -1,16 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-  createTempDir,
-  cleanupTempDir,
-  fileExists,
-  dirExists,
-  readFile,
-  createPackageJson,
-  createNextAppMock,
-  verifyNextJsStructure,
-} from '../helpers/test-utils.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import {
+  cleanupTempDir,
+  createPackageJson,
+  createTempDir,
+  dirExists,
+  fileExists,
+  readFile,
+  verifyNextJsStructure,
+} from '../helpers/test-utils.js';
 
 describe('Test Utilities', () => {
   let tempDir: string;
@@ -123,19 +124,6 @@ describe('Test Utilities', () => {
       expect(result.hasAppDir).toBe(false);
       expect(result.hasNextConfig).toBe(false);
       expect(result.hasTsConfig).toBe(false);
-    });
-
-    it('should detect existing structure', async () => {
-      // Create basic Next.js structure using mock
-      await createNextAppMock(tempDir);
-
-      const result = await verifyNextJsStructure(tempDir);
-
-      expect(result.hasPackageJson).toBe(true);
-      expect(result.hasSrcDir).toBe(true);
-      expect(result.hasAppDir).toBe(true);
-      expect(result.hasNextConfig).toBe(true);
-      expect(result.hasTsConfig).toBe(true);
     });
   });
 

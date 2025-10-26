@@ -24,15 +24,16 @@ import details from '../package.json' with { type: 'json' };
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
+let logLevel = 'info';
 let logTransportFilename = 'next-mcp.log';
 if (process.env.NODE_ENV !== 'test') {
+  logLevel = 'debug';
   logTransportFilename = 'next-mcp-test.log';
 }
 
 // Configure logger
 const logger = winston.createLogger({
-  level: 'info',
+  level: logLevel,
   format: winston.format.json(),
   transports: [new winston.transports.File({ filename: logTransportFilename })],
 });
@@ -479,6 +480,8 @@ class NextMCPServer {
     try {
       const fullConfig = this.applyConfigDefaults(config);
       const projectPath = path.join(targetPath, fullConfig.name);
+      logger.debug(fullConfig);
+      logger.debug(projectPath);
 
       // Build create-next-app command based on configuration
       const createCommand = this.buildCreateNextAppCommand(fullConfig);
@@ -2087,21 +2090,28 @@ export default function Header() {
       validationResults.push('✅ package.json exists');
 
       // Check if Next.js config exists
-      await fs.access(path.join(projectPath, 'next.config.js'));
-      validationResults.push('✅ next.config.js exists');
+      await fs.access(path.join(projectPath, 'next.config.ts'));
+      validationResults.push('✅ next.config.ts exists');
 
       // Check if TypeScript config exists
       await fs.access(path.join(projectPath, 'tsconfig.json'));
       validationResults.push('✅ tsconfig.json exists');
 
-      const runBuildCommand = `${config.architecture.packageManager} run build`;
-      const result = this.execCommand(runBuildCommand, projectPath, 'validate build');
+      // Attempt to build the project unless skipped
+      if (!config.architecture.skipInstall) {
+        const runBuildCommand = `${config.architecture.packageManager} run build`;
+        const result = this.execCommand(runBuildCommand, projectPath, 'validate build');
 
-      if (!result.success) {
-        throw new Error('[validate build failed]: Check logs for details');
+        if (!result.success) {
+          throw new Error('[validate build failed]: Check logs for details');
+        }
+
+        validationResults.push('✅ Project builds successfully');
+      } else {
+        validationResults.push('⚠️ Build validation skipped (skipInstall is true)');
       }
 
-      validationResults.push('✅ Project builds successfully');
+      validationResults.push('✅ Project validation completed successfully');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       validationResults.push(`❌ Validation failed: ${errorMessage}`);
