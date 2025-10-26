@@ -44,60 +44,61 @@ const PRISMA_OUTPUT_PATH = '../src/lib/db/generated/prisma';
 const PRISMA_GENERATED_DIR = 'src/lib/db/generated';
 
 // Package version constants - centralized version management
-const CREATE_NEXT_APP_VERSION = 'create-next-app@^15';
+const CREATE_NEXT_APP_VERSION = 'create-next-app@^16';
 const PACKAGE_VERSIONS = {
   // State Management
-  zustand: '^5.0.8',
-  '@reduxjs/toolkit': '^2.5.0',
-  'react-redux': '^9.2.0',
-  '@types/react-redux': '^7.1.34',
+  zustand: '^5',
+  '@reduxjs/toolkit': '^2',
+  'react-redux': '^9',
+  '@types/react-redux': '^7',
 
   // ORM & Database
-  '@prisma/client': '^6.17.1',
-  prisma: '^6.17.1',
+  '@prisma/client': '^6',
+  prisma: '^6',
   'drizzle-orm': '^0.44.6',
   'drizzle-kit': '^0.31.5',
-  mongoose: '^8.19.1',
+  mongoose: '^8',
 
   // Database Drivers
-  pg: '^8.16.3',
-  mysql2: '^3.15.2',
-  mongodb: '^6.20.0',
-  'better-sqlite3': '^12.4.1',
-  '@types/better-sqlite3': '^7.6.13',
+  pg: '^8',
+  mysql2: '^3',
+  mongodb: '^6',
+  'better-sqlite3': '^12',
+  '@types/better-sqlite3': '^7',
 
   // UI Libraries
-  '@tanstack/react-table': '^8.21.3',
+  '@tanstack/react-table': '^8',
 
   // Authentication
-  'better-auth': '^1.3.27',
-  '@daveyplate/better-auth-ui': 'latest',
+  'better-auth': '^1',
+  '@daveyplate/better-auth-ui': '^3',
 
   // Testing - Vitest
-  vitest: '^1.0.4',
-  '@vitejs/plugin-react': '^4.2.1',
-  '@testing-library/react': '^14.1.2',
-  '@testing-library/jest-dom': '^6.1.6',
+  vitest: '^1',
+  '@vitejs/plugin-react': '^4',
+  '@testing-library/react': '^14',
+  '@testing-library/jest-dom': '^6',
   jsdom: '^23.0.1',
 
   // Testing - Jest
-  jest: '^29.7.0',
-  'jest-environment-jsdom': '^29.7.0',
+  jest: '^29',
+  'jest-environment-jsdom': '^29',
 
   // Testing - Playwright
-  '@playwright/test': '^1.40.1',
+  '@playwright/test': '^1',
 
   // Utilities
-  dotenv: '^17.2.3',
+  dotenv: '^17',
+  '@types/node': '^24',
 } as const;
 
-interface ProjectConfig {
-  name: string;
-  description: string;
+export interface ProjectConfig {
+  name?: string;
+  description?: string;
   architecture: {
-    appRouter: boolean;
     typescript: boolean;
-    reactCompiler: false;
+    reactCompiler: boolean;
+    skipInstall?: boolean;
     packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun';
     database: 'none' | 'postgres' | 'mysql' | 'mongodb' | 'sqlite';
     orm: 'none' | 'prisma' | 'drizzle' | 'mongoose';
@@ -143,7 +144,7 @@ class NextMCPServer {
                   description: { type: 'string' },
                   architecture: { type: 'object' },
                 },
-                required: ['name', 'architecture'],
+                required: ['architecture'],
               },
               targetPath: {
                 type: 'string',
@@ -344,21 +345,21 @@ class NextMCPServer {
     });
   }
 
-  private applyConfigDefaults(config: ProjectConfig): ProjectConfig {
+  private applyConfigDefaults(config: ProjectConfig) {
     return {
-      name: config.name || `${uniqueNamesGenerator(uniqueNamesGeneratorConfig)}-app`,
-      description: config.description || 'A Next.js application scaffolded with and AI Agent MCP',
+      name: config.name ?? `${uniqueNamesGenerator(uniqueNamesGeneratorConfig)}-app`,
+      description: config.description ?? 'A Next.js application scaffolded with and AI Agent MCP',
       architecture: {
-        appRouter: config.architecture?.appRouter ?? true,
-        typescript: config.architecture?.typescript ?? true,
-        reactCompiler: config.architecture?.reactCompiler || false,
-        packageManager: config.architecture?.packageManager || 'pnpm',
-        database: config.architecture?.database || 'postgres',
-        orm: config.architecture?.orm || 'prisma',
-        auth: config.architecture?.auth || 'better-auth',
-        uiLibrary: config.architecture?.uiLibrary || 'shadcn',
-        stateManagement: config.architecture?.stateManagement || 'none',
-        testing: config.architecture?.testing || 'none',
+        typescript: config.architecture.typescript ?? true,
+        reactCompiler: config.architecture.reactCompiler ?? false,
+        packageManager: config.architecture.packageManager ?? 'pnpm',
+        database: config.architecture.database ?? 'postgres',
+        orm: config.architecture.orm ?? 'prisma',
+        auth: config.architecture.auth ?? 'better-auth',
+        uiLibrary: config.architecture.uiLibrary ?? 'shadcn',
+        stateManagement: config.architecture.stateManagement ?? 'none',
+        testing: config.architecture.testing ?? 'none',
+        skipInstall: config.architecture.skipInstall ?? false,
       },
     };
   }
@@ -517,32 +518,16 @@ class NextMCPServer {
     const packageRunner = this.getPackageRunnerDlx(config.architecture.packageManager);
     const flags = [`${packageRunner} ${CREATE_NEXT_APP_VERSION}`, `./${config.name}`];
     logger.info(`Building create-next-app command for config: ${JSON.stringify(config)}`);
+
     if (config.architecture.typescript) {
       flags.push('--ts');
     } else {
       flags.push('--js');
     }
 
-    if (config.architecture.appRouter) {
-      flags.push('--app');
-    } else {
-      flags.push('--no-app');
+    if (config.architecture.reactCompiler) {
+      flags.push('--react-compiler');
     }
-
-    // Always use ESLint
-    flags.push('--eslint');
-
-    //Always use Tailwind CSS for styling
-    flags.push('--tailwind');
-
-    // Use src directory for better organization
-    flags.push('--src-dir');
-
-    // Use Turbopack for faster development
-    flags.push('--turbopack');
-
-    // Set import alias
-    flags.push('--import-alias "@/*"');
 
     if (config.architecture.packageManager === 'pnpm') {
       flags.push('--use-pnpm');
@@ -553,6 +538,17 @@ class NextMCPServer {
     } else {
       flags.push('--use-npm');
     }
+
+    // Skip dependency installation if specified [Used for tests]
+    if (config.architecture.skipInstall) {
+      flags.push('--skip-install');
+    }
+
+    // Use src directory for better organization
+    flags.push('--src-dir');
+
+    // Auto accept all prompts with defaults which are not configured
+    flags.push('--yes');
 
     return flags.join(' ');
   }
@@ -2123,7 +2119,7 @@ export default function Header() {
 
       // Generate features list based on configuration
       const features = [];
-      if (architecture.appRouter) features.push('App Router for modern routing and layouts');
+      features.push('App Router for modern routing and layouts');
       if (architecture.typescript) features.push('TypeScript for type-safe development');
       if (architecture.uiLibrary === 'shadcn') features.push('shadcn/ui components library');
       if (architecture.database !== 'none') features.push(`${architecture.database} database integration`);
@@ -2278,7 +2274,7 @@ ${features.map((feature) => `- ${feature}`).join('\n')}
 
 ## Tech Stack
 
-- **Framework**: Next.js 15 ${architecture.appRouter ? '(App Router)' : '(Pages Router)'}
+- **Framework**: Next.js 16 (App Router)
 - **Language**: ${architecture.typescript ? 'TypeScript' : 'JavaScript'}
 - **Package Manager**: ${pm}
 - **UI Library**: ${architecture.uiLibrary === 'shadcn' ? 'shadcn/ui' : 'Tailwind CSS'}
