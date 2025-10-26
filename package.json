@@ -14,11 +14,18 @@
     "start": "node dist/index.js",
     "prepublishOnly": "pnpm run build",
     "inspector": "pnpm dlx @modelcontextprotocol/inspector dist/index.js",
-    "test": "echo \"No tests yet\" && exit 0",
-    "lint": "eslint src/**/*.ts",
-    "format": "prettier --write src/**/*.ts",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "lint": "eslint src/**/*.ts tests/**/*.ts",
+    "format": "prettier --write src/**/*.ts tests/**/*.ts",
     "prebuild": "pnpm run lint && pnpm clean",
-    "postbuild": "chmod +x dist/index.js && cp -r src/templates dist/templates"
+    "postbuild": "chmod +x dist/index.js && cp -r src/templates dist/templates",
+    "pretest": "pnpm run build",
+    "pretest:integration": "pnpm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.0",
@@ -31,12 +38,16 @@
     "@eslint/json": "^0.13.2",
     "@eslint/markdown": "^7.4.0",
     "@ianvs/prettier-plugin-sort-imports": "^4.7.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.7.2",
+    "@vitest/coverage-v8": "4.0.3",
+    "@vitest/ui": "^4.0.3",
     "eslint": "^9.37.0",
     "globals": "^16.4.0",
     "prettier": "^3.6.2",
     "typescript": "^5",
-    "typescript-eslint": "^8.46.1"
+    "typescript-eslint": "^8.46.2",
+    "vitest": "^4.0.3"
   },
   "files": [
     "dist/**/*",
