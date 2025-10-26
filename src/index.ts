@@ -480,8 +480,6 @@ class NextMCPServer {
     try {
       const fullConfig = this.applyConfigDefaults(config);
       const projectPath = path.join(targetPath, fullConfig.name);
-      logger.debug(fullConfig);
-      logger.debug(projectPath);
 
       // Build create-next-app command based on configuration
       const createCommand = this.buildCreateNextAppCommand(fullConfig);
@@ -599,7 +597,7 @@ class NextMCPServer {
       content: [
         {
           type: 'text',
-          text: `✅ Created ${additionalDirectories.length} additional directories and initialized git repository`,
+          text: `✅ Created ${additionalDirectories.length} additional directories and structure`,
         },
       ],
     };
@@ -1754,12 +1752,12 @@ const db = new Database("./dev.db");`,
       };
     }
 
-    // Verify database is configured
-    if (config.architecture.database === 'none') {
-      throw new Error('Better Auth requires a database. Please select a database option.');
-    }
-
     try {
+      // Verify database is configured
+      if (config.architecture.database === 'none') {
+        throw new Error('Better Auth requires a database. Please select a database option.');
+      }
+
       // Step 1: Create directory structure
       const authDirs = [
         'src/lib',
@@ -1890,7 +1888,7 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       // MongoDB doesn't need migrations (schema-less)
       const shouldRunMigrations = database !== 'mongodb';
 
-      if (shouldRunMigrations) {
+      if (shouldRunMigrations && !config.architecture.skipInstall) {
         // Generate auth schema
         const schemaCmd = this.getAuthSchemaCommand();
         const schemaResult = this.execCommand(schemaCmd, projectPath, 'auth schema generation');
@@ -1943,7 +1941,7 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
 
 3. Visit http://localhost:3000/auth/sign-up to create your first user`;
         } else {
-          nextSteps = `⚠️  Auto-setup failed. Please run these commands manually:
+          nextSteps = `⚠️  Manual setup required. Please run these commands:
 
 📋 Next Steps:
 

@@ -44,30 +44,28 @@ describe('setup_authentication tool', () => {
     expect(text).toMatch(/No authentication|Skipping authentication/i);
   });
 
-  it.only('should attempt to setup better-auth', async () => {
+  it('should attempt to setup better-auth', async () => {
     const projectName = 'auth-test-project';
+    const projectPath = path.join(tempDir, projectName);
     const config = createMockConfig({
       name: projectName,
       architecture: {
         database: 'postgres',
         orm: 'prisma',
         auth: 'better-auth',
-        skipInstall: true,
       },
     });
 
     await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    await client.callTool('create_directory_structure', { config, projectPath });
 
-    const result = await client.callTool('setup_authentication', {
-      config,
-      projectPath: path.join(tempDir, projectName),
-    });
+    const result = await client.callTool('setup_authentication', { config, projectPath });
 
-    console.log(result);
+    expect(client.isSuccess(result)).toBe(true);
 
-    // const text = client.getTextContent(result);
-    // expect(text).toBeDefined();
-    // May succeed or fail depending on environment - just verify it responds
+    const text = client.getTextContent(result);
+    expect(text).toBeDefined();
+    expect(text).toContain('Better Auth + Better Auth UI has been configured successfully');
   });
 
   it('should handle better-auth without database', async () => {
@@ -84,9 +82,10 @@ describe('setup_authentication tool', () => {
       projectPath: tempDir,
     });
 
-    expect(client.isSuccess(result)).toBe(true);
+    expect(client.isSuccess(result)).toBe(false);
+
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
-    // Should handle this scenario (may warn about missing database)
+    expect(text).toContain('Better Auth requires a database');
   });
 });
