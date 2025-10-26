@@ -6,6 +6,7 @@ import {
   dirExists,
   readFile,
   createPackageJson,
+  createNextAppMock,
   verifyNextJsStructure,
 } from '../helpers/test-utils.js';
 import { promises as fs } from 'node:fs';
@@ -125,11 +126,8 @@ describe('Test Utilities', () => {
     });
 
     it('should detect existing structure', async () => {
-      // Create basic Next.js structure
-      await createPackageJson(tempDir);
-      await fs.mkdir(path.join(tempDir, 'src/app'), { recursive: true });
-      await fs.writeFile(path.join(tempDir, 'next.config.ts'), 'export default {}');
-      await fs.writeFile(path.join(tempDir, 'tsconfig.json'), '{}');
+      // Create basic Next.js structure using mock
+      await createNextAppMock(tempDir);
 
       const result = await verifyNextJsStructure(tempDir);
 

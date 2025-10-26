@@ -1217,6 +1217,10 @@ export { Button };
         components.push('- Created reusable Button component with Tailwind CSS');
       }
 
+      if (config.architecture.auth !== 'none') {
+        components.push('- Created authentication-related components (to be implemented based on chosen auth method)');
+      }
+
       return {
         content: [
           {

@@ -167,6 +167,186 @@ export async function createPackageJson(dirPath: string, config?: { name?: strin
 }
 
 /**
+ * Create a mock Next.js project structure simulating what create-next-app would create
+ * This includes the basic directory structure and configuration files
+ */
+export async function createNextAppMock(
+  dirPath: string,
+  options?: {
+    name?: string;
+    typescript?: boolean;
+    appRouter?: boolean;
+  }
+): Promise<void> {
+  const { name = 'test-project', typescript = true, appRouter = true } = options || {};
+
+  // Create package.json
+  await createPackageJson(dirPath, { name });
+
+  // Create base directories
+  await fs.mkdir(path.join(dirPath, 'src'), { recursive: true });
+  await fs.mkdir(path.join(dirPath, 'public'), { recursive: true });
+
+  if (appRouter) {
+    // App Router structure
+    await fs.mkdir(path.join(dirPath, 'src/app'), { recursive: true });
+    await fs.mkdir(path.join(dirPath, 'src/app/api'), { recursive: true });
+
+    // Create a basic page.tsx/page.js
+    const pageExt = typescript ? 'tsx' : 'jsx';
+    const pageContent = `export default function Home() {
+  return (
+    <main>
+      <h1>Welcome to ${name}</h1>
+    </main>
+  );
+}
+`;
+    await fs.writeFile(path.join(dirPath, `src/app/page.${pageExt}`), pageContent);
+
+    // Create layout.tsx/layout.js
+    const layoutContent = `export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
+`;
+    await fs.writeFile(path.join(dirPath, `src/app/layout.${pageExt}`), layoutContent);
+  } else {
+    // Pages Router structure
+    await fs.mkdir(path.join(dirPath, 'src/pages'), { recursive: true });
+    await fs.mkdir(path.join(dirPath, 'src/pages/api'), { recursive: true });
+
+    const indexExt = typescript ? 'tsx' : 'jsx';
+    const indexContent = `export default function Home() {
+  return (
+    <div>
+      <h1>Welcome to ${name}</h1>
+    </div>
+  );
+}
+`;
+    await fs.writeFile(path.join(dirPath, `src/pages/index.${indexExt}`), indexContent);
+  }
+
+  // Create next.config file
+  const configExt = typescript ? 'ts' : 'js';
+  const nextConfigContent = typescript
+    ? `import type { NextConfig } from 'next';
+
+const config: NextConfig = {
+  /* config options here */
+};
+
+export default config;
+`
+    : `/** @type {import('next').NextConfig} */
+const nextConfig = {
+  /* config options here */
+};
+
+module.exports = nextConfig;
+`;
+  await fs.writeFile(path.join(dirPath, `next.config.${configExt}`), nextConfigContent);
+
+  // Create tsconfig.json (if TypeScript)
+  if (typescript) {
+    const tsconfigContent = {
+      compilerOptions: {
+        target: 'ES2017',
+        lib: ['dom', 'dom.iterable', 'esnext'],
+        allowJs: true,
+        skipLibCheck: true,
+        strict: true,
+        noEmit: true,
+        esModuleInterop: true,
+        module: 'esnext',
+        moduleResolution: 'bundler',
+        resolveJsonModule: true,
+        isolatedModules: true,
+        jsx: 'preserve',
+        incremental: true,
+        plugins: [
+          {
+            name: 'next',
+          },
+        ],
+        paths: {
+          '@/*': ['./src/*'],
+        },
+      },
+      include: ['next-env.d.ts', '**/*.ts', '**/*.tsx', '.next/types/**/*.ts'],
+      exclude: ['node_modules'],
+    };
+    await fs.writeFile(path.join(dirPath, 'tsconfig.json'), JSON.stringify(tsconfigContent, null, 2));
+  }
+
+  // Create .gitignore
+  const gitignoreContent = `# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env*.local
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+`;
+  await fs.writeFile(path.join(dirPath, '.gitignore'), gitignoreContent);
+
+  // Create README.md
+  const readmeContent = `# ${name}
+
+This is a [Next.js](https://nextjs.org) project bootstrapped with [\`create-next-app\`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+
+## Getting Started
+
+First, run the development server:
+
+\`\`\`bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+\`\`\`
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`;
+  await fs.writeFile(path.join(dirPath, 'README.md'), readmeContent);
+}
+
+/**
  * Verify basic Next.js project structure
  */
 export async function verifyNextJsStructure(projectPath: string): Promise<{

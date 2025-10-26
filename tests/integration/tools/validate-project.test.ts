@@ -2,8 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MCPTestClient } from '../../helpers/mcp-test-client.js';
-import { cleanupTempDir, createMockConfig, createPackageJson, createTempDir } from '../../helpers/test-utils.js';
-import { promises as fs } from 'node:fs';
+import {
+  cleanupTempDir,
+  createMockConfig,
+  createNextAppMock,
+  createPackageJson,
+  createTempDir,
+} from '../../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -54,11 +59,8 @@ describe('validate_project tool', () => {
   });
 
   it('should validate project with basic structure', async () => {
-    // Create basic Next.js structure
-    await createPackageJson(tempDir, { name: 'structured-test' });
-    await fs.mkdir(path.join(tempDir, 'src/app'), { recursive: true });
-    await fs.writeFile(path.join(tempDir, 'next.config.ts'), 'export default {}');
-    await fs.writeFile(path.join(tempDir, 'tsconfig.json'), '{}');
+    // Create basic Next.js structure using mock
+    await createNextAppMock(tempDir, { name: 'structured-test' });
 
     const config = createMockConfig();
 
