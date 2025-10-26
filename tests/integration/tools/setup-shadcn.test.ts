@@ -39,7 +39,7 @@ describe('setup_shadcn tool', () => {
     expect(text).toBeDefined();
     expect(text.length).toBeGreaterThan(0);
 
-    // May succeed or indicate what setup was done
+    // May succeed or fail depending on environment - just verify it responds
   });
 
   it('should handle non-shadcn configuration', async () => {
@@ -54,6 +54,7 @@ describe('setup_shadcn tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
 

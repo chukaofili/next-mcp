@@ -68,10 +68,28 @@ export class MCPTestClient {
 
   /**
    * Check if tool call was successful
+   * A tool call is considered successful if:
+   * 1. It has content (meaning it returned a response)
+   * 2. It doesn't contain error markers
    */
   isSuccess(result: unknown): boolean {
+    const res = result as { content?: Array<{ type?: string; text?: string }>; isError?: boolean };
+
+    // If explicitly marked as error, it's not a success
+    if (res.isError) return false;
+
+    // If no content, it's not a success
+    if (!res.content || res.content.length === 0) return false;
+
     const text = this.getTextContent(result);
-    return text.includes('✅') || text.includes('Successfully');
+
+    // If text contains error markers, it's not a success
+    if (text.includes('❌') || text.toLowerCase().includes('error:') || text.toLowerCase().includes('failed')) {
+      return false;
+    }
+
+    // Otherwise, having content means success
+    return text.length > 0;
   }
 
   /**

@@ -38,6 +38,7 @@ describe('generate_base_components tool', () => {
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
     expect(text.length).toBeGreaterThan(0);
+    // May succeed or fail depending on environment - requires directory structure
   });
 
   it('should handle shadcn configuration', async () => {
@@ -52,6 +53,7 @@ describe('generate_base_components tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
   });
@@ -69,6 +71,7 @@ describe('generate_base_components tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
     // May mention auth-related components

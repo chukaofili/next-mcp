@@ -28,11 +28,12 @@ describe('README Generation', () => {
   it('should create README.md file', async () => {
     const config = createMockConfig();
 
-    await client.callTool('generate_readme', {
+    const result = await client.callTool('generate_readme', {
       config,
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const readmePath = path.join(tempDir, 'README.md');
     const exists = await fileExists(readmePath);
 
@@ -45,11 +46,12 @@ describe('README Generation', () => {
       description: 'An awesome Next.js application',
     });
 
-    await client.callTool('generate_readme', {
+    const result = await client.callTool('generate_readme', {
       config,
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const readmePath = path.join(tempDir, 'README.md');
     const content = await readFile(readmePath);
 
@@ -68,11 +70,12 @@ describe('README Generation', () => {
       },
     });
 
-    await client.callTool('generate_readme', {
+    const result = await client.callTool('generate_readme', {
       config,
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const readmePath = path.join(tempDir, 'README.md');
     const content = await readFile(readmePath);
 
@@ -97,11 +100,12 @@ describe('README Generation', () => {
         architecture: { packageManager: pm.name },
       });
 
-      await client.callTool('generate_readme', {
+      const result = await client.callTool('generate_readme', {
         config,
         projectPath: tempDir,
       });
 
+      expect(client.isSuccess(result)).toBe(true);
       const readmePath = path.join(tempDir, 'README.md');
       const content = await readFile(readmePath);
 
@@ -118,11 +122,12 @@ describe('README Generation', () => {
       },
     });
 
-    await client.callTool('generate_readme', {
+    const result = await client.callTool('generate_readme', {
       config,
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const readmePath = path.join(tempDir, 'README.md');
     const content = await readFile(readmePath);
 
@@ -141,11 +146,12 @@ describe('README Generation', () => {
       },
     });
 
-    await client.callTool('generate_readme', {
+    const result = await client.callTool('generate_readme', {
       config,
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const readmePath = path.join(tempDir, 'README.md');
     const content = await readFile(readmePath);
 
@@ -160,11 +166,12 @@ describe('README Generation', () => {
       },
     });
 
-    await client.callTool('generate_readme', {
+    const result = await client.callTool('generate_readme', {
       config,
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const readmePath = path.join(tempDir, 'README.md');
     const content = await readFile(readmePath);
 
@@ -183,11 +190,12 @@ describe('README Generation', () => {
         architecture: { testing: framework },
       });
 
-      await client.callTool('generate_readme', {
+      const result = await client.callTool('generate_readme', {
         config,
         projectPath: tempDir,
       });
 
+      expect(client.isSuccess(result)).toBe(true);
       const readmePath = path.join(tempDir, 'README.md');
       const content = await readFile(readmePath);
 
@@ -204,11 +212,12 @@ describe('README Generation', () => {
       },
     });
 
-    await client.callTool('generate_readme', {
+    const result = await client.callTool('generate_readme', {
       config,
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const readmePath = path.join(tempDir, 'README.md');
     const content = await readFile(readmePath);
 
@@ -224,11 +233,12 @@ describe('README Generation', () => {
       },
     });
 
-    await client.callTool('generate_readme', {
+    const result = await client.callTool('generate_readme', {
       config,
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const readmePath = path.join(tempDir, 'README.md');
     const content = await readFile(readmePath);
 
@@ -239,11 +249,12 @@ describe('README Generation', () => {
   it('should include Docker instructions', async () => {
     const config = createMockConfig();
 
-    await client.callTool('generate_readme', {
+    const result = await client.callTool('generate_readme', {
       config,
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const readmePath = path.join(tempDir, 'README.md');
     const content = await readFile(readmePath);
 
@@ -255,11 +266,12 @@ describe('README Generation', () => {
   it('should include deployment section', async () => {
     const config = createMockConfig();
 
-    await client.callTool('generate_readme', {
+    const result = await client.callTool('generate_readme', {
       config,
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const readmePath = path.join(tempDir, 'README.md');
     const content = await readFile(readmePath);
 
@@ -275,11 +287,12 @@ describe('README Generation', () => {
       },
     });
 
-    await client.callTool('generate_readme', {
+    const result = await client.callTool('generate_readme', {
       config,
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const readmePath = path.join(tempDir, 'README.md');
     const content = await readFile(readmePath);
 
@@ -298,11 +311,12 @@ describe('README Generation', () => {
       },
     });
 
-    await client.callTool('generate_readme', {
+    const result = await client.callTool('generate_readme', {
       config,
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const readmePath = path.join(tempDir, 'README.md');
     const content = await readFile(readmePath);
 

@@ -35,6 +35,7 @@ describe('setup_authentication tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
     expect(text).toMatch(/No authentication|Skipping authentication/i);
@@ -73,6 +74,7 @@ describe('setup_authentication tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
     // Should handle this scenario (may warn about missing database)

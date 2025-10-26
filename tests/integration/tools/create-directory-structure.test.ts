@@ -1,6 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import { MCPTestClient } from '../../helpers/mcp-test-client.js';
 import { cleanupTempDir, createMockConfig, createTempDir, dirExists } from '../../helpers/test-utils.js';
 
@@ -40,13 +42,13 @@ describe('create_directory_structure tool', () => {
 
     expect(client.isSuccess(result)).toBe(true);
 
-    // Verify additional directories created by the tool
+    // Verify all additional directories created by the tool
     // (Note: Basic src/app structure is created by create-next-app, not this tool)
-    expect(await dirExists(path.join(tempDir, 'src/components/ui'))).toBe(true);
-    expect(await dirExists(path.join(tempDir, 'src/components/forms'))).toBe(true);
-    expect(await dirExists(path.join(tempDir, 'src/lib'))).toBe(true);
-    expect(await dirExists(path.join(tempDir, 'src/hooks'))).toBe(true);
-    expect(await dirExists(path.join(tempDir, '.github/workflows'))).toBe(true);
+    const expectedDirs = ['src/components/ui', 'src/components/forms', 'src/lib', 'src/hooks'];
+
+    for (const dir of expectedDirs) {
+      expect(await dirExists(path.join(tempDir, dir))).toBe(true);
+    }
   });
 
   it('should create database directories when database is configured', async () => {
@@ -115,7 +117,6 @@ describe('create_directory_structure tool', () => {
       'src/hooks',
       'src/stores', // Added because stateManagement !== 'none'
       'src/tests', // Added because testing !== 'none'
-      '.github/workflows',
     ];
 
     for (const dir of expectedDirs) {

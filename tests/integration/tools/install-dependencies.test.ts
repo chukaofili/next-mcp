@@ -1,6 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import { MCPTestClient } from '../../helpers/mcp-test-client.js';
 import { cleanupTempDir, createMockConfig, createPackageJson, createTempDir } from '../../helpers/test-utils.js';
 
@@ -23,9 +25,8 @@ describe('install_dependencies tool', () => {
     await cleanupTempDir(tempDir);
   });
 
-  // Skip by default as installing dependencies can be slow and requires network
-  it.skip('should install dependencies', async () => {
-    // Create a minimal package.json
+  // These tests require network
+  it('should install dependencies', async () => {
     await createPackageJson(tempDir, { name: 'test-install' });
 
     const config = createMockConfig({
@@ -39,31 +40,13 @@ describe('install_dependencies tool', () => {
       projectPath: tempDir,
     });
 
-    const text = client.getTextContent(result);
-    expect(text).toBeDefined();
-    // Installation may take time and require network access
-  });
+    expect(client.isSuccess(result)).toBe(true);
 
-  it('should handle install_dependencies call', async () => {
-    await createPackageJson(tempDir, { name: 'test-handle' });
-
-    const config = createMockConfig({
-      architecture: {
-        packageManager: 'npm',
-      },
-    });
-
-    const result = await client.callTool('install_dependencies', {
-      config,
-      projectPath: tempDir,
-    });
-
-    // Should at least respond without crashing
-    expect(result).toBeDefined();
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
   });
 
+  // These tests require network
   it('should support different package managers', async () => {
     await createPackageJson(tempDir, { name: 'test-pm' });
 
@@ -79,7 +62,8 @@ describe('install_dependencies tool', () => {
         projectPath: tempDir,
       });
 
-      // Should handle each package manager
+      expect(client.isSuccess(result)).toBe(true);
+
       expect(result).toBeDefined();
       const text = client.getTextContent(result);
       expect(text).toBeDefined();

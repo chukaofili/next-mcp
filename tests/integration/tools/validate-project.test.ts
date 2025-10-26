@@ -34,7 +34,7 @@ describe('validate_project tool', () => {
 
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
-    // Likely will report missing files
+    // Validation tools report issues - that's not a "failure", it's expected behavior
   });
 
   it('should validate project with package.json', async () => {
@@ -50,6 +50,7 @@ describe('validate_project tool', () => {
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
     expect(text.length).toBeGreaterThan(0);
+    // Validation tools report issues - that's not a "failure", it's expected behavior
   });
 
   it('should validate project with basic structure', async () => {
@@ -68,6 +69,6 @@ describe('validate_project tool', () => {
 
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
-    // Should indicate better validation results
+    // Validation tools report issues - that's not a "failure", it's expected behavior
   });
 });

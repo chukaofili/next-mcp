@@ -42,6 +42,7 @@ describe('update_package_json tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
 
@@ -70,6 +71,7 @@ describe('update_package_json tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
 
@@ -92,6 +94,7 @@ describe('update_package_json tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
 

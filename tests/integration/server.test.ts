@@ -63,7 +63,7 @@ describe('MCP Server Initialization', () => {
       expect(tool.name.length).toBeGreaterThan(0);
 
       expect(tool.description).toBeDefined();
-      expect(tool.description.length).toBeGreaterThan(0);
+      expect(tool.description?.length).toBeGreaterThan(0);
 
       expect(tool.inputSchema).toBeDefined();
       expect(tool.inputSchema.type).toBe('object');

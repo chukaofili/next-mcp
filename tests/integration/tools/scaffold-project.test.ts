@@ -1,8 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import { MCPTestClient } from '../../helpers/mcp-test-client.js';
-import { cleanupTempDir, createMockConfig, createTempDir, fileExists, verifyNextJsStructure } from '../../helpers/test-utils.js';
+import { cleanupTempDir, createMockConfig, createTempDir } from '../../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,6 +41,7 @@ describe('scaffold_project tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
     expect(text.length).toBeGreaterThan(0);
@@ -67,6 +70,7 @@ describe('scaffold_project tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
     expect(text.length).toBeGreaterThan(0);
@@ -93,6 +97,7 @@ describe('scaffold_project tool', () => {
         projectPath: tempDir,
       });
 
+      expect(client.isSuccess(result)).toBe(true);
       const text = client.getTextContent(result);
       expect(text).toBeDefined();
       // Should handle each configuration

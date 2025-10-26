@@ -36,6 +36,7 @@ describe('setup_database tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
     expect(text).toMatch(/No database|Skipping database/i);
@@ -72,6 +73,7 @@ describe('setup_database tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
   });
@@ -89,6 +91,7 @@ describe('setup_database tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
   });
@@ -108,5 +111,6 @@ describe('setup_database tool', () => {
 
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
+    // May succeed or fail depending on environment - just verify it responds
   });
 });

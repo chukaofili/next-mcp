@@ -28,6 +28,7 @@ describe('generate_nextjs_custom_code tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
     expect(text.length).toBeGreaterThan(0);
@@ -41,6 +42,7 @@ describe('generate_nextjs_custom_code tool', () => {
       projectPath: tempDir,
     });
 
+    expect(client.isSuccess(result)).toBe(true);
     // Should not crash
     expect(result).toBeDefined();
     const text = client.getTextContent(result);

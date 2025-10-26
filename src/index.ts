@@ -509,13 +509,7 @@ class NextMCPServer {
 
   private async createDirectoryStructure(config: ProjectConfig, projectPath: string) {
     // Additional directories that create-next-app doesn't create
-    const additionalDirectories = [
-      'src/components/ui',
-      'src/components/forms',
-      'src/lib',
-      'src/hooks',
-      '.github/workflows',
-    ];
+    const additionalDirectories = ['src/components/ui', 'src/components/forms', 'src/lib', 'src/hooks'];
 
     // Add stores directory if using external state management
     if (config.architecture.stateManagement !== 'none') {
@@ -2189,7 +2183,9 @@ Run tests with:
 \`\`\`bash
 ${pm} test
 \`\`\`
-${architecture.testing === 'vitest' ? `
+${
+  architecture.testing === 'vitest'
+    ? `
 Run tests in watch mode:
 \`\`\`bash
 ${pm} run test:watch
@@ -2199,7 +2195,11 @@ Open Vitest UI:
 \`\`\`bash
 ${pm} run test:ui
 \`\`\`
-` : ''}${architecture.testing === 'playwright' ? `
+`
+    : ''
+}${
+          architecture.testing === 'playwright'
+            ? `
 Run E2E tests:
 \`\`\`bash
 ${pm} run test:e2e
@@ -2209,7 +2209,9 @@ Open Playwright UI:
 \`\`\`bash
 ${pm} run test:e2e:ui
 \`\`\`
-` : ''}`;
+`
+            : ''
+        }`;
       }
 
       const readme = `# ${config.name}
@@ -2301,18 +2303,34 @@ ${config.name}/
 ├── src/
 │   ├── app/                    # Next.js app directory
 │   │   ├── api/               # API routes
-${architecture.auth === 'better-auth' ? `│   │   │   └── auth/          # Authentication API
+${
+  architecture.auth === 'better-auth'
+    ? `│   │   │   └── auth/          # Authentication API
 │   │   ├── auth/              # Auth pages (sign-in, sign-up)
 │   │   ├── account/           # Account management pages
-` : ''}│   │   ├── layout.tsx         # Root layout
+`
+    : ''
+}│   │   ├── layout.tsx         # Root layout
 │   │   └── page.tsx           # Home page
 │   ├── components/            # React components
 │   │   ├── ui/               # UI components${architecture.uiLibrary === 'shadcn' ? ' (shadcn/ui)' : ''}
-${architecture.auth === 'better-auth' ? `│   │   └── auth/             # Auth components
-` : ''}│   ├── lib/                  # Utility functions
-${architecture.database !== 'none' ? `│   │   └── db/               # Database client and schema
-` : ''}${architecture.auth === 'better-auth' ? `│   ├── providers/            # React providers
-` : ''}│   └── hooks/                # Custom React hooks
+${
+  architecture.auth === 'better-auth'
+    ? `│   │   └── auth/             # Auth components
+`
+    : ''
+}│   ├── lib/                  # Utility functions
+${
+  architecture.database !== 'none'
+    ? `│   │   └── db/               # Database client and schema
+`
+    : ''
+}${
+        architecture.auth === 'better-auth'
+          ? `│   ├── providers/            # React providers
+`
+          : ''
+      }│   └── hooks/                # Custom React hooks
 ${architecture.orm === 'prisma' ? '├── prisma/                 # Prisma schema and migrations\n' : ''}${architecture.orm === 'drizzle' ? '├── drizzle/                # Drizzle schema and migrations\n' : ''}├── docker-compose.yml       # Docker Compose configuration
 ├── Dockerfile               # Docker configuration
 ├── next.config.ts          # Next.js configuration
@@ -2327,9 +2345,13 @@ ${architecture.orm === 'prisma' ? '├── prisma/                 # Prisma sc
 - \`${pm} start\` - Start production server
 - \`${pm} lint\` - Run ESLint
 - \`${pm} run type-check\` - Run TypeScript type checking
-${architecture.testing !== 'none' ? `- \`${pm} test\` - Run tests\n` : ''}${architecture.database !== 'none' ? `- \`${pm} run docker:dev:up\` - Start database with Docker Compose
+${architecture.testing !== 'none' ? `- \`${pm} test\` - Run tests\n` : ''}${
+        architecture.database !== 'none'
+          ? `- \`${pm} run docker:dev:up\` - Start database with Docker Compose
 - \`${pm} run docker:dev:down\` - Stop database
-` : ''}- \`${pm} run docker:build\` - Build Docker image
+`
+          : ''
+      }- \`${pm} run docker:build\` - Build Docker image
 - \`${pm} run docker:run\` - Run Docker container
 
 ## Environment Variables
@@ -2337,10 +2359,14 @@ ${architecture.testing !== 'none' ? `- \`${pm} test\` - Run tests\n` : ''}${arch
 See \`.env.example\` for all available environment variables.
 
 Key variables:
-${architecture.database !== 'none' ? '- `DATABASE_URL` - Database connection string\n' : ''}${architecture.auth === 'better-auth' ? `- \`BETTER_AUTH_SECRET\` - Secret for Better Auth
+${architecture.database !== 'none' ? '- `DATABASE_URL` - Database connection string\n' : ''}${
+        architecture.auth === 'better-auth'
+          ? `- \`BETTER_AUTH_SECRET\` - Secret for Better Auth
 - \`BETTER_AUTH_URL\` - Your app URL
 - \`NEXT_PUBLIC_BETTER_AUTH_URL\` - Public app URL
-` : ''}
+`
+          : ''
+      }
 ## Deployment
 
 This project can be deployed to various platforms:
@@ -2377,9 +2403,13 @@ ${architecture.uiLibrary === 'shadcn' ? '- [shadcn/ui Documentation](https://ui.
 ### Database
 ${architecture.orm === 'prisma' ? '- [Prisma Documentation](https://www.prisma.io/docs)\n' : ''}${architecture.orm === 'drizzle' ? '- [Drizzle ORM Documentation](https://orm.drizzle.team/docs/overview)\n' : ''}${architecture.orm === 'mongoose' ? '- [Mongoose Documentation](https://mongoosejs.com/docs/)\n' : ''}
 ### Authentication
-${architecture.auth === 'better-auth' ? `- [Better Auth Documentation](https://www.better-auth.com/docs)
+${
+  architecture.auth === 'better-auth'
+    ? `- [Better Auth Documentation](https://www.better-auth.com/docs)
 - [Better Auth UI Documentation](https://better-auth-ui.com)
-` : ''}
+`
+    : ''
+}
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
