@@ -43,12 +43,61 @@ const uniqueNamesGeneratorConfig: Config = {
 const PRISMA_OUTPUT_PATH = '../src/lib/db/generated/prisma';
 const PRISMA_GENERATED_DIR = 'src/lib/db/generated';
 
+// Package version constants - centralized version management
+const CREATE_NEXT_APP_VERSION = 'create-next-app@^15';
+const PACKAGE_VERSIONS = {
+  // State Management
+  zustand: '^5.0.8',
+  '@reduxjs/toolkit': '^2.5.0',
+  'react-redux': '^9.2.0',
+  '@types/react-redux': '^7.1.34',
+
+  // ORM & Database
+  '@prisma/client': '^6.17.1',
+  prisma: '^6.17.1',
+  'drizzle-orm': '^0.44.6',
+  'drizzle-kit': '^0.31.5',
+  mongoose: '^8.19.1',
+
+  // Database Drivers
+  pg: '^8.16.3',
+  mysql2: '^3.15.2',
+  mongodb: '^6.20.0',
+  'better-sqlite3': '^12.4.1',
+  '@types/better-sqlite3': '^7.6.13',
+
+  // UI Libraries
+  '@tanstack/react-table': '^8.21.3',
+
+  // Authentication
+  'better-auth': '^1.3.27',
+  '@daveyplate/better-auth-ui': 'latest',
+
+  // Testing - Vitest
+  vitest: '^1.0.4',
+  '@vitejs/plugin-react': '^4.2.1',
+  '@testing-library/react': '^14.1.2',
+  '@testing-library/jest-dom': '^6.1.6',
+  jsdom: '^23.0.1',
+
+  // Testing - Jest
+  jest: '^29.7.0',
+  'jest-environment-jsdom': '^29.7.0',
+
+  // Testing - Playwright
+  '@playwright/test': '^1.40.1',
+
+  // Utilities
+  dotenv: '^17.2.3',
+} as const;
+
 interface ProjectConfig {
   name: string;
   description: string;
   architecture: {
     appRouter: boolean;
     typescript: boolean;
+    reactCompiler: false;
     packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun';
     database: 'none' | 'postgres' | 'mysql' | 'mongodb' | 'sqlite';
     orm: 'none' | 'prisma' | 'drizzle' | 'mongoose';
@@ -302,6 +351,7 @@ class NextMCPServer {
       architecture: {
         appRouter: config.architecture?.appRouter ?? true,
         typescript: config.architecture?.typescript ?? true,
+        reactCompiler: config.architecture?.reactCompiler || false,
         packageManager: config.architecture?.packageManager || 'pnpm',
         database: config.architecture?.database || 'postgres',
         orm: config.architecture?.orm || 'prisma',
@@ -420,10 +470,10 @@ class NextMCPServer {
 
   private async scaffoldProject(config: ProjectConfig, targetPath: string) {
     // Apply defaults to the configuration
-    const fullConfig = this.applyConfigDefaults(config);
-    const projectPath = path.join(targetPath, fullConfig.name);
-
     try {
+      const fullConfig = this.applyConfigDefaults(config);
+      const projectPath = path.join(targetPath, fullConfig.name);
+
       // Build create-next-app command based on configuration
       const createCommand = this.buildCreateNextAppCommand(fullConfig);
       logger.info(`Executing: ${createCommand}`);
@@ -464,8 +514,8 @@ class NextMCPServer {
   }
 
   private buildCreateNextAppCommand(config: ProjectConfig): string {
-    const packageRunner = this.getPackageRunner(config.architecture.packageManager);
-    const flags = [`${packageRunner} create-next-app@latest`, `./${config.name}`];
+    const packageRunner = this.getPackageRunnerDlx(config.architecture.packageManager);
+    const flags = [`${packageRunner} ${CREATE_NEXT_APP_VERSION}`, `./${config.name}`];
     logger.info(`Building create-next-app command for config: ${JSON.stringify(config)}`);
     if (config.architecture.typescript) {
       flags.push('--ts');
@@ -599,75 +649,75 @@ class NextMCPServer {
 
       // State Management
       if (config.architecture.stateManagement === 'zustand') {
-        additionalDeps.zustand = '^5.0.8';
+        additionalDeps.zustand = PACKAGE_VERSIONS.zustand;
       } else if (config.architecture.stateManagement === 'redux') {
-        additionalDeps['@reduxjs/toolkit'] = '^2.5.0';
-        additionalDeps['react-redux'] = '^9.2.0';
-        additionalDevDeps['@types/react-redux'] = '^7.1.34';
+        additionalDeps['@reduxjs/toolkit'] = PACKAGE_VERSIONS['@reduxjs/toolkit'];
+        additionalDeps['react-redux'] = PACKAGE_VERSIONS['react-redux'];
+        additionalDevDeps['@types/react-redux'] = PACKAGE_VERSIONS['@types/react-redux'];
       }
 
       // Database + ORM
       if (config.architecture.orm === 'prisma') {
-        additionalDeps['@prisma/client'] = '^6.17.1';
-        additionalDevDeps.prisma = '^6.17.1';
+        additionalDeps['@prisma/client'] = PACKAGE_VERSIONS['@prisma/client'];
+        additionalDevDeps.prisma = PACKAGE_VERSIONS.prisma;
       } else if (config.architecture.orm === 'drizzle') {
-        additionalDeps['drizzle-orm'] = '^0.44.6';
-        additionalDevDeps['drizzle-kit'] = '^0.31.5';
+        additionalDeps['drizzle-orm'] = PACKAGE_VERSIONS['drizzle-orm'];
+        additionalDevDeps['drizzle-kit'] = PACKAGE_VERSIONS['drizzle-kit'];
 
         if (config.architecture.database === 'postgres') {
-          additionalDeps.pg = '^8.16.3';
-          additionalDeps.dotenv = '^17.2.3';
+          additionalDeps.pg = PACKAGE_VERSIONS.pg;
+          additionalDeps.dotenv = PACKAGE_VERSIONS.dotenv;
         }
 
         if (config.architecture.database === 'mysql') {
-          additionalDeps.mysql2 = '^3.15.2';
+          additionalDeps.mysql2 = PACKAGE_VERSIONS.mysql2;
         }
 
         if (config.architecture.database === 'sqlite') {
-          additionalDeps['better-sqlite3'] = '^12.4.1';
-          additionalDevDeps['@types/better-sqlite3'] = '^7.6.13';
+          additionalDeps['better-sqlite3'] = PACKAGE_VERSIONS['better-sqlite3'];
+          additionalDevDeps['@types/better-sqlite3'] = PACKAGE_VERSIONS['@types/better-sqlite3'];
         }
       } else if (config.architecture.orm === 'mongoose') {
-        additionalDeps.mongoose = '^8.19.1';
+        additionalDeps.mongoose = PACKAGE_VERSIONS.mongoose;
       }
 
       if (config.architecture.orm === 'none') {
         if (config.architecture.database === 'postgres') {
-          additionalDeps.pg = '^8.16.3';
+          additionalDeps.pg = PACKAGE_VERSIONS.pg;
         } else if (config.architecture.database === 'mysql') {
-          additionalDeps.mysql2 = '^3.15.2';
+          additionalDeps.mysql2 = PACKAGE_VERSIONS.mysql2;
         } else if (config.architecture.database === 'mongodb') {
-          additionalDeps.mongodb = '^6.20.0';
+          additionalDeps.mongodb = PACKAGE_VERSIONS.mongodb;
         } else if (config.architecture.database === 'sqlite') {
-          additionalDeps['better-sqlite3'] = '^12.4.1';
-          additionalDevDeps['@types/better-sqlite3'] = '^7.6.13';
+          additionalDeps['better-sqlite3'] = PACKAGE_VERSIONS['better-sqlite3'];
+          additionalDevDeps['@types/better-sqlite3'] = PACKAGE_VERSIONS['@types/better-sqlite3'];
         }
       }
 
       if (config.architecture.uiLibrary === 'shadcn') {
-        additionalDeps['@tanstack/react-table'] = '^8.21.3';
+        additionalDeps['@tanstack/react-table'] = PACKAGE_VERSIONS['@tanstack/react-table'];
       }
 
       // Authentication
       if (config.architecture.auth === 'better-auth') {
-        additionalDeps['better-auth'] = '^1.3.27';
-        additionalDeps['@daveyplate/better-auth-ui'] = 'latest';
+        additionalDeps['better-auth'] = PACKAGE_VERSIONS['better-auth'];
+        additionalDeps['@daveyplate/better-auth-ui'] = PACKAGE_VERSIONS['@daveyplate/better-auth-ui'];
       }
 
       // Testing
       if (config.architecture.testing === 'vitest') {
-        additionalDevDeps.vitest = '^1.0.4';
-        additionalDevDeps['@vitejs/plugin-react'] = '^4.2.1';
-        additionalDevDeps['@testing-library/react'] = '^14.1.2';
-        additionalDevDeps['@testing-library/jest-dom'] = '^6.1.6';
-        additionalDevDeps.jsdom = '^23.0.1';
+        additionalDevDeps.vitest = PACKAGE_VERSIONS.vitest;
+        additionalDevDeps['@vitejs/plugin-react'] = PACKAGE_VERSIONS['@vitejs/plugin-react'];
+        additionalDevDeps['@testing-library/react'] = PACKAGE_VERSIONS['@testing-library/react'];
+        additionalDevDeps['@testing-library/jest-dom'] = PACKAGE_VERSIONS['@testing-library/jest-dom'];
+        additionalDevDeps.jsdom = PACKAGE_VERSIONS.jsdom;
       } else if (config.architecture.testing === 'jest') {
-        additionalDevDeps.jest = '^29.7.0';
-        additionalDevDeps['jest-environment-jsdom'] = '^29.7.0';
-        additionalDevDeps['@testing-library/react'] = '^14.1.2';
-        additionalDevDeps['@testing-library/jest-dom'] = '^6.1.6';
+        additionalDevDeps.jest = PACKAGE_VERSIONS.jest;
+        additionalDevDeps['jest-environment-jsdom'] = PACKAGE_VERSIONS['jest-environment-jsdom'];
+        additionalDevDeps['@testing-library/react'] = PACKAGE_VERSIONS['@testing-library/react'];
+        additionalDevDeps['@testing-library/jest-dom'] = PACKAGE_VERSIONS['@testing-library/jest-dom'];
       } else if (config.architecture.testing === 'playwright') {
-        additionalDevDeps['@playwright/test'] = '^1.40.1';
+        additionalDevDeps['@playwright/test'] = PACKAGE_VERSIONS['@playwright/test'];
       }
 
       // Merge dependencies
