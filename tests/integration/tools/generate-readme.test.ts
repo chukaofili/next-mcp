@@ -1,6 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import { MCPTestClient } from '../../helpers/mcp-test-client.js';
 import { cleanupTempDir, createMockConfig, createTempDir, fileExists } from '../../helpers/test-utils.js';
 
@@ -41,8 +43,8 @@ describe('generate_readme tool', () => {
     expect(client.isSuccess(result)).toBe(true);
 
     const text = client.getTextContent(result);
-    expect(text).toContain('✅');
-    expect(text).toContain('README.md');
+    expect(text).toBeDefined();
+    expect(text).toContain('Generated comprehensive README.md with project documentation');
 
     // Verify file was actually created
     const readmePath = path.join(tempDir, 'README.md');
@@ -68,9 +70,14 @@ describe('generate_readme tool', () => {
     });
 
     expect(client.isSuccess(result)).toBe(true);
+
     const text = client.getTextContent(result);
-    expect(text).toContain('✅');
-    expect(text).toContain('README.md');
+    expect(text).toBeDefined();
+    expect(text).toContain('Generated comprehensive README.md with project documentation');
+
+    // Verify file was actually created
+    const readmePath = path.join(tempDir, 'README.md');
+    expect(await fileExists(readmePath)).toBe(true);
   });
 
   it('should handle different package managers', async () => {
@@ -87,9 +94,13 @@ describe('generate_readme tool', () => {
       });
 
       expect(client.isSuccess(result)).toBe(true);
+
       const text = client.getTextContent(result);
-      expect(text).toContain('✅');
-      expect(text).toContain('README.md');
+      expect(text).toBeDefined();
+      expect(text).toContain('Generated comprehensive README.md with project documentation');
+      // Verify file was actually created
+      const readmePath = path.join(tempDir, 'README.md');
+      expect(await fileExists(readmePath)).toBe(true);
     }
   });
 });
