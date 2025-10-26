@@ -1,45 +1,19 @@
 import { execSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
 import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import { ProjectConfig } from '../../src/index.ts';
 
 /**
- * Test ProjectConfig type (input)
+ * Test ProjectConfig type with optional architecture attributes
+ * The MCP server will apply defaults for any missing attributes
  */
-export interface TestProjectConfigInput {
+export type TestProjectConfig = {
   name?: string;
   description?: string;
-  architecture?: {
-    appRouter?: boolean;
-    typescript?: boolean;
-    packageManager?: string;
-    database?: string;
-    orm?: string;
-    auth?: string;
-    uiLibrary?: string;
-    stateManagement?: string;
-    testing?: string;
-  };
-}
-
-/**
- * Test ProjectConfig type (output - always has all fields)
- */
-export interface TestProjectConfig {
-  name: string;
-  description: string;
-  architecture: {
-    appRouter: boolean;
-    typescript: boolean;
-    packageManager: string;
-    database: string;
-    orm: string;
-    auth: string;
-    uiLibrary: string;
-    stateManagement: string;
-    testing: string;
-  };
-}
+  architecture?: Partial<ProjectConfig['architecture']>;
+};
 
 /**
  * Create a temporary directory for testing
@@ -106,13 +80,13 @@ export function execCommand(command: string, cwd?: string): string {
 /**
  * Create a mock ProjectConfig for testing
  */
-export function createMockConfig(overrides?: TestProjectConfigInput): TestProjectConfig {
+export function createMockConfig(overrides?: TestProjectConfig): ProjectConfig {
   return {
-    name: overrides?.name || 'test-app',
-    description: overrides?.description || 'A test Next.js application',
+    name: overrides?.name,
+    description: overrides?.description,
     architecture: {
-      appRouter: true,
       typescript: true,
+      reactCompiler: false,
       packageManager: 'pnpm',
       database: 'postgres',
       orm: 'prisma',
@@ -120,6 +94,7 @@ export function createMockConfig(overrides?: TestProjectConfigInput): TestProjec
       uiLibrary: 'shadcn',
       stateManagement: 'none',
       testing: 'vitest',
+      skipInstall: true,
       ...(overrides?.architecture || {}),
     },
   };

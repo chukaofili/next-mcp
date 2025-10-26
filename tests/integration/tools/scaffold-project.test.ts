@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { MCPTestClient } from '../../helpers/mcp-test-client.js';
-import { cleanupTempDir, createMockConfig, createTempDir } from '../../helpers/test-utils.js';
+import { cleanupTempDir, createMockConfig, createTempDir, TestProjectConfig } from '../../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,22 +33,20 @@ describe('scaffold_project tool', () => {
         orm: 'none',
         auth: 'none',
         testing: 'none',
+        skipInstall: true,
       },
     });
 
     const result = await client.callTool('scaffold_project', {
       config,
-      projectPath: tempDir,
+      targetPath: tempDir,
     });
 
     expect(client.isSuccess(result)).toBe(true);
+
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
-    expect(text.length).toBeGreaterThan(0);
-
-    // scaffold_project is a complex end-to-end tool that may not fully complete
-    // in test environment (requires npm, network access, etc.)
-    // Just verify the tool responds without crashing
+    expect(text).toContain('Successfully created Next.js project');
   }, 60000);
 
   it('should scaffold full-featured project', async () => {
@@ -62,26 +60,24 @@ describe('scaffold_project tool', () => {
         uiLibrary: 'shadcn',
         testing: 'vitest',
         packageManager: 'pnpm',
+        skipInstall: true,
       },
     });
 
     const result = await client.callTool('scaffold_project', {
       config,
-      projectPath: tempDir,
+      targetPath: tempDir,
     });
 
     expect(client.isSuccess(result)).toBe(true);
+
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
-    expect(text.length).toBeGreaterThan(0);
-
-    // scaffold_project is a complex end-to-end tool that may not fully complete
-    // in test environment (requires npm, network access, etc.)
-    // Just verify the tool responds without crashing
+    expect(text).toContain('Successfully created Next.js project');
   }, 60000);
 
   it('should handle different configurations', async () => {
-    const configs = [
+    const configs: TestProjectConfig['architecture'][] = [
       { database: 'mysql', orm: 'drizzle' },
       { database: 'mongodb', orm: 'mongoose' },
       { database: 'sqlite', orm: 'prisma' },
@@ -89,18 +85,19 @@ describe('scaffold_project tool', () => {
 
     for (const arch of configs) {
       const config = createMockConfig({
-        architecture: arch,
+        architecture: { ...arch, skipInstall: true },
       });
 
       const result = await client.callTool('scaffold_project', {
         config,
-        projectPath: tempDir,
+        targetPath: tempDir,
       });
 
       expect(client.isSuccess(result)).toBe(true);
+
       const text = client.getTextContent(result);
       expect(text).toBeDefined();
-      // Should handle each configuration
+      expect(text).toContain('Successfully created Next.js project');
     }
   }, 60000);
 });
