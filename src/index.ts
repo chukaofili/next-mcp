@@ -276,8 +276,8 @@ class NextMCPServer {
             return await this.installDependencies(args.config as ProjectConfig, args.projectPath as string);
           case 'validate_project':
             return await this.validateProject(args.config as ProjectConfig, args.projectPath as string);
-          // case "generate_readme":
-          //   return await this.generateReadme(args.config as ProjectConfig, args.projectPath as string);
+          case 'generate_readme':
+            return await this.generateReadme(args.config as ProjectConfig, args.projectPath as string);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -2068,39 +2068,185 @@ export default function Header() {
     };
   }
 
-  /**
   private async generateReadme(config: ProjectConfig, projectPath: string) {
-    const readme = `# ${config.name}
+    try {
+      const { architecture } = config;
+      const pm = architecture.packageManager;
 
-${config.description || "A Next.js application"}
+      // Generate features list based on configuration
+      const features = [];
+      if (architecture.appRouter) features.push('App Router for modern routing and layouts');
+      if (architecture.typescript) features.push('TypeScript for type-safe development');
+      if (architecture.uiLibrary === 'shadcn') features.push('shadcn/ui components library');
+      if (architecture.database !== 'none') features.push(`${architecture.database} database integration`);
+      if (architecture.orm !== 'none') features.push(`${architecture.orm} ORM for database operations`);
+      if (architecture.auth !== 'none') features.push('Better Auth authentication with pre-built UI');
+      if (architecture.stateManagement !== 'none') features.push(`${architecture.stateManagement} state management`);
+      if (architecture.testing !== 'none') features.push(`${architecture.testing} testing framework`);
+      features.push('Docker and docker-compose configuration');
+      features.push('Tailwind CSS for styling');
+      features.push('ESLint for code quality');
+
+      // Generate database-specific setup instructions
+      let databaseSetup = '';
+      if (architecture.database !== 'none') {
+        if (architecture.orm === 'prisma') {
+          databaseSetup = `
+
+### Database Setup (Prisma)
+
+1. Start the database using Docker:
+   \`\`\`bash
+   ${pm} run docker:dev:up
+   \`\`\`
+
+2. Run database migrations:
+   \`\`\`bash
+   ${pm === 'npm' ? 'npx' : `${pm} exec`} prisma migrate dev
+   \`\`\`
+
+3. (Optional) Open Prisma Studio to manage your data:
+   \`\`\`bash
+   ${pm === 'npm' ? 'npx' : `${pm} exec`} prisma studio
+   \`\`\`
+`;
+        } else if (architecture.orm === 'drizzle') {
+          databaseSetup = `
+
+### Database Setup (Drizzle)
+
+1. Start the database using Docker:
+   \`\`\`bash
+   ${pm} run docker:dev:up
+   \`\`\`
+
+2. Generate and run migrations:
+   \`\`\`bash
+   ${pm === 'npm' ? 'npx' : `${pm} exec`} drizzle-kit generate
+   ${pm === 'npm' ? 'npx' : `${pm} exec`} drizzle-kit migrate
+   \`\`\`
+`;
+        } else if (architecture.orm === 'mongoose') {
+          databaseSetup = `
+
+### Database Setup (MongoDB + Mongoose)
+
+1. Start MongoDB using Docker:
+   \`\`\`bash
+   ${pm} run docker:dev:up
+   \`\`\`
+
+2. The database connection will be established automatically when the app starts.
+`;
+        } else {
+          databaseSetup = `
+
+### Database Setup
+
+1. Start the database using Docker:
+   \`\`\`bash
+   ${pm} run docker:dev:up
+   \`\`\`
+
+2. Update your \`.env.local\` file with the appropriate DATABASE_URL.
+`;
+        }
+      }
+
+      // Generate authentication setup instructions
+      let authSetup = '';
+      if (architecture.auth === 'better-auth') {
+        authSetup = `
+
+### Authentication
+
+This project uses Better Auth with Better Auth UI for authentication.
+
+Available auth routes:
+- \`/auth/sign-in\` - Sign in page
+- \`/auth/sign-up\` - Sign up page
+- \`/auth/forgot-password\` - Password reset
+- \`/account/profile\` - User profile settings
+- \`/account/security\` - Security settings
+
+The UserButton component is available for easy integration:
+\`\`\`tsx
+import { UserButton } from "@/components/auth/user-button";
+\`\`\`
+
+For more information, visit [Better Auth Documentation](https://www.better-auth.com/docs).
+`;
+      }
+
+      // Generate testing instructions
+      let testingInstructions = '';
+      if (architecture.testing !== 'none') {
+        testingInstructions = `
+
+## Testing
+
+Run tests with:
+\`\`\`bash
+${pm} test
+\`\`\`
+${architecture.testing === 'vitest' ? `
+Run tests in watch mode:
+\`\`\`bash
+${pm} run test:watch
+\`\`\`
+
+Open Vitest UI:
+\`\`\`bash
+${pm} run test:ui
+\`\`\`
+` : ''}${architecture.testing === 'playwright' ? `
+Run E2E tests:
+\`\`\`bash
+${pm} run test:e2e
+\`\`\`
+
+Open Playwright UI:
+\`\`\`bash
+${pm} run test:e2e:ui
+\`\`\`
+` : ''}`;
+      }
+
+      const readme = `# ${config.name}
+
+${config.description || 'A Next.js application scaffolded with Next.js MCP Server'}
 
 ## Features
 
-${config.features.map((feature) => `- ${feature}`).join("\n")}
+${features.map((feature) => `- ${feature}`).join('\n')}
 
 ## Tech Stack
 
-- **Framework**: Next.js ${config.architecture.appRouter ? "(App Router)" : "(Pages Router)"}
-- **Language**: ${config.architecture.typescript ? "TypeScript" : "JavaScript"}
-- **Styling**: ${config.architecture.styling}
-- **Database**: ${config.architecture.database}
-- **Authentication**: ${config.architecture.auth}
-- **State Management**: ${config.architecture.stateManagement}
-- **Testing**: ${config.architecture.testing}
+- **Framework**: Next.js 15 ${architecture.appRouter ? '(App Router)' : '(Pages Router)'}
+- **Language**: ${architecture.typescript ? 'TypeScript' : 'JavaScript'}
+- **Package Manager**: ${pm}
+- **UI Library**: ${architecture.uiLibrary === 'shadcn' ? 'shadcn/ui' : 'Tailwind CSS'}
+- **Styling**: Tailwind CSS
+- **Database**: ${architecture.database}${architecture.orm !== 'none' ? ` (${architecture.orm})` : ''}
+- **Authentication**: ${architecture.auth}${architecture.auth === 'better-auth' ? ' + Better Auth UI' : ''}
+- **State Management**: ${architecture.stateManagement}
+- **Testing**: ${architecture.testing}
 
 ## Getting Started
 
 ### Prerequisites
 
 - Node.js 20 or later
-- pnpm (recommended) or npm
+- ${pm} package manager
+${architecture.database !== 'none' && architecture.database !== 'sqlite' ? '- Docker and Docker Compose (for local database)' : ''}
 
 ### Installation
 
-1. Clone the repository
+1. Clone the repository (or navigate to the project directory)
+
 2. Install dependencies:
    \`\`\`bash
-   pnpm install
+   ${pm} install
    \`\`\`
 
 3. Copy environment variables:
@@ -2108,66 +2254,167 @@ ${config.features.map((feature) => `- ${feature}`).join("\n")}
    cp .env.example .env.local
    \`\`\`
 
-4. Run the development server:
+4. Update \`.env.local\` with your configuration
+${databaseSetup}
+5. Run the development server:
    \`\`\`bash
-   pnpm dev
+   ${pm} dev
    \`\`\`
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
+6. Open [http://localhost:3000](http://localhost:3000) to see your application
+${authSetup}
 ## Docker
 
-Build and run with Docker:
+### Development with Docker Compose
 
+Start all services (app + database):
 \`\`\`bash
-docker build -t ${config.name} .
-docker run -p 3000:3000 ${config.name}
+${pm} run docker:dev:up
+\`\`\`
+
+Stop all services:
+\`\`\`bash
+${pm} run docker:dev:down
+\`\`\`
+
+### Production Build
+
+Build the Docker image:
+\`\`\`bash
+${pm} run docker:build
+\`\`\`
+
+Run the container:
+\`\`\`bash
+${pm} run docker:run
 \`\`\`
 
 Or use docker-compose:
-
 \`\`\`bash
-cd docker
 docker-compose up
 \`\`\`
+${testingInstructions}
+## Project Structure
 
+\`\`\`
+${config.name}/
+├── src/
+│   ├── app/                    # Next.js app directory
+│   │   ├── api/               # API routes
+${architecture.auth === 'better-auth' ? `│   │   │   └── auth/          # Authentication API
+│   │   ├── auth/              # Auth pages (sign-in, sign-up)
+│   │   ├── account/           # Account management pages
+` : ''}│   │   ├── layout.tsx         # Root layout
+│   │   └── page.tsx           # Home page
+│   ├── components/            # React components
+│   │   ├── ui/               # UI components${architecture.uiLibrary === 'shadcn' ? ' (shadcn/ui)' : ''}
+${architecture.auth === 'better-auth' ? `│   │   └── auth/             # Auth components
+` : ''}│   ├── lib/                  # Utility functions
+${architecture.database !== 'none' ? `│   │   └── db/               # Database client and schema
+` : ''}${architecture.auth === 'better-auth' ? `│   ├── providers/            # React providers
+` : ''}│   └── hooks/                # Custom React hooks
+${architecture.orm === 'prisma' ? '├── prisma/                 # Prisma schema and migrations\n' : ''}${architecture.orm === 'drizzle' ? '├── drizzle/                # Drizzle schema and migrations\n' : ''}├── docker-compose.yml       # Docker Compose configuration
+├── Dockerfile               # Docker configuration
+├── next.config.ts          # Next.js configuration
+├── tailwind.config.ts      # Tailwind CSS configuration
+└── tsconfig.json           # TypeScript configuration
+\`\`\`
+
+## Available Scripts
+
+- \`${pm} dev\` - Start development server (with Turbopack)
+- \`${pm} build\` - Build for production
+- \`${pm} start\` - Start production server
+- \`${pm} lint\` - Run ESLint
+- \`${pm} run type-check\` - Run TypeScript type checking
+${architecture.testing !== 'none' ? `- \`${pm} test\` - Run tests\n` : ''}${architecture.database !== 'none' ? `- \`${pm} run docker:dev:up\` - Start database with Docker Compose
+- \`${pm} run docker:dev:down\` - Stop database
+` : ''}- \`${pm} run docker:build\` - Build Docker image
+- \`${pm} run docker:run\` - Run Docker container
+
+## Environment Variables
+
+See \`.env.example\` for all available environment variables.
+
+Key variables:
+${architecture.database !== 'none' ? '- `DATABASE_URL` - Database connection string\n' : ''}${architecture.auth === 'better-auth' ? `- \`BETTER_AUTH_SECRET\` - Secret for Better Auth
+- \`BETTER_AUTH_URL\` - Your app URL
+- \`NEXT_PUBLIC_BETTER_AUTH_URL\` - Public app URL
+` : ''}
 ## Deployment
 
-This project is configured for deployment on ${config.deployment.platform}.
+This project can be deployed to various platforms:
 
-${
-  config.deployment.platform === "vercel"
-    ? "The easiest way to deploy is to use the [Vercel Platform](https://vercel.com/new)."
-    : `Deploy using your ${config.deployment.platform} workflow.`
-}
+### Vercel (Recommended)
 
-## Scripts
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new)
 
-- \`pnpm dev\` - Start development server
-- \`pnpm build\` - Build for production
-- \`pnpm start\` - Start production server
-- \`pnpm lint\` - Run ESLint
-- \`pnpm type-check\` - Run TypeScript type checking
-${config.architecture.testing !== "jest" ? "- `pnpm test` - Run tests" : ""}
+1. Push your code to GitHub
+2. Import your repository to Vercel
+3. Configure environment variables
+4. Deploy!
+
+### Docker
+
+Deploy using the included Dockerfile to any platform that supports Docker:
+- AWS ECS/Fargate
+- Google Cloud Run
+- Azure Container Instances
+- DigitalOcean App Platform
+- Fly.io
+- Railway
 
 ## Learn More
 
+### Next.js
 - [Next.js Documentation](https://nextjs.org/docs)
 - [Learn Next.js](https://nextjs.org/learn)
+- [Next.js GitHub](https://github.com/vercel/next.js)
+
+### Styling
+- [Tailwind CSS Documentation](https://tailwindcss.com/docs)
+${architecture.uiLibrary === 'shadcn' ? '- [shadcn/ui Documentation](https://ui.shadcn.com)\n' : ''}
+### Database
+${architecture.orm === 'prisma' ? '- [Prisma Documentation](https://www.prisma.io/docs)\n' : ''}${architecture.orm === 'drizzle' ? '- [Drizzle ORM Documentation](https://orm.drizzle.team/docs/overview)\n' : ''}${architecture.orm === 'mongoose' ? '- [Mongoose Documentation](https://mongoosejs.com/docs/)\n' : ''}
+### Authentication
+${architecture.auth === 'better-auth' ? `- [Better Auth Documentation](https://www.better-auth.com/docs)
+- [Better Auth UI Documentation](https://better-auth-ui.com)
+` : ''}
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is open source and available under the [MIT License](LICENSE).
+
+---
+
+Generated with [Next.js MCP Server](https://github.com/anthropics/next-mcp)
 `;
 
-    await fs.writeFile(path.join(projectPath, "README.md"), readme);
+      await fs.writeFile(path.join(projectPath, 'README.md'), readme);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Generated comprehensive README.md",
-        },
-      ],
-    };
+      return {
+        content: [
+          {
+            type: 'text',
+            text: '✅ Generated comprehensive README.md with project documentation',
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ Failed to generate README.md: ${errorMessage}`,
+          },
+        ],
+      };
+    }
   }
-  */
 
   async run() {
     const transport = new StdioServerTransport();
