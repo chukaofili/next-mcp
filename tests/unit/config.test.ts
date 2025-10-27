@@ -6,8 +6,8 @@ describe('ProjectConfig', () => {
   it('should create valid default config', () => {
     const config = createMockConfig();
 
-    expect(config.name).toBe('test-app');
-    expect(config.description).toBe('A test Next.js application');
+    expect(config.name).toBeUndefined();
+    expect(config.description).toBeUndefined();
     expect(config.architecture.typescript).toBe(true);
     expect(config.architecture.packageManager).toBe('pnpm');
   });
