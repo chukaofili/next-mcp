@@ -63,8 +63,6 @@ describe('setup_database tool', () => {
 
     expect(client.isSuccess(result)).toBe(true);
 
-    console.log(projectPath);
-
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
     expect(text).toContain('Database setup completed successfully');
