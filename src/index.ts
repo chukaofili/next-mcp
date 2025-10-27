@@ -1323,43 +1323,36 @@ export { Button };
       case 'postgres':
         driverImport = `import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import * as schema from './schema';
+import * as schema from './schema';`;
+        connectionCode = `const pool = new Pool({ connectionString });
 
-const pool = new Pool({
-  connectionString,
-});`;
-        connectionCode = `export const db = drizzle(pool, { schema });`;
+export const db = drizzle(pool, { schema });`;
         break;
 
       case 'mysql':
         driverImport = `import { drizzle } from 'drizzle-orm/mysql2';
 import mysql from 'mysql2/promise';
-import * as schema from './schema';
+import * as schema from './schema';`;
+        connectionCode = `const poolConnection = mysql.createPool({ uri: connectionString });
 
-const poolConnection = mysql.createPool({
-  uri: connectionString,
-});`;
-        connectionCode = `export const db = drizzle(poolConnection, { schema, mode: 'default' });`;
+export const db = drizzle(poolConnection, { schema, mode: 'default' });`;
         break;
 
       case 'sqlite':
         driverImport = `import { drizzle } from 'drizzle-orm/better-sqlite3';
 import Database from 'better-sqlite3';
-import * as schema from './schema';
+import * as schema from './schema';`;
+        connectionCode = `const sqlite = new Database('dev.db');
 
-const sqlite = new Database('dev.db');`;
-        connectionCode = `export const db = drizzle(sqlite, { schema });`;
+export const db = drizzle(sqlite, { schema });`;
         break;
 
       default:
         driverImport = `import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import * as schema from './schema';
-
-const pool = new Pool({
-  connectionString,
-});`;
-        connectionCode = `export const db = drizzle(pool, { schema });`;
+import * as schema from './schema';`;
+        connectionCode = `const pool = new Pool({ connectionString });
+export const db = drizzle(pool, { schema });`;
     }
 
     return template.replace('__DRIVER_IMPORT__', driverImport).replace('__CONNECTION_CODE__', connectionCode);
@@ -1499,7 +1492,9 @@ const pool = new Pool({
 
   private async setupPrisma(config: ProjectConfig, projectPath: string) {
     const database = config.architecture.database;
-    const packageRunner = this.getPackageRunner(config.architecture.packageManager);
+    const packageRunner = config.architecture.skipInstall
+      ? this.getPackageRunnerDlx(config.architecture.packageManager)
+      : this.getPackageRunner(config.architecture.packageManager);
     const provider = this.getPrismaProvider(database);
 
     if (!existsSync(path.join(projectPath, 'prisma', 'schema.prisma'))) {
@@ -1525,12 +1520,14 @@ const pool = new Pool({
     const indexPath = path.join(projectPath, 'src/lib/db/index.ts');
     await fs.writeFile(indexPath, indexTemplate);
 
-    // Run prisma generate to create the Prisma client
-    const prismaGenerateCmd = `${packageRunner} prisma generate`;
-    const result = this.execCommand(prismaGenerateCmd, projectPath, 'prisma generate');
+    // Run prisma generate to create the Prisma client if not skipped
+    if (!config.architecture.skipInstall) {
+      const prismaGenerateCmd = `${packageRunner} prisma generate`;
+      const result = this.execCommand(prismaGenerateCmd, projectPath, 'prisma generate');
 
-    if (!result.success) {
-      throw new Error('[prisma generate failed]: Check logs for details');
+      if (!result.success) {
+        throw new Error('[prisma generate failed]: Check logs for details');
+      }
     }
   }
 
@@ -1542,7 +1539,7 @@ const pool = new Pool({
     let configTemplate = await fs.readFile(configTemplatePath, 'utf-8');
 
     configTemplate = configTemplate
-      .replace(/\{\{DIALECT\}\}/g, this.getDrizzleDialect(database))
+      .replace(/__DIALECT__/g, this.getDrizzleDialect(database))
       .replace(/__DB_CREDENTIALS__/g, this.getDrizzleCredentials(database));
 
     const configPath = path.join(projectPath, 'drizzle.config.ts');
