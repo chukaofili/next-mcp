@@ -1,8 +1,17 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import { MCPTestClient } from '../../helpers/mcp-test-client.js';
-import { cleanupTempDir, createMockConfig, createPackageJson, createTempDir, fileExists, readFile } from '../../helpers/test-utils.js';
+import {
+  cleanupTempDir,
+  createMockConfig,
+  createPackageJson,
+  createTempDir,
+  fileExists,
+  readFile,
+} from '../../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,7 +33,6 @@ describe('update_package_json tool', () => {
   });
 
   it('should update package.json with dependencies', async () => {
-    // Create initial package.json
     await createPackageJson(tempDir, { name: 'test-app' });
 
     const config = createMockConfig({
@@ -43,8 +51,11 @@ describe('update_package_json tool', () => {
     });
 
     expect(client.isSuccess(result)).toBe(true);
+
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
+    expect(text).toContain('Updated package.json');
+    expect(text).toContain('6 additional dev dependencies');
 
     // Verify package.json was updated
     const packageJsonPath = path.join(tempDir, 'package.json');
@@ -72,8 +83,11 @@ describe('update_package_json tool', () => {
     });
 
     expect(client.isSuccess(result)).toBe(true);
+
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
+    expect(text).toContain('Updated package.json');
+    expect(text).toContain('0 additional dev dependencies');
 
     // Verify package.json exists
     expect(await fileExists(path.join(tempDir, 'package.json'))).toBe(true);
@@ -95,8 +109,11 @@ describe('update_package_json tool', () => {
     });
 
     expect(client.isSuccess(result)).toBe(true);
+
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
+    expect(text).toContain('Updated package.json');
+    expect(text).toContain('6 additional dev dependencies');
 
     const packageJsonPath = path.join(tempDir, 'package.json');
     const packageJson = JSON.parse(await readFile(packageJsonPath));
