@@ -989,9 +989,21 @@ class NextMCPServer {
       const packageManager = config.architecture.packageManager;
       const packageRunner = this.getPackageRunnerDlx(packageManager);
       const results: string[] = [];
+      logger.info(`Initializing shadcn/ui with ${packageManager}...`);
+
+      if (config.architecture.skipInstall) {
+        results.push(`⚠️  Skipped installation of shadcn/ui components due to skipInstall flag`);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: results.join('\n'),
+            },
+          ],
+        };
+      }
 
       // Step 1: Initialize shadcn/ui with default configuration
-      logger.info(`Initializing shadcn/ui with ${packageManager}...`);
       try {
         const shadcnInitCommand = `${packageRunner} shadcn@latest init -y -d`;
         const result = this.execCommand(shadcnInitCommand, projectPath, 'shadcn init');

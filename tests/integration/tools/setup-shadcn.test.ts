@@ -1,6 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import { MCPTestClient } from '../../helpers/mcp-test-client.js';
 import { cleanupTempDir, createMockConfig, createTempDir } from '../../helpers/test-utils.js';
 
@@ -24,22 +26,25 @@ describe('setup_shadcn tool', () => {
   });
 
   it('should handle shadcn setup', async () => {
+    const projectName = `shadcn-setup-test_${Date.now()}`;
+    const projectPath = path.join(tempDir, projectName);
+
     const config = createMockConfig({
+      name: projectName,
       architecture: {
         uiLibrary: 'shadcn',
       },
     });
 
-    const result = await client.callTool('setup_shadcn', {
-      config,
-      projectPath: tempDir,
-    });
+    await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    await client.callTool('create_directory_structure', { config, projectPath });
+    await client.callTool('generate_nextjs_custom_code', { config, projectPath });
+
+    const result = await client.callTool('setup_shadcn', { config, projectPath });
 
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
-    expect(text.length).toBeGreaterThan(0);
-
-    // May succeed or fail depending on environment - just verify it responds
+    expect(text).toContain('Skipped installation of shadcn/ui');
   });
 
   it('should handle non-shadcn configuration', async () => {
@@ -55,9 +60,9 @@ describe('setup_shadcn tool', () => {
     });
 
     expect(client.isSuccess(result)).toBe(true);
+
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
-
-    // Should indicate no shadcn setup needed
+    expect(text).toContain('Shadcn/ui setup skipped');
   });
 });
