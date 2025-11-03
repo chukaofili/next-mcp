@@ -36,4 +36,7 @@ jobs:
         run: pnpm run build
 
       - name: Run unit tests
-        run: pnpm run test
+        run: pnpm run test:unit
+
+      - name: Run integration tests
+        run: pnpm run test:integration

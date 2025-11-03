@@ -32,8 +32,6 @@ describe('validate_project tool', () => {
     const config = createMockConfig({ name: projectName });
 
     await client.callTool('scaffold_project', { config, targetPath: tempDir });
-    await client.callTool('create_directory_structure', { config, projectPath });
-    await client.callTool('generate_nextjs_custom_code', { config, projectPath });
 
     const result = await client.callTool('validate_project', { config, projectPath });
 

@@ -57,7 +57,6 @@ describe('setup_database tool', () => {
     });
 
     await client.callTool('scaffold_project', { config, targetPath: tempDir });
-    await client.callTool('create_directory_structure', { config, projectPath });
 
     const result = await client.callTool('setup_database', { config, projectPath });
 
@@ -81,7 +80,6 @@ describe('setup_database tool', () => {
     });
 
     await client.callTool('scaffold_project', { config, targetPath: tempDir });
-    await client.callTool('create_directory_structure', { config, projectPath });
 
     const result = await client.callTool('setup_database', { config, projectPath });
 
@@ -105,7 +103,6 @@ describe('setup_database tool', () => {
     });
 
     await client.callTool('scaffold_project', { config, targetPath: tempDir });
-    await client.callTool('create_directory_structure', { config, projectPath });
 
     const result = await client.callTool('setup_database', { config, projectPath });
 
@@ -129,7 +126,6 @@ describe('setup_database tool', () => {
     });
 
     await client.callTool('scaffold_project', { config, targetPath: tempDir });
-    await client.callTool('create_directory_structure', { config, projectPath });
 
     const result = await client.callTool('setup_database', { config, projectPath });
 
