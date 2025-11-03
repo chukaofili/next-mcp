@@ -12,8 +12,6 @@ const __dirname = path.dirname(__filename);
 describe('generate_base_components tool', () => {
   let client: MCPTestClient;
   let tempDir: string;
-  // let projectName: string;
-  // let projectPath: string;
   const serverPath = path.join(__dirname, '../../../dist/index.js');
 
   beforeAll(async () => {

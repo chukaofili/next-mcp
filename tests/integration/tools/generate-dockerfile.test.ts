@@ -1,6 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import { MCPTestClient } from '../../helpers/mcp-test-client.js';
 import { cleanupTempDir, createMockConfig, createTempDir, fileExists, readFile } from '../../helpers/test-utils.js';
 
@@ -52,7 +54,7 @@ describe('generate_dockerfile tool', () => {
       { name: 'mysql', image: 'mysql' },
       { name: 'mongodb', image: 'mongo' },
       { name: 'sqlite', image: null }, // SQLite doesn't need Docker service
-    ];
+    ] as const;
 
     for (const db of databases) {
       const config = createMockConfig({
@@ -100,7 +102,7 @@ describe('generate_dockerfile tool', () => {
   });
 
   it('should handle different package managers', async () => {
-    const packageManagers = ['npm', 'pnpm', 'yarn'];
+    const packageManagers = ['npm', 'pnpm', 'yarn'] as const;
 
     for (const pm of packageManagers) {
       const config = createMockConfig({

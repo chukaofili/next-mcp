@@ -81,7 +81,7 @@ describe('generate_readme tool', () => {
   });
 
   it('should handle different package managers', async () => {
-    const packageManagers = ['npm', 'pnpm', 'yarn', 'bun'];
+    const packageManagers = ['npm', 'pnpm', 'yarn', 'bun'] as const;
 
     for (const pm of packageManagers) {
       const config = createMockConfig({

@@ -41,7 +41,6 @@ describe('MCP Server Initialization', () => {
       'generate_base_components',
       'setup_database',
       'setup_authentication',
-      'install_dependencies',
       'validate_project',
       'generate_readme',
     ];
@@ -50,8 +49,8 @@ describe('MCP Server Initialization', () => {
       expect(toolNames).toContain(expectedTool);
     }
 
-    // Should have exactly 9 tools
-    expect(toolNames).toHaveLength(9);
+    // Should have exactly 8 tools
+    expect(toolNames).toHaveLength(8);
   });
 
   it('should have proper tool schemas', async () => {

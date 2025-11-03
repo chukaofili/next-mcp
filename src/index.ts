@@ -217,11 +217,6 @@ class NextMCPServer {
           inputSchema: inputSchemaJson,
         },
         {
-          name: 'install_dependencies',
-          description: 'Install npm/pnpm dependencies',
-          inputSchema: inputSchemaJson,
-        },
-        {
           name: 'validate_project',
           description: 'Run validation checks on the generated project',
           inputSchema: inputSchemaJson,
@@ -257,8 +252,6 @@ class NextMCPServer {
         switch (name) {
           case 'scaffold_project':
             return await this.scaffoldProject(validatedConfig, args.targetPath as string);
-          case 'install_dependencies':
-            return await this.installDependencies(validatedConfig, args.projectPath as string);
           case 'generate_base_components':
             return await this.generateBaseComponents(validatedConfig, args.projectPath as string);
           case 'generate_dockerfile':
@@ -432,7 +425,11 @@ class NextMCPServer {
       await this.createDirectoryStructure(config, projectPath);
       await this.updatePackageJson(config, projectPath);
       await this.generateNextJSCustomCode(projectPath);
-      await this.installDependencies(config, projectPath);
+
+      if (!config.architecture.skipInstall) {
+        logger.info('Install not skipped: Installing dependencies as part of project scaffolding');
+        await this.installDependencies(config, projectPath);
+      }
 
       return {
         content: [
@@ -1941,7 +1938,7 @@ ${nextSteps}
 - /auth/two-factor - 2FA setup
 - /account/profile - User profile settings
 - /account/security - Security settings
-- /account/sessions - Active sessions
+- /account/settings - Account settings
 
 🔐 Features Enabled:
 - Email & Password Authentication with beautiful UI
