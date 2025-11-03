@@ -18,6 +18,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { adjectives, colors, Config, names, uniqueNamesGenerator } from 'unique-names-generator';
 import winston from 'winston';
+import { z } from 'zod';
 
 import details from '../package.json' with { type: 'json' };
 
@@ -98,22 +99,65 @@ const PACKAGE_VERSIONS = {
   '@types/node': '^24',
 } as const;
 
-export interface ProjectConfig {
-  name?: string;
-  description?: string;
-  architecture: {
-    typescript: boolean;
-    reactCompiler: boolean;
-    skipInstall?: boolean;
-    packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun';
-    database: 'none' | 'postgres' | 'mysql' | 'mongodb' | 'sqlite';
-    orm: 'none' | 'prisma' | 'drizzle' | 'mongoose';
-    auth: 'none' | 'better-auth';
-    uiLibrary: 'none' | 'shadcn';
-    stateManagement: 'none' | 'zustand' | 'redux';
-    testing: 'none' | 'jest' | 'vitest' | 'playwright';
-  };
-}
+// Zod schema for ProjectConfig with validation and defaults
+export const ProjectConfigSchema = z.object({
+  name: z.string().optional().describe('Project name. If not provided, a unique name will be generated automatically.'),
+  description: z.string().optional().describe('Project description. Used in package.json and documentation.'),
+  architecture: z
+    .object({
+      typescript: z
+        .boolean()
+        .default(true)
+        .describe('Enable TypeScript. Configures the project with TypeScript support.'),
+      reactCompiler: z
+        .boolean()
+        .default(false)
+        .describe('Enable React Compiler. Experimental React compiler for automatic optimization.'),
+      skipInstall: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Skip npm/pnpm install during setup. Useful for CI/CD or manual dependency management.'),
+      packageManager: z
+        .enum(['npm', 'pnpm', 'yarn', 'bun'])
+        .default('pnpm')
+        .describe('Package manager to use. Determines which commands are used for installing dependencies.'),
+      database: z
+        .enum(['none', 'postgres', 'mysql', 'mongodb', 'sqlite'])
+        .default('postgres')
+        .describe('Database system. Configures the appropriate database driver and connection.'),
+      orm: z
+        .enum(['none', 'prisma', 'drizzle', 'mongoose'])
+        .default('prisma')
+        .describe('ORM/database toolkit. Sets up the chosen ORM with appropriate configurations.'),
+      auth: z
+        .enum(['none', 'better-auth'])
+        .default('better-auth')
+        .describe('Authentication system. Configures authentication with the selected provider.'),
+      uiLibrary: z
+        .enum(['none', 'shadcn'])
+        .default('shadcn')
+        .describe('UI component library. Installs and configures the selected UI library.'),
+      stateManagement: z
+        .enum(['none', 'zustand', 'redux'])
+        .default('none')
+        .describe('State management solution. Sets up global state management with the chosen library.'),
+      testing: z
+        .enum(['none', 'jest', 'vitest', 'playwright'])
+        .default('none')
+        .describe('Testing framework. Configures unit/integration testing or E2E testing setup.'),
+    })
+    .describe('Project architecture configuration. Defines the technology stack and features.'),
+});
+
+export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
+
+const inputSchemaJson = z.toJSONSchema(
+  z.object({
+    config: ProjectConfigSchema,
+    projectPath: z.string().describe('Path to the project directory'),
+  })
+);
 
 class NextMCPServer {
   private server: Server;
@@ -140,156 +184,52 @@ class NextMCPServer {
         {
           name: 'scaffold_project',
           description: 'Create a new Next.js project with specified configuration',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: {
-                type: 'object',
-                properties: {
-                  name: { type: 'string' },
-                  description: { type: 'string' },
-                  architecture: { type: 'object' },
-                },
-                required: ['architecture'],
-              },
-              targetPath: {
-                type: 'string',
-                description: 'Target directory path',
-              },
-            },
-            required: ['config', 'targetPath'],
-          },
-        },
-        {
-          name: 'create_directory_structure',
-          description: 'Create the base directory structure for the project',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
-        },
-        {
-          name: 'update_package_json',
-          description: 'Update package.json with appropriate dependencies',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
+          inputSchema: z.toJSONSchema(
+            z.object({
+              config: ProjectConfigSchema,
+              targetPath: z.string().describe('Target directory path'),
+            })
+          ),
         },
         {
           name: 'generate_dockerfile',
           description: 'Generate Dockerfile and docker-compose.yml',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
-        },
-        {
-          name: 'generate_nextjs_custom_code',
-          description: 'Generate Next.js configuration files, and add custom paths and code snippets',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              projectPath: { type: 'string' },
-            },
-            required: ['projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
         {
           name: 'setup_shadcn',
           description: 'Initialize shadcn/ui with defaults and install all components',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
         {
           name: 'generate_base_components',
           description: 'Generate base React components and layouts',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
         {
           name: 'setup_database',
           description: 'Generate database configuration and migrations',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
         {
           name: 'setup_authentication',
           description: 'Configure authentication system',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
         {
           name: 'install_dependencies',
           description: 'Install npm/pnpm dependencies',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
         {
           name: 'validate_project',
           description: 'Run validation checks on the generated project',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
         {
           name: 'generate_readme',
           description: 'Generate comprehensive README.md',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
       ],
     }));
@@ -309,31 +249,39 @@ class NextMCPServer {
       }
 
       try {
+        // Validate config for all tools except validate_project (which has optional config)
+        let validatedConfig: ProjectConfig | undefined;
+        if (args.config) {
+          validatedConfig = this.validateAndApplyDefaults(args.config);
+        }
+
         switch (name) {
           case 'scaffold_project':
-            return await this.scaffoldProject(args.config as ProjectConfig, args.targetPath as string);
-          case 'create_directory_structure':
-            return await this.createDirectoryStructure(args.config as ProjectConfig, args.projectPath as string);
-          case 'update_package_json':
-            return await this.updatePackageJson(args.config as ProjectConfig, args.projectPath as string);
-          case 'generate_dockerfile':
-            return await this.generateDockerfile(args.config as ProjectConfig, args.projectPath as string);
-          case 'generate_nextjs_custom_code':
-            return await this.generateNextJSCustomCode(args.projectPath as string);
-          case 'generate_base_components':
-            return await this.generateBaseComponents(args.config as ProjectConfig, args.projectPath as string);
-          case 'setup_shadcn':
-            return await this.setupShadcn(args.config as ProjectConfig, args.projectPath as string);
-          case 'setup_database':
-            return await this.setupDatabase(args.config as ProjectConfig, args.projectPath as string);
-          case 'setup_authentication':
-            return await this.setupAuthentication(args.config as ProjectConfig, args.projectPath as string);
+            if (!validatedConfig) throw new Error('Config is required for scaffold_project');
+            return await this.scaffoldProject(validatedConfig, args.targetPath as string);
           case 'install_dependencies':
-            return await this.installDependencies(args.config as ProjectConfig, args.projectPath as string);
+            if (!validatedConfig) throw new Error('Config is required for install_dependencies');
+            return await this.installDependencies(validatedConfig, args.projectPath as string);
+          case 'generate_base_components':
+            if (!validatedConfig) throw new Error('Config is required for generate_base_components');
+            return await this.generateBaseComponents(validatedConfig, args.projectPath as string);
+          case 'generate_dockerfile':
+            if (!validatedConfig) throw new Error('Config is required for generate_dockerfile');
+            return await this.generateDockerfile(validatedConfig, args.projectPath as string);
+          case 'setup_shadcn':
+            if (!validatedConfig) throw new Error('Config is required for setup_shadcn');
+            return await this.setupShadcn(validatedConfig, args.projectPath as string);
+          case 'setup_database':
+            if (!validatedConfig) throw new Error('Config is required for setup_database');
+            return await this.setupDatabase(validatedConfig, args.projectPath as string);
+          case 'setup_authentication':
+            if (!validatedConfig) throw new Error('Config is required for setup_authentication');
+            return await this.setupAuthentication(validatedConfig, args.projectPath as string);
           case 'validate_project':
-            return await this.validateProject(args.config as ProjectConfig, args.projectPath as string);
+            return await this.validateProject(validatedConfig, args.projectPath as string);
           case 'generate_readme':
-            return await this.generateReadme(args.config as ProjectConfig, args.projectPath as string);
+            if (!validatedConfig) throw new Error('Config is required for generate_readme');
+            return await this.generateReadme(validatedConfig, args.projectPath as string);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -351,22 +299,18 @@ class NextMCPServer {
     });
   }
 
-  private applyConfigDefaults(config: ProjectConfig) {
+  /**
+   * Validates and applies defaults to the project config using Zod schema
+   */
+  private validateAndApplyDefaults(config: unknown): ProjectConfig {
+    // Parse and validate the config, applying defaults from the schema
+    const validated = ProjectConfigSchema.parse(config);
+
+    // Apply name default if not provided (using unique name generator)
     return {
-      name: config.name ?? `${uniqueNamesGenerator(uniqueNamesGeneratorConfig)}-app`,
-      description: config.description ?? 'A Next.js application scaffolded with and AI Agent MCP',
-      architecture: {
-        typescript: config.architecture.typescript ?? true,
-        reactCompiler: config.architecture.reactCompiler ?? false,
-        packageManager: config.architecture.packageManager ?? 'pnpm',
-        database: config.architecture.database ?? 'postgres',
-        orm: config.architecture.orm ?? 'prisma',
-        auth: config.architecture.auth ?? 'better-auth',
-        uiLibrary: config.architecture.uiLibrary ?? 'shadcn',
-        stateManagement: config.architecture.stateManagement ?? 'none',
-        testing: config.architecture.testing ?? 'none',
-        skipInstall: config.architecture.skipInstall ?? false,
-      },
+      ...validated,
+      name: validated.name ?? `${uniqueNamesGenerator(uniqueNamesGeneratorConfig)}-app`,
+      description: validated.description ?? 'A Next.js application scaffolded with an AI Agent MCP',
     };
   }
 
@@ -476,13 +420,12 @@ class NextMCPServer {
   }
 
   private async scaffoldProject(config: ProjectConfig, targetPath: string) {
-    // Apply defaults to the configuration
+    // Config is already validated and has defaults applied by validateAndApplyDefaults
     try {
-      const fullConfig = this.applyConfigDefaults(config);
-      const projectPath = path.join(targetPath, fullConfig.name);
+      const projectPath = path.join(targetPath, config.name!);
 
       // Build create-next-app command based on configuration
-      const createCommand = this.buildCreateNextAppCommand(fullConfig);
+      const createCommand = this.buildCreateNextAppCommand(config);
       logger.info(`Executing: ${createCommand}`);
 
       // Run create-next-app
@@ -498,11 +441,16 @@ class NextMCPServer {
       // Verify the project was created
       await fs.access(projectPath);
 
+      await this.createDirectoryStructure(config, projectPath);
+      await this.updatePackageJson(config, projectPath);
+      await this.generateNextJSCustomCode(projectPath);
+      // await this.installDependencies(config, projectPath);
+
       return {
         content: [
           {
             type: 'text',
-            text: `✅ Successfully created Next.js project at ${projectPath}\n\n[Configuration]:\n${JSON.stringify(fullConfig, null, 2)}\n\n[Command executed]: ${createCommand}\n\n[Output]:\n${stdout}`,
+            text: `✅ Successfully created Next.js project at ${projectPath}\n\n[Configuration]:\n${JSON.stringify(config, null, 2)}\n\n[Command executed]: ${createCommand}\n\n[Output]:\n${stdout}`,
           },
         ],
       };
@@ -2088,7 +2036,7 @@ export default function Header() {
     }
   }
 
-  private async validateProject(config: ProjectConfig, projectPath: string) {
+  private async validateProject(config: ProjectConfig | undefined, projectPath: string) {
     const validationResults = [];
 
     try {
@@ -2104,8 +2052,8 @@ export default function Header() {
       await fs.access(path.join(projectPath, 'tsconfig.json'));
       validationResults.push('✅ tsconfig.json exists');
 
-      // Attempt to build the project unless skipped
-      if (!config.architecture.skipInstall) {
+      // Attempt to build the project unless skipped or no config provided
+      if (config && !config.architecture.skipInstall) {
         const runBuildCommand = `${config.architecture.packageManager} run build`;
         const result = this.execCommand(runBuildCommand, projectPath, 'validate build');
 
@@ -2115,7 +2063,8 @@ export default function Header() {
 
         validationResults.push('✅ Project builds successfully');
       } else {
-        validationResults.push('⚠️ Build validation skipped (skipInstall is true)');
+        const reason = !config ? 'no config provided' : 'skipInstall is true';
+        validationResults.push(`⚠️ Build validation skipped (${reason})`);
       }
 
       validationResults.push('✅ Project validation completed successfully');

@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { ProjectConfig } from '../../src/index.ts';
+import { ProjectConfig, ProjectConfigSchema } from '../../src/index.ts';
 
 /**
  * Test ProjectConfig type with optional architecture attributes
@@ -79,25 +79,25 @@ export function execCommand(command: string, cwd?: string): string {
 
 /**
  * Create a mock ProjectConfig for testing
+ * Uses Zod schema to validate and apply defaults
  */
 export function createMockConfig(overrides?: TestProjectConfig): ProjectConfig {
-  return {
+  // Build the config object with overrides
+  const configInput = {
     name: overrides?.name,
     description: overrides?.description,
     architecture: {
-      typescript: true,
-      reactCompiler: false,
-      packageManager: 'pnpm',
-      database: 'postgres',
-      orm: 'prisma',
-      auth: 'better-auth',
-      uiLibrary: 'shadcn',
-      stateManagement: 'none',
-      testing: 'vitest',
+      // Explicitly set skipInstall to true for tests to avoid long-running installations
       skipInstall: true,
+      // Set testing to vitest as default for tests
+      testing: 'vitest' as const,
+      // Apply any overrides
       ...(overrides?.architecture || {}),
     },
   };
+
+  // Parse through Zod schema to apply defaults and validate
+  return ProjectConfigSchema.parse(configInput);
 }
 
 /**
