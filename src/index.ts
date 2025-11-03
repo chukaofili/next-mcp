@@ -27,7 +27,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 let logLevel = 'info';
 let logTransportFilename = 'next-mcp.log';
-if (process.env.NODE_ENV !== 'test') {
+if (process.env.NODE_ENV === 'test') {
   logLevel = 'debug';
   logTransportFilename = 'next-mcp-test.log';
 }
@@ -187,7 +187,7 @@ class NextMCPServer {
           inputSchema: z.toJSONSchema(
             z.object({
               config: ProjectConfigSchema,
-              targetPath: z.string().describe('Target directory path'),
+              targetPath: z.string().describe('Target directory path, usually the current working directory'),
             })
           ),
         },
