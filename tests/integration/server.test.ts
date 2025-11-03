@@ -36,10 +36,7 @@ describe('MCP Server Initialization', () => {
     const toolNames = result.tools.map((t) => t.name);
     const expectedTools = [
       'scaffold_project',
-      'create_directory_structure',
-      'update_package_json',
       'generate_dockerfile',
-      'generate_nextjs_custom_code',
       'setup_shadcn',
       'generate_base_components',
       'setup_database',
@@ -53,8 +50,8 @@ describe('MCP Server Initialization', () => {
       expect(toolNames).toContain(expectedTool);
     }
 
-    // Should have exactly 12 tools
-    expect(toolNames).toHaveLength(12);
+    // Should have exactly 9 tools
+    expect(toolNames).toHaveLength(9);
   });
 
   it('should have proper tool schemas', async () => {

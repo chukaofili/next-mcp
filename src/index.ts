@@ -249,38 +249,29 @@ class NextMCPServer {
       }
 
       try {
-        // Validate config for all tools except validate_project (which has optional config)
-        let validatedConfig: ProjectConfig | undefined;
-        if (args.config) {
-          validatedConfig = this.validateAndApplyDefaults(args.config);
+        const validatedConfig = this.validateAndApplyDefaults(args.config);
+        if (!validatedConfig) {
+          throw new Error('Config validation failed');
         }
 
         switch (name) {
           case 'scaffold_project':
-            if (!validatedConfig) throw new Error('Config is required for scaffold_project');
             return await this.scaffoldProject(validatedConfig, args.targetPath as string);
           case 'install_dependencies':
-            if (!validatedConfig) throw new Error('Config is required for install_dependencies');
             return await this.installDependencies(validatedConfig, args.projectPath as string);
           case 'generate_base_components':
-            if (!validatedConfig) throw new Error('Config is required for generate_base_components');
             return await this.generateBaseComponents(validatedConfig, args.projectPath as string);
           case 'generate_dockerfile':
-            if (!validatedConfig) throw new Error('Config is required for generate_dockerfile');
             return await this.generateDockerfile(validatedConfig, args.projectPath as string);
           case 'setup_shadcn':
-            if (!validatedConfig) throw new Error('Config is required for setup_shadcn');
             return await this.setupShadcn(validatedConfig, args.projectPath as string);
           case 'setup_database':
-            if (!validatedConfig) throw new Error('Config is required for setup_database');
             return await this.setupDatabase(validatedConfig, args.projectPath as string);
           case 'setup_authentication':
-            if (!validatedConfig) throw new Error('Config is required for setup_authentication');
             return await this.setupAuthentication(validatedConfig, args.projectPath as string);
           case 'validate_project':
             return await this.validateProject(validatedConfig, args.projectPath as string);
           case 'generate_readme':
-            if (!validatedConfig) throw new Error('Config is required for generate_readme');
             return await this.generateReadme(validatedConfig, args.projectPath as string);
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -420,17 +411,14 @@ class NextMCPServer {
   }
 
   private async scaffoldProject(config: ProjectConfig, targetPath: string) {
-    // Config is already validated and has defaults applied by validateAndApplyDefaults
     try {
       const projectPath = path.join(targetPath, config.name!);
 
       // Build create-next-app command based on configuration
       const createCommand = this.buildCreateNextAppCommand(config);
-      logger.info(`Executing: ${createCommand}`);
 
       // Run create-next-app
       const result = this.execCommand(createCommand, targetPath, 'create-next-app');
-
       if (!result.success) {
         throw new Error('[create-next-app failed]: Check logs for details');
       }
@@ -2036,7 +2024,7 @@ export default function Header() {
     }
   }
 
-  private async validateProject(config: ProjectConfig | undefined, projectPath: string) {
+  private async validateProject(config: ProjectConfig, projectPath: string) {
     const validationResults = [];
 
     try {
@@ -2052,8 +2040,8 @@ export default function Header() {
       await fs.access(path.join(projectPath, 'tsconfig.json'));
       validationResults.push('✅ tsconfig.json exists');
 
-      // Attempt to build the project unless skipped or no config provided
-      if (config && !config.architecture.skipInstall) {
+      // Attempt to build the project unless skipped
+      if (!config.architecture.skipInstall) {
         const runBuildCommand = `${config.architecture.packageManager} run build`;
         const result = this.execCommand(runBuildCommand, projectPath, 'validate build');
 
@@ -2063,8 +2051,7 @@ export default function Header() {
 
         validationResults.push('✅ Project builds successfully');
       } else {
-        const reason = !config ? 'no config provided' : 'skipInstall is true';
-        validationResults.push(`⚠️ Build validation skipped (${reason})`);
+        validationResults.push(`⚠️ Build validation skipped (skipInstall is true)`);
       }
 
       validationResults.push('✅ Project validation completed successfully');

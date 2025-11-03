@@ -37,8 +37,7 @@ describe('generate_base_components tool', () => {
         uiLibrary: 'none',
       },
     });
-    await client.callTool('scaffold_project', { config, targetPath: projectPath });
-    await client.callTool('create_directory_structure', { config, projectPath });
+    await client.callTool('scaffold_project', { config, targetPath: tempDir });
 
     const result = await client.callTool('generate_base_components', {
       config,
@@ -62,8 +61,7 @@ describe('generate_base_components tool', () => {
         uiLibrary: 'shadcn',
       },
     });
-    await client.callTool('scaffold_project', { config, targetPath: projectPath });
-    await client.callTool('create_directory_structure', { config, projectPath });
+    await client.callTool('scaffold_project', { config, targetPath: tempDir });
 
     const result = await client.callTool('generate_base_components', {
       config,
@@ -88,8 +86,7 @@ describe('generate_base_components tool', () => {
         uiLibrary: 'shadcn',
       },
     });
-    await client.callTool('scaffold_project', { config, targetPath: projectPath });
-    await client.callTool('create_directory_structure', { config, projectPath });
+    await client.callTool('scaffold_project', { config, targetPath: tempDir });
 
     const result = await client.callTool('generate_base_components', {
       config,
