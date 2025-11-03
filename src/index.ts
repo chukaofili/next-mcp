@@ -432,7 +432,7 @@ class NextMCPServer {
       await this.createDirectoryStructure(config, projectPath);
       await this.updatePackageJson(config, projectPath);
       await this.generateNextJSCustomCode(projectPath);
-      // await this.installDependencies(config, projectPath);
+      await this.installDependencies(config, projectPath);
 
       return {
         content: [
@@ -597,6 +597,7 @@ class NextMCPServer {
       // Database + ORM
       if (config.architecture.orm === 'prisma') {
         additionalDeps['@prisma/client'] = PACKAGE_VERSIONS['@prisma/client'];
+        additionalDeps.dotenv = PACKAGE_VERSIONS.dotenv;
         additionalDevDeps.prisma = PACKAGE_VERSIONS.prisma;
       } else if (config.architecture.orm === 'drizzle') {
         additionalDeps['drizzle-orm'] = PACKAGE_VERSIONS['drizzle-orm'];
@@ -1454,6 +1455,19 @@ export const db = drizzle(pool, { schema });`;
       }
     } else {
       logger.info('[prisma init skipped]: Prisma schema already exists, skipping prisma init');
+    }
+
+    // Modify prisma.config.ts if it exists
+    const prismaConfigPath = path.join(projectPath, 'prisma.config.ts');
+    if (existsSync(prismaConfigPath)) {
+      const prismaConfigContent = await fs.readFile(prismaConfigPath, 'utf-8');
+      const dotenvImport = `import dotenv from 'dotenv';\ndotenv.config();\n\n`;
+
+      // Add dotenv import at the top if it doesn't already exist
+      if (!prismaConfigContent.includes('dotenv')) {
+        await fs.writeFile(prismaConfigPath, dotenvImport + prismaConfigContent);
+        logger.info('[prisma.config.ts modified]: Added dotenv configuration');
+      }
     }
 
     // Copy client template
