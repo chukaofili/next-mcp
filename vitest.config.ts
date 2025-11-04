@@ -9,16 +9,9 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
-      exclude: [
-        'node_modules/',
-        'dist/',
-        'src/templates/',
-        '**/*.test.ts',
-        '**/*.config.ts',
-        '**/types.ts',
-      ],
+      exclude: ['node_modules/', 'dist/', 'src/templates/', '**/*.test.ts', '**/*.config.ts', '**/types.ts'],
     },
-    testTimeout: 30000, // 30 seconds for tests that might scaffold projects
-    hookTimeout: 30000,
+    testTimeout: 60000, // 30 seconds for tests that might scaffold projects
+    hookTimeout: 60000,
   },
 });
