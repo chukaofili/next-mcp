@@ -5,6 +5,7 @@
  * - Add side bar or horizontal bar for navigation
  * - Add user profile management
  * - User button from better-auth-ui
+ * - Add organisations support
  */
 import { execSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -17,18 +18,25 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { adjectives, colors, Config, names, uniqueNamesGenerator } from 'unique-names-generator';
 import winston from 'winston';
+import { z } from 'zod';
 
 import details from '../package.json' with { type: 'json' };
 
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+let logLevel = 'info';
+let logTransportFilename = 'next-mcp.log';
+if (process.env.NODE_ENV === 'test') {
+  logLevel = 'debug';
+  logTransportFilename = 'next-mcp-test.log';
+}
 
 // Configure logger
 const logger = winston.createLogger({
-  level: 'info',
+  level: logLevel,
   format: winston.format.json(),
-  transports: [new winston.transports.File({ filename: 'next-mcp.log' })],
+  transports: [new winston.transports.File({ filename: logTransportFilename })],
 });
 
 const uniqueNamesGeneratorConfig: Config = {
@@ -42,21 +50,114 @@ const uniqueNamesGeneratorConfig: Config = {
 const PRISMA_OUTPUT_PATH = '../src/lib/db/generated/prisma';
 const PRISMA_GENERATED_DIR = 'src/lib/db/generated';
 
-interface ProjectConfig {
-  name: string;
-  description: string;
-  architecture: {
-    appRouter: boolean;
-    typescript: boolean;
-    packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun';
-    database: 'none' | 'postgres' | 'mysql' | 'mongodb' | 'sqlite';
-    orm: 'none' | 'prisma' | 'drizzle' | 'mongoose';
-    auth: 'none' | 'better-auth';
-    uiLibrary: 'none' | 'shadcn';
-    stateManagement: 'none' | 'zustand' | 'redux';
-    testing: 'none' | 'jest' | 'vitest' | 'playwright';
-  };
-}
+// Package version constants - centralized version management
+const CREATE_NEXT_APP_VERSION = 'create-next-app@^16';
+const PACKAGE_VERSIONS = {
+  // State Management
+  zustand: '^5',
+  '@reduxjs/toolkit': '^2',
+  'react-redux': '^9',
+  '@types/react-redux': '^7',
+
+  // ORM & Database
+  '@prisma/client': '^6',
+  prisma: '^6',
+  'drizzle-orm': '^0.44.6',
+  'drizzle-kit': '^0.31.5',
+  mongoose: '^8',
+
+  // Database Drivers
+  pg: '^8',
+  mysql2: '^3',
+  mongodb: '^6',
+  'better-sqlite3': '^12',
+  '@types/better-sqlite3': '^7',
+
+  // UI Libraries
+  '@tanstack/react-table': '^8',
+
+  // Authentication
+  'better-auth': '^1',
+  '@daveyplate/better-auth-ui': '^3',
+
+  // Testing - Vitest
+  vitest: '^1',
+  '@vitejs/plugin-react': '^4',
+  '@testing-library/react': '^14',
+  '@testing-library/jest-dom': '^6',
+  jsdom: '^23.0.1',
+
+  // Testing - Jest
+  jest: '^29',
+  'jest-environment-jsdom': '^29',
+
+  // Testing - Playwright
+  '@playwright/test': '^1',
+
+  // Utilities
+  dotenv: '^17',
+  '@types/node': '^24',
+} as const;
+
+// Zod schema for ProjectConfig with validation and defaults
+export const ProjectConfigSchema = z.object({
+  name: z.string().optional().describe('Project name. If not provided, a unique name will be generated automatically.'),
+  description: z.string().optional().describe('Project description. Used in package.json and documentation.'),
+  architecture: z
+    .object({
+      typescript: z
+        .boolean()
+        .default(true)
+        .describe('Enable TypeScript. Configures the project with TypeScript support.'),
+      reactCompiler: z
+        .boolean()
+        .default(false)
+        .describe('Enable React Compiler. Experimental React compiler for automatic optimization.'),
+      skipInstall: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Skip npm/pnpm install during setup. Useful for CI/CD or manual dependency management.'),
+      packageManager: z
+        .enum(['npm', 'pnpm', 'yarn', 'bun'])
+        .default('pnpm')
+        .describe('Package manager to use. Determines which commands are used for installing dependencies.'),
+      database: z
+        .enum(['none', 'postgres', 'mysql', 'mongodb', 'sqlite'])
+        .default('postgres')
+        .describe('Database system. Configures the appropriate database driver and connection.'),
+      orm: z
+        .enum(['none', 'prisma', 'drizzle', 'mongoose'])
+        .default('prisma')
+        .describe('ORM/database toolkit. Sets up the chosen ORM with appropriate configurations.'),
+      auth: z
+        .enum(['none', 'better-auth'])
+        .default('better-auth')
+        .describe('Authentication system. Configures authentication with the selected provider.'),
+      uiLibrary: z
+        .enum(['none', 'shadcn'])
+        .default('shadcn')
+        .describe('UI component library. Installs and configures the selected UI library.'),
+      stateManagement: z
+        .enum(['none', 'zustand', 'redux'])
+        .default('none')
+        .describe('State management solution. Sets up global state management with the chosen library.'),
+      testing: z
+        .enum(['none', 'jest', 'vitest', 'playwright'])
+        .default('none')
+        .describe('Testing framework. Configures unit/integration testing or E2E testing setup.'),
+    })
+    .describe('Project architecture configuration. Defines the technology stack and features.'),
+});
+
+export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
+
+const inputSchemaJson = z.toJSONSchema(
+  z.object({
+    config: ProjectConfigSchema,
+    projectPath: z.string().describe('Path to the project directory'),
+  })
+);
 
 class NextMCPServer {
   private server: Server;
@@ -83,167 +184,47 @@ class NextMCPServer {
         {
           name: 'scaffold_project',
           description: 'Create a new Next.js project with specified configuration',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: {
-                type: 'object',
-                properties: {
-                  name: { type: 'string' },
-                  description: { type: 'string' },
-                  architecture: { type: 'object' },
-                },
-                required: ['name', 'architecture'],
-              },
-              targetPath: {
-                type: 'string',
-                description: 'Target directory path',
-              },
-            },
-            required: ['config', 'targetPath'],
-          },
-        },
-        {
-          name: 'create_directory_structure',
-          description: 'Create the base directory structure for the project',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
-        },
-        {
-          name: 'update_package_json',
-          description: 'Update package.json with appropriate dependencies',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
+          inputSchema: z.toJSONSchema(
+            z.object({
+              config: ProjectConfigSchema,
+              targetPath: z.string().describe('Target directory path, usually the current working directory'),
+            })
+          ),
         },
         {
           name: 'generate_dockerfile',
           description: 'Generate Dockerfile and docker-compose.yml',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
-        },
-        {
-          name: 'generate_nextjs_custom_code',
-          description: 'Generate Next.js configuration files, and add custom paths and code snippets',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              projectPath: { type: 'string' },
-            },
-            required: ['projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
         {
           name: 'setup_shadcn',
           description: 'Initialize shadcn/ui with defaults and install all components',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
         {
           name: 'generate_base_components',
           description: 'Generate base React components and layouts',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
         {
           name: 'setup_database',
           description: 'Generate database configuration and migrations',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
         {
           name: 'setup_authentication',
           description: 'Configure authentication system',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
-        },
-        {
-          name: 'generate_ci_cd',
-          description: 'Generate CI/CD pipeline configuration',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
-        },
-        {
-          name: 'install_dependencies',
-          description: 'Install npm/pnpm dependencies',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
         {
           name: 'validate_project',
           description: 'Run validation checks on the generated project',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              projectPath: { type: 'string' },
-            },
-            required: ['projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
         {
           name: 'generate_readme',
           description: 'Generate comprehensive README.md',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              config: { type: 'object' },
-              projectPath: { type: 'string' },
-            },
-            required: ['config', 'projectPath'],
-          },
+          inputSchema: inputSchemaJson,
         },
       ],
     }));
@@ -263,33 +244,28 @@ class NextMCPServer {
       }
 
       try {
+        const validatedConfig = this.validateAndApplyDefaults(args.config);
+        if (!validatedConfig) {
+          throw new Error('Config validation failed');
+        }
+
         switch (name) {
           case 'scaffold_project':
-            return await this.scaffoldProject(args.config as ProjectConfig, args.targetPath as string);
-          case 'create_directory_structure':
-            return await this.createDirectoryStructure(args.config as ProjectConfig, args.projectPath as string);
-          case 'update_package_json':
-            return await this.updatePackageJson(args.config as ProjectConfig, args.projectPath as string);
-          case 'generate_dockerfile':
-            return await this.generateDockerfile(args.config as ProjectConfig, args.projectPath as string);
-          case 'generate_nextjs_custom_code':
-            return await this.generateNextJSCustomCode(args.projectPath as string);
+            return await this.scaffoldProject(validatedConfig, args.targetPath as string);
           case 'generate_base_components':
-            return await this.generateBaseComponents(args.config as ProjectConfig, args.projectPath as string);
+            return await this.generateBaseComponents(validatedConfig, args.projectPath as string);
+          case 'generate_dockerfile':
+            return await this.generateDockerfile(validatedConfig, args.projectPath as string);
           case 'setup_shadcn':
-            return await this.setupShadcn(args.config as ProjectConfig, args.projectPath as string);
+            return await this.setupShadcn(validatedConfig, args.projectPath as string);
           case 'setup_database':
-            return await this.setupDatabase(args.config as ProjectConfig, args.projectPath as string);
+            return await this.setupDatabase(validatedConfig, args.projectPath as string);
           case 'setup_authentication':
-            return await this.setupAuthentication(args.config as ProjectConfig, args.projectPath as string);
-          case 'install_dependencies':
-            return await this.installDependencies(args.config as ProjectConfig, args.projectPath as string);
-          // case "generate_ci_cd":
-          //   return await this.generateCICD(args.config as ProjectConfig, args.projectPath as string);
-          // case "validate_project":
-          //   return await this.validateProject(args.projectPath as string);
-          // case "generate_readme":
-          //   return await this.generateReadme(args.config as ProjectConfig, args.projectPath as string);
+            return await this.setupAuthentication(validatedConfig, args.projectPath as string);
+          case 'validate_project':
+            return await this.validateProject(validatedConfig, args.projectPath as string);
+          case 'generate_readme':
+            return await this.generateReadme(validatedConfig, args.projectPath as string);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -307,21 +283,18 @@ class NextMCPServer {
     });
   }
 
-  private applyConfigDefaults(config: ProjectConfig): ProjectConfig {
+  /**
+   * Validates and applies defaults to the project config using Zod schema
+   */
+  private validateAndApplyDefaults(config: unknown): ProjectConfig {
+    // Parse and validate the config, applying defaults from the schema
+    const validated = ProjectConfigSchema.parse(config);
+
+    // Apply name default if not provided (using unique name generator)
     return {
-      name: config.name || `${uniqueNamesGenerator(uniqueNamesGeneratorConfig)}-app`,
-      description: config.description || 'A Next.js application scaffolded with and AI Agent MCP',
-      architecture: {
-        appRouter: config.architecture?.appRouter ?? true,
-        typescript: config.architecture?.typescript ?? true,
-        packageManager: config.architecture?.packageManager || 'pnpm',
-        database: config.architecture?.database || 'postgres',
-        orm: config.architecture?.orm || 'prisma',
-        auth: config.architecture?.auth || 'better-auth',
-        uiLibrary: config.architecture?.uiLibrary || 'shadcn',
-        stateManagement: config.architecture?.stateManagement || 'none',
-        testing: config.architecture?.testing || 'none',
-      },
+      ...validated,
+      name: validated.name ?? `${uniqueNamesGenerator(uniqueNamesGeneratorConfig)}-app`,
+      description: validated.description ?? 'A Next.js application scaffolded with an AI Agent MCP',
     };
   }
 
@@ -431,18 +404,14 @@ class NextMCPServer {
   }
 
   private async scaffoldProject(config: ProjectConfig, targetPath: string) {
-    // Apply defaults to the configuration
-    const fullConfig = this.applyConfigDefaults(config);
-    const projectPath = path.join(targetPath, fullConfig.name);
-
     try {
+      const projectPath = path.join(targetPath, config.name!);
+
       // Build create-next-app command based on configuration
-      const createCommand = this.buildCreateNextAppCommand(fullConfig);
-      logger.info(`Executing: ${createCommand}`);
+      const createCommand = this.buildCreateNextAppCommand(config);
 
       // Run create-next-app
       const result = this.execCommand(createCommand, targetPath, 'create-next-app');
-
       if (!result.success) {
         throw new Error('[create-next-app failed]: Check logs for details');
       }
@@ -453,11 +422,20 @@ class NextMCPServer {
       // Verify the project was created
       await fs.access(projectPath);
 
+      await this.createDirectoryStructure(config, projectPath);
+      await this.updatePackageJson(config, projectPath);
+      await this.generateNextJSCustomCode(projectPath);
+
+      if (!config.architecture.skipInstall) {
+        logger.info('Install not skipped: Installing dependencies as part of project scaffolding');
+        await this.installDependencies(config, projectPath);
+      }
+
       return {
         content: [
           {
             type: 'text',
-            text: `✅ Successfully created Next.js project at ${projectPath}\n\n[Configuration]:\n${JSON.stringify(fullConfig, null, 2)}\n\n[Command executed]: ${createCommand}\n\n[Output]:\n${stdout}`,
+            text: `✅ Successfully created Next.js project at ${projectPath}\n\n[Configuration]:\n${JSON.stringify(config, null, 2)}\n\n[Command executed]: ${createCommand}\n\n[Output]:\n${stdout}`,
           },
         ],
       };
@@ -476,35 +454,19 @@ class NextMCPServer {
   }
 
   private buildCreateNextAppCommand(config: ProjectConfig): string {
-    const packageRunner = this.getPackageRunner(config.architecture.packageManager);
-    const flags = [`${packageRunner} create-next-app@latest`, `./${config.name}`];
+    const packageRunner = this.getPackageRunnerDlx(config.architecture.packageManager);
+    const flags = [`${packageRunner} ${CREATE_NEXT_APP_VERSION}`, `./${config.name}`];
     logger.info(`Building create-next-app command for config: ${JSON.stringify(config)}`);
+
     if (config.architecture.typescript) {
       flags.push('--ts');
     } else {
       flags.push('--js');
     }
 
-    if (config.architecture.appRouter) {
-      flags.push('--app');
-    } else {
-      flags.push('--no-app');
+    if (config.architecture.reactCompiler) {
+      flags.push('--react-compiler');
     }
-
-    // Always use ESLint
-    flags.push('--eslint');
-
-    //Always use Tailwind CSS for styling
-    flags.push('--tailwind');
-
-    // Use src directory for better organization
-    flags.push('--src-dir');
-
-    // Use Turbopack for faster development
-    flags.push('--turbopack');
-
-    // Set import alias
-    flags.push('--import-alias "@/*"');
 
     if (config.architecture.packageManager === 'pnpm') {
       flags.push('--use-pnpm');
@@ -516,18 +478,23 @@ class NextMCPServer {
       flags.push('--use-npm');
     }
 
+    // Skip dependency installation if specified [Used for tests]
+    if (config.architecture.skipInstall) {
+      flags.push('--skip-install');
+    }
+
+    // Use src directory for better organization
+    flags.push('--src-dir');
+
+    // Auto accept all prompts with defaults which are not configured
+    flags.push('--yes');
+
     return flags.join(' ');
   }
 
   private async createDirectoryStructure(config: ProjectConfig, projectPath: string) {
     // Additional directories that create-next-app doesn't create
-    const additionalDirectories = [
-      'src/components/ui',
-      'src/components/forms',
-      'src/lib',
-      'src/hooks',
-      '.github/workflows',
-    ];
+    const additionalDirectories = ['src/components/ui', 'src/components/forms', 'src/lib', 'src/hooks'];
 
     // Add stores directory if using external state management
     if (config.architecture.stateManagement !== 'none') {
@@ -563,7 +530,7 @@ class NextMCPServer {
       content: [
         {
           type: 'text',
-          text: `✅ Created ${additionalDirectories.length} additional directories and initialized git repository`,
+          text: `✅ Created ${additionalDirectories.length} additional directories and structure`,
         },
       ],
     };
@@ -617,75 +584,76 @@ class NextMCPServer {
 
       // State Management
       if (config.architecture.stateManagement === 'zustand') {
-        additionalDeps.zustand = '^5.0.8';
+        additionalDeps.zustand = PACKAGE_VERSIONS.zustand;
       } else if (config.architecture.stateManagement === 'redux') {
-        additionalDeps['@reduxjs/toolkit'] = '^2.5.0';
-        additionalDeps['react-redux'] = '^9.2.0';
-        additionalDevDeps['@types/react-redux'] = '^7.1.34';
+        additionalDeps['@reduxjs/toolkit'] = PACKAGE_VERSIONS['@reduxjs/toolkit'];
+        additionalDeps['react-redux'] = PACKAGE_VERSIONS['react-redux'];
+        additionalDevDeps['@types/react-redux'] = PACKAGE_VERSIONS['@types/react-redux'];
       }
 
       // Database + ORM
       if (config.architecture.orm === 'prisma') {
-        additionalDeps['@prisma/client'] = '^6.17.1';
-        additionalDevDeps.prisma = '^6.17.1';
+        additionalDeps['@prisma/client'] = PACKAGE_VERSIONS['@prisma/client'];
+        additionalDeps.dotenv = PACKAGE_VERSIONS.dotenv;
+        additionalDevDeps.prisma = PACKAGE_VERSIONS.prisma;
       } else if (config.architecture.orm === 'drizzle') {
-        additionalDeps['drizzle-orm'] = '^0.44.6';
-        additionalDevDeps['drizzle-kit'] = '^0.31.5';
+        additionalDeps['drizzle-orm'] = PACKAGE_VERSIONS['drizzle-orm'];
+        additionalDevDeps['drizzle-kit'] = PACKAGE_VERSIONS['drizzle-kit'];
 
         if (config.architecture.database === 'postgres') {
-          additionalDeps.pg = '^8.16.3';
-          additionalDeps.dotenv = '^17.2.3';
+          additionalDeps.pg = PACKAGE_VERSIONS.pg;
+          additionalDeps.dotenv = PACKAGE_VERSIONS.dotenv;
         }
 
         if (config.architecture.database === 'mysql') {
-          additionalDeps.mysql2 = '^3.15.2';
+          additionalDeps.mysql2 = PACKAGE_VERSIONS.mysql2;
         }
 
         if (config.architecture.database === 'sqlite') {
-          additionalDeps['better-sqlite3'] = '^12.4.1';
-          additionalDevDeps['@types/better-sqlite3'] = '^7.6.13';
+          additionalDeps['better-sqlite3'] = PACKAGE_VERSIONS['better-sqlite3'];
+          additionalDevDeps['@types/better-sqlite3'] = PACKAGE_VERSIONS['@types/better-sqlite3'];
         }
       } else if (config.architecture.orm === 'mongoose') {
-        additionalDeps.mongoose = '^8.19.1';
+        additionalDeps.mongoose = PACKAGE_VERSIONS.mongoose;
       }
 
       if (config.architecture.orm === 'none') {
         if (config.architecture.database === 'postgres') {
-          additionalDeps.pg = '^8.16.3';
+          additionalDeps.pg = PACKAGE_VERSIONS.pg;
         } else if (config.architecture.database === 'mysql') {
-          additionalDeps.mysql2 = '^3.15.2';
+          additionalDeps.mysql2 = PACKAGE_VERSIONS.mysql2;
         } else if (config.architecture.database === 'mongodb') {
-          additionalDeps.mongodb = '^6.20.0';
+          additionalDeps.mongodb = PACKAGE_VERSIONS.mongodb;
         } else if (config.architecture.database === 'sqlite') {
-          additionalDeps['better-sqlite3'] = '^12.4.1';
-          additionalDevDeps['@types/better-sqlite3'] = '^7.6.13';
+          additionalDeps['better-sqlite3'] = PACKAGE_VERSIONS['better-sqlite3'];
+          additionalDevDeps['@types/better-sqlite3'] = PACKAGE_VERSIONS['@types/better-sqlite3'];
         }
       }
 
       if (config.architecture.uiLibrary === 'shadcn') {
-        additionalDeps['@tanstack/react-table'] = '^8.21.3';
+        additionalDeps['@tanstack/react-table'] = PACKAGE_VERSIONS['@tanstack/react-table'];
       }
 
       // Authentication
       if (config.architecture.auth === 'better-auth') {
-        additionalDeps['better-auth'] = '^1.3.27';
-        additionalDeps['@daveyplate/better-auth-ui'] = 'latest';
+        additionalDeps['better-auth'] = PACKAGE_VERSIONS['better-auth'];
+        additionalDeps['@daveyplate/better-auth-ui'] = PACKAGE_VERSIONS['@daveyplate/better-auth-ui'];
       }
 
       // Testing
       if (config.architecture.testing === 'vitest') {
-        additionalDevDeps.vitest = '^1.0.4';
-        additionalDevDeps['@vitejs/plugin-react'] = '^4.2.1';
-        additionalDevDeps['@testing-library/react'] = '^14.1.2';
-        additionalDevDeps['@testing-library/jest-dom'] = '^6.1.6';
-        additionalDevDeps.jsdom = '^23.0.1';
+        additionalDevDeps.vitest = PACKAGE_VERSIONS.vitest;
+        additionalDevDeps['@vitejs/plugin-react'] = PACKAGE_VERSIONS['@vitejs/plugin-react'];
+        additionalDevDeps['@testing-library/react'] = PACKAGE_VERSIONS['@testing-library/react'];
+        additionalDevDeps['@testing-library/jest-dom'] = PACKAGE_VERSIONS['@testing-library/jest-dom'];
+        additionalDevDeps.jsdom = PACKAGE_VERSIONS.jsdom;
       } else if (config.architecture.testing === 'jest') {
-        additionalDevDeps.jest = '^29.7.0';
-        additionalDevDeps['jest-environment-jsdom'] = '^29.7.0';
-        additionalDevDeps['@testing-library/react'] = '^14.1.2';
-        additionalDevDeps['@testing-library/jest-dom'] = '^6.1.6';
+        additionalDevDeps.jest = PACKAGE_VERSIONS.jest;
+        additionalDevDeps['jest-environment-jsdom'] = PACKAGE_VERSIONS['jest-environment-jsdom'];
+        additionalDevDeps['@testing-library/react'] = PACKAGE_VERSIONS['@testing-library/react'];
+        additionalDevDeps['@testing-library/jest-dom'] = PACKAGE_VERSIONS['@testing-library/jest-dom'];
       } else if (config.architecture.testing === 'playwright') {
-        additionalDevDeps['@playwright/test'] = '^1.40.1';
+        additionalDevDeps['@playwright/test'] = PACKAGE_VERSIONS['@playwright/test'];
       }
 
       // Merge dependencies
@@ -955,9 +923,21 @@ class NextMCPServer {
       const packageManager = config.architecture.packageManager;
       const packageRunner = this.getPackageRunnerDlx(packageManager);
       const results: string[] = [];
+      logger.info(`Initializing shadcn/ui with ${packageManager}...`);
+
+      if (config.architecture.skipInstall) {
+        results.push(`⚠️  Skipped installation of shadcn/ui components due to skipInstall flag`);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: results.join('\n'),
+            },
+          ],
+        };
+      }
 
       // Step 1: Initialize shadcn/ui with default configuration
-      logger.info(`Initializing shadcn/ui with ${packageManager}...`);
       try {
         const shadcnInitCommand = `${packageRunner} shadcn@latest init -y -d`;
         const result = this.execCommand(shadcnInitCommand, projectPath, 'shadcn init');
@@ -1235,6 +1215,10 @@ export { Button };
         components.push('- Created reusable Button component with Tailwind CSS');
       }
 
+      if (config.architecture.auth !== 'none') {
+        components.push('- Created authentication-related components (to be implemented based on chosen auth method)');
+      }
+
       return {
         content: [
           {
@@ -1285,43 +1269,36 @@ export { Button };
       case 'postgres':
         driverImport = `import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import * as schema from './schema';
+import * as schema from './schema';`;
+        connectionCode = `const pool = new Pool({ connectionString });
 
-const pool = new Pool({
-  connectionString,
-});`;
-        connectionCode = `export const db = drizzle(pool, { schema });`;
+export const db = drizzle(pool, { schema });`;
         break;
 
       case 'mysql':
         driverImport = `import { drizzle } from 'drizzle-orm/mysql2';
 import mysql from 'mysql2/promise';
-import * as schema from './schema';
+import * as schema from './schema';`;
+        connectionCode = `const poolConnection = mysql.createPool({ uri: connectionString });
 
-const poolConnection = mysql.createPool({
-  uri: connectionString,
-});`;
-        connectionCode = `export const db = drizzle(poolConnection, { schema, mode: 'default' });`;
+export const db = drizzle(poolConnection, { schema, mode: 'default' });`;
         break;
 
       case 'sqlite':
         driverImport = `import { drizzle } from 'drizzle-orm/better-sqlite3';
 import Database from 'better-sqlite3';
-import * as schema from './schema';
+import * as schema from './schema';`;
+        connectionCode = `const sqlite = new Database('dev.db');
 
-const sqlite = new Database('dev.db');`;
-        connectionCode = `export const db = drizzle(sqlite, { schema });`;
+export const db = drizzle(sqlite, { schema });`;
         break;
 
       default:
         driverImport = `import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import * as schema from './schema';
-
-const pool = new Pool({
-  connectionString,
-});`;
-        connectionCode = `export const db = drizzle(pool, { schema });`;
+import * as schema from './schema';`;
+        connectionCode = `const pool = new Pool({ connectionString });
+export const db = drizzle(pool, { schema });`;
     }
 
     return template.replace('__DRIVER_IMPORT__', driverImport).replace('__CONNECTION_CODE__', connectionCode);
@@ -1461,7 +1438,9 @@ const pool = new Pool({
 
   private async setupPrisma(config: ProjectConfig, projectPath: string) {
     const database = config.architecture.database;
-    const packageRunner = this.getPackageRunner(config.architecture.packageManager);
+    const packageRunner = config.architecture.skipInstall
+      ? this.getPackageRunnerDlx(config.architecture.packageManager)
+      : this.getPackageRunner(config.architecture.packageManager);
     const provider = this.getPrismaProvider(database);
 
     if (!existsSync(path.join(projectPath, 'prisma', 'schema.prisma'))) {
@@ -1473,6 +1452,19 @@ const pool = new Pool({
       }
     } else {
       logger.info('[prisma init skipped]: Prisma schema already exists, skipping prisma init');
+    }
+
+    // Modify prisma.config.ts if it exists
+    const prismaConfigPath = path.join(projectPath, 'prisma.config.ts');
+    if (existsSync(prismaConfigPath)) {
+      const prismaConfigContent = await fs.readFile(prismaConfigPath, 'utf-8');
+      const dotenvImport = `import dotenv from 'dotenv';\ndotenv.config();\n\n`;
+
+      // Add dotenv import at the top if it doesn't already exist
+      if (!prismaConfigContent.includes('dotenv')) {
+        await fs.writeFile(prismaConfigPath, dotenvImport + prismaConfigContent);
+        logger.info('[prisma.config.ts modified]: Added dotenv configuration');
+      }
     }
 
     // Copy client template
@@ -1487,12 +1479,14 @@ const pool = new Pool({
     const indexPath = path.join(projectPath, 'src/lib/db/index.ts');
     await fs.writeFile(indexPath, indexTemplate);
 
-    // Run prisma generate to create the Prisma client
-    const prismaGenerateCmd = `${packageRunner} prisma generate`;
-    const result = this.execCommand(prismaGenerateCmd, projectPath, 'prisma generate');
+    // Run prisma generate to create the Prisma client if not skipped
+    if (!config.architecture.skipInstall) {
+      const prismaGenerateCmd = `${packageRunner} prisma generate`;
+      const result = this.execCommand(prismaGenerateCmd, projectPath, 'prisma generate');
 
-    if (!result.success) {
-      throw new Error('[prisma generate failed]: Check logs for details');
+      if (!result.success) {
+        throw new Error('[prisma generate failed]: Check logs for details');
+      }
     }
   }
 
@@ -1504,7 +1498,7 @@ const pool = new Pool({
     let configTemplate = await fs.readFile(configTemplatePath, 'utf-8');
 
     configTemplate = configTemplate
-      .replace(/\{\{DIALECT\}\}/g, this.getDrizzleDialect(database))
+      .replace(/__DIALECT__/g, this.getDrizzleDialect(database))
       .replace(/__DB_CREDENTIALS__/g, this.getDrizzleCredentials(database));
 
     const configPath = path.join(projectPath, 'drizzle.config.ts');
@@ -1714,12 +1708,12 @@ const db = new Database("./dev.db");`,
       };
     }
 
-    // Verify database is configured
-    if (config.architecture.database === 'none') {
-      throw new Error('Better Auth requires a database. Please select a database option.');
-    }
-
     try {
+      // Verify database is configured
+      if (config.architecture.database === 'none') {
+        throw new Error('Better Auth requires a database. Please select a database option.');
+      }
+
       // Step 1: Create directory structure
       const authDirs = [
         'src/lib',
@@ -1807,8 +1801,8 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
           destination: path.join('src', 'components', 'auth', 'user-button.tsx'),
         },
         {
-          template: path.join('auth', 'middleware.ts.template'),
-          destination: path.join('src', 'middleware.ts'),
+          template: path.join('auth', 'proxy.ts.template'),
+          destination: path.join('src', 'proxy.ts'),
         },
       ];
 
@@ -1850,7 +1844,7 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       // MongoDB doesn't need migrations (schema-less)
       const shouldRunMigrations = database !== 'mongodb';
 
-      if (shouldRunMigrations) {
+      if (shouldRunMigrations && !config.architecture.skipInstall) {
         // Generate auth schema
         const schemaCmd = this.getAuthSchemaCommand();
         const schemaResult = this.execCommand(schemaCmd, projectPath, 'auth schema generation');
@@ -1903,7 +1897,7 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
 
 3. Visit http://localhost:3000/auth/sign-up to create your first user`;
         } else {
-          nextSteps = `⚠️  Auto-setup failed. Please run these commands manually:
+          nextSteps = `⚠️  Manual setup required. Please run these commands:
 
 📋 Next Steps:
 
@@ -1944,7 +1938,7 @@ ${nextSteps}
 - /auth/two-factor - 2FA setup
 - /account/profile - User profile settings
 - /account/security - Security settings
-- /account/sessions - Active sessions
+- /account/settings - Account settings
 
 🔐 Features Enabled:
 - Email & Password Authentication with beautiful UI
@@ -2007,71 +2001,6 @@ export default function Header() {
     }
   }
 
-  /**
-
-  private async generateCICD(config: ProjectConfig, projectPath: string) {
-    const ciWorkflow = `name: CI/CD Pipeline
-
-on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'pnpm'
-    
-    - name: Install dependencies
-      run: pnpm install
-    
-    - name: Run linting
-      run: pnpm lint
-    
-    - name: Run type checking
-      run: pnpm type-check
-    
-    - name: Build application
-      run: pnpm build
-    
-    ${config.architecture.testing !== "jest" ? "- name: Run tests\n      run: pnpm test" : ""}
-  
-  deploy:
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Deploy to ${config.deployment.platform}
-      run: echo "Deploy to ${config.deployment.platform}"
-`;
-
-    await fs.writeFile(
-      path.join(projectPath, ".github/workflows/ci.yml"),
-      ciWorkflow
-    );
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Generated CI/CD pipeline configuration",
-        },
-      ],
-    };
-  }
-*/
   private async installDependencies(config: ProjectConfig, projectPath: string) {
     try {
       const installCommand = `${config.architecture.packageManager} install`;
@@ -2106,75 +2035,239 @@ jobs:
     }
   }
 
-  /**
-  private async validateProject(projectPath: string) {
+  private async validateProject(config: ProjectConfig, projectPath: string) {
     const validationResults = [];
 
     try {
       // Check if package.json exists
-      await fs.access(path.join(projectPath, "package.json"));
-      validationResults.push("✅ package.json exists");
+      await fs.access(path.join(projectPath, 'package.json'));
+      validationResults.push('✅ package.json exists');
 
       // Check if Next.js config exists
-      await fs.access(path.join(projectPath, "next.config.js"));
-      validationResults.push("✅ next.config.js exists");
+      await fs.access(path.join(projectPath, 'next.config.ts'));
+      validationResults.push('✅ next.config.ts exists');
 
       // Check if TypeScript config exists
-      await fs.access(path.join(projectPath, "tsconfig.json"));
-      validationResults.push("✅ tsconfig.json exists");
+      await fs.access(path.join(projectPath, 'tsconfig.json'));
+      validationResults.push('✅ tsconfig.json exists');
 
-      // Try to build the project
-      execSync("npm run build", { cwd: projectPath, stdio: "pipe" });
-      validationResults.push("✅ Project builds successfully");
+      // Attempt to build the project unless skipped
+      if (!config.architecture.skipInstall) {
+        const runBuildCommand = `${config.architecture.packageManager} run build`;
+        const result = this.execCommand(runBuildCommand, projectPath, 'validate build');
+
+        if (!result.success) {
+          throw new Error('[validate build failed]: Check logs for details');
+        }
+
+        validationResults.push('✅ Project builds successfully');
+      } else {
+        validationResults.push(`⚠️ Build validation skipped (skipInstall is true)`);
+      }
+
+      validationResults.push('✅ Project validation completed successfully');
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-
+      const errorMessage = error instanceof Error ? error.message : String(error);
       validationResults.push(`❌ Validation failed: ${errorMessage}`);
     }
 
     return {
       content: [
         {
-          type: "text",
-          text: validationResults.join("\n"),
+          type: 'text',
+          text: validationResults.join('\n'),
         },
       ],
     };
   }
 
   private async generateReadme(config: ProjectConfig, projectPath: string) {
-    const readme = `# ${config.name}
+    try {
+      const { architecture } = config;
+      const pm = architecture.packageManager;
 
-${config.description || "A Next.js application"}
+      // Generate features list based on configuration
+      const features = [];
+      features.push('App Router for modern routing and layouts');
+      if (architecture.typescript) features.push('TypeScript for type-safe development');
+      if (architecture.uiLibrary === 'shadcn') features.push('shadcn/ui components library');
+      if (architecture.database !== 'none') features.push(`${architecture.database} database integration`);
+      if (architecture.orm !== 'none') features.push(`${architecture.orm} ORM for database operations`);
+      if (architecture.auth !== 'none') features.push('Better Auth authentication with pre-built UI');
+      if (architecture.stateManagement !== 'none') features.push(`${architecture.stateManagement} state management`);
+      if (architecture.testing !== 'none') features.push(`${architecture.testing} testing framework`);
+      features.push('Docker and docker-compose configuration');
+      features.push('Tailwind CSS for styling');
+      features.push('ESLint for code quality');
+
+      // Generate database-specific setup instructions
+      let databaseSetup = '';
+      if (architecture.database !== 'none') {
+        if (architecture.orm === 'prisma') {
+          databaseSetup = `
+
+### Database Setup (Prisma)
+
+1. Start the database using Docker:
+   \`\`\`bash
+   ${pm} run docker:dev:up
+   \`\`\`
+
+2. Run database migrations:
+   \`\`\`bash
+   ${pm === 'npm' ? 'npx' : `${pm} exec`} prisma migrate dev
+   \`\`\`
+
+3. (Optional) Open Prisma Studio to manage your data:
+   \`\`\`bash
+   ${pm === 'npm' ? 'npx' : `${pm} exec`} prisma studio
+   \`\`\`
+`;
+        } else if (architecture.orm === 'drizzle') {
+          databaseSetup = `
+
+### Database Setup (Drizzle)
+
+1. Start the database using Docker:
+   \`\`\`bash
+   ${pm} run docker:dev:up
+   \`\`\`
+
+2. Generate and run migrations:
+   \`\`\`bash
+   ${pm === 'npm' ? 'npx' : `${pm} exec`} drizzle-kit generate
+   ${pm === 'npm' ? 'npx' : `${pm} exec`} drizzle-kit migrate
+   \`\`\`
+`;
+        } else if (architecture.orm === 'mongoose') {
+          databaseSetup = `
+
+### Database Setup (MongoDB + Mongoose)
+
+1. Start MongoDB using Docker:
+   \`\`\`bash
+   ${pm} run docker:dev:up
+   \`\`\`
+
+2. The database connection will be established automatically when the app starts.
+`;
+        } else {
+          databaseSetup = `
+
+### Database Setup
+
+1. Start the database using Docker:
+   \`\`\`bash
+   ${pm} run docker:dev:up
+   \`\`\`
+
+2. Update your \`.env.local\` file with the appropriate DATABASE_URL.
+`;
+        }
+      }
+
+      // Generate authentication setup instructions
+      let authSetup = '';
+      if (architecture.auth === 'better-auth') {
+        authSetup = `
+
+### Authentication
+
+This project uses Better Auth with Better Auth UI for authentication.
+
+Available auth routes:
+- \`/auth/sign-in\` - Sign in page
+- \`/auth/sign-up\` - Sign up page
+- \`/auth/forgot-password\` - Password reset
+- \`/account/profile\` - User profile settings
+- \`/account/security\` - Security settings
+
+The UserButton component is available for easy integration:
+\`\`\`tsx
+import { UserButton } from "@/components/auth/user-button";
+\`\`\`
+
+For more information, visit [Better Auth Documentation](https://www.better-auth.com/docs).
+`;
+      }
+
+      // Generate testing instructions
+      let testingInstructions = '';
+      if (architecture.testing !== 'none') {
+        testingInstructions = `
+
+## Testing
+
+Run tests with:
+\`\`\`bash
+${pm} test
+\`\`\`
+${
+  architecture.testing === 'vitest'
+    ? `
+Run tests in watch mode:
+\`\`\`bash
+${pm} run test:watch
+\`\`\`
+
+Open Vitest UI:
+\`\`\`bash
+${pm} run test:ui
+\`\`\`
+`
+    : ''
+}${
+          architecture.testing === 'playwright'
+            ? `
+Run E2E tests:
+\`\`\`bash
+${pm} run test:e2e
+\`\`\`
+
+Open Playwright UI:
+\`\`\`bash
+${pm} run test:e2e:ui
+\`\`\`
+`
+            : ''
+        }`;
+      }
+
+      const readme = `# ${config.name}
+
+${config.description || 'A Next.js application scaffolded with Next.js MCP Server'}
 
 ## Features
 
-${config.features.map((feature) => `- ${feature}`).join("\n")}
+${features.map((feature) => `- ${feature}`).join('\n')}
 
 ## Tech Stack
 
-- **Framework**: Next.js ${config.architecture.appRouter ? "(App Router)" : "(Pages Router)"}
-- **Language**: ${config.architecture.typescript ? "TypeScript" : "JavaScript"}
-- **Styling**: ${config.architecture.styling}
-- **Database**: ${config.architecture.database}
-- **Authentication**: ${config.architecture.auth}
-- **State Management**: ${config.architecture.stateManagement}
-- **Testing**: ${config.architecture.testing}
+- **Framework**: Next.js 16 (App Router)
+- **Language**: ${architecture.typescript ? 'TypeScript' : 'JavaScript'}
+- **Package Manager**: ${pm}
+- **UI Library**: ${architecture.uiLibrary === 'shadcn' ? 'shadcn/ui' : 'Tailwind CSS'}
+- **Styling**: Tailwind CSS
+- **Database**: ${architecture.database}${architecture.orm !== 'none' ? ` (${architecture.orm})` : ''}
+- **Authentication**: ${architecture.auth}${architecture.auth === 'better-auth' ? ' + Better Auth UI' : ''}
+- **State Management**: ${architecture.stateManagement}
+- **Testing**: ${architecture.testing}
 
 ## Getting Started
 
 ### Prerequisites
 
 - Node.js 20 or later
-- pnpm (recommended) or npm
+- ${pm} package manager
+${architecture.database !== 'none' && architecture.database !== 'sqlite' ? '- Docker and Docker Compose (for local database)' : ''}
 
 ### Installation
 
-1. Clone the repository
+1. Clone the repository (or navigate to the project directory)
+
 2. Install dependencies:
    \`\`\`bash
-   pnpm install
+   ${pm} install
    \`\`\`
 
 3. Copy environment variables:
@@ -2182,66 +2275,195 @@ ${config.features.map((feature) => `- ${feature}`).join("\n")}
    cp .env.example .env.local
    \`\`\`
 
-4. Run the development server:
+4. Update \`.env.local\` with your configuration
+${databaseSetup}
+5. Run the development server:
    \`\`\`bash
-   pnpm dev
+   ${pm} dev
    \`\`\`
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
+6. Open [http://localhost:3000](http://localhost:3000) to see your application
+${authSetup}
 ## Docker
 
-Build and run with Docker:
+### Development with Docker Compose
 
+Start all services (app + database):
 \`\`\`bash
-docker build -t ${config.name} .
-docker run -p 3000:3000 ${config.name}
+${pm} run docker:dev:up
+\`\`\`
+
+Stop all services:
+\`\`\`bash
+${pm} run docker:dev:down
+\`\`\`
+
+### Production Build
+
+Build the Docker image:
+\`\`\`bash
+${pm} run docker:build
+\`\`\`
+
+Run the container:
+\`\`\`bash
+${pm} run docker:run
 \`\`\`
 
 Or use docker-compose:
-
 \`\`\`bash
-cd docker
 docker-compose up
 \`\`\`
+${testingInstructions}
+## Project Structure
 
+\`\`\`
+${config.name}/
+├── src/
+│   ├── app/                    # Next.js app directory
+│   │   ├── api/               # API routes
+${
+  architecture.auth === 'better-auth'
+    ? `│   │   │   └── auth/          # Authentication API
+│   │   ├── auth/              # Auth pages (sign-in, sign-up)
+│   │   ├── account/           # Account management pages
+`
+    : ''
+}│   │   ├── layout.tsx         # Root layout
+│   │   └── page.tsx           # Home page
+│   ├── components/            # React components
+│   │   ├── ui/               # UI components${architecture.uiLibrary === 'shadcn' ? ' (shadcn/ui)' : ''}
+${
+  architecture.auth === 'better-auth'
+    ? `│   │   └── auth/             # Auth components
+`
+    : ''
+}│   ├── lib/                  # Utility functions
+${
+  architecture.database !== 'none'
+    ? `│   │   └── db/               # Database client and schema
+`
+    : ''
+}${
+        architecture.auth === 'better-auth'
+          ? `│   ├── providers/            # React providers
+`
+          : ''
+      }│   └── hooks/                # Custom React hooks
+${architecture.orm === 'prisma' ? '├── prisma/                 # Prisma schema and migrations\n' : ''}${architecture.orm === 'drizzle' ? '├── drizzle/                # Drizzle schema and migrations\n' : ''}├── docker-compose.yml       # Docker Compose configuration
+├── Dockerfile               # Docker configuration
+├── next.config.ts          # Next.js configuration
+├── tailwind.config.ts      # Tailwind CSS configuration
+└── tsconfig.json           # TypeScript configuration
+\`\`\`
+
+## Available Scripts
+
+- \`${pm} dev\` - Start development server (with Turbopack)
+- \`${pm} build\` - Build for production
+- \`${pm} start\` - Start production server
+- \`${pm} lint\` - Run ESLint
+- \`${pm} run type-check\` - Run TypeScript type checking
+${architecture.testing !== 'none' ? `- \`${pm} test\` - Run tests\n` : ''}${
+        architecture.database !== 'none'
+          ? `- \`${pm} run docker:dev:up\` - Start database with Docker Compose
+- \`${pm} run docker:dev:down\` - Stop database
+`
+          : ''
+      }- \`${pm} run docker:build\` - Build Docker image
+- \`${pm} run docker:run\` - Run Docker container
+
+## Environment Variables
+
+See \`.env.example\` for all available environment variables.
+
+Key variables:
+${architecture.database !== 'none' ? '- `DATABASE_URL` - Database connection string\n' : ''}${
+        architecture.auth === 'better-auth'
+          ? `- \`BETTER_AUTH_SECRET\` - Secret for Better Auth
+- \`BETTER_AUTH_URL\` - Your app URL
+- \`NEXT_PUBLIC_BETTER_AUTH_URL\` - Public app URL
+`
+          : ''
+      }
 ## Deployment
 
-This project is configured for deployment on ${config.deployment.platform}.
+This project can be deployed to various platforms:
 
-${
-  config.deployment.platform === "vercel"
-    ? "The easiest way to deploy is to use the [Vercel Platform](https://vercel.com/new)."
-    : `Deploy using your ${config.deployment.platform} workflow.`
-}
+### Vercel (Recommended)
 
-## Scripts
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new)
 
-- \`pnpm dev\` - Start development server
-- \`pnpm build\` - Build for production
-- \`pnpm start\` - Start production server
-- \`pnpm lint\` - Run ESLint
-- \`pnpm type-check\` - Run TypeScript type checking
-${config.architecture.testing !== "jest" ? "- `pnpm test` - Run tests" : ""}
+1. Push your code to GitHub
+2. Import your repository to Vercel
+3. Configure environment variables
+4. Deploy!
+
+### Docker
+
+Deploy using the included Dockerfile to any platform that supports Docker:
+- AWS ECS/Fargate
+- Google Cloud Run
+- Azure Container Instances
+- DigitalOcean App Platform
+- Fly.io
+- Railway
 
 ## Learn More
 
+### Next.js
 - [Next.js Documentation](https://nextjs.org/docs)
 - [Learn Next.js](https://nextjs.org/learn)
+- [Next.js GitHub](https://github.com/vercel/next.js)
+
+### Styling
+- [Tailwind CSS Documentation](https://tailwindcss.com/docs)
+${architecture.uiLibrary === 'shadcn' ? '- [shadcn/ui Documentation](https://ui.shadcn.com)\n' : ''}
+### Database
+${architecture.orm === 'prisma' ? '- [Prisma Documentation](https://www.prisma.io/docs)\n' : ''}${architecture.orm === 'drizzle' ? '- [Drizzle ORM Documentation](https://orm.drizzle.team/docs/overview)\n' : ''}${architecture.orm === 'mongoose' ? '- [Mongoose Documentation](https://mongoosejs.com/docs/)\n' : ''}
+### Authentication
+${
+  architecture.auth === 'better-auth'
+    ? `- [Better Auth Documentation](https://www.better-auth.com/docs)
+- [Better Auth UI Documentation](https://better-auth-ui.com)
+`
+    : ''
+}
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is open source and available under the [MIT License](LICENSE).
+
+---
+
+Generated with [Next.js MCP Server](https://github.com/anthropics/next-mcp)
 `;
 
-    await fs.writeFile(path.join(projectPath, "README.md"), readme);
+      await fs.writeFile(path.join(projectPath, 'README.md'), readme);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Generated comprehensive README.md",
-        },
-      ],
-    };
+      return {
+        content: [
+          {
+            type: 'text',
+            text: '✅ Generated comprehensive README.md with project documentation',
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ Failed to generate README.md: ${errorMessage}`,
+          },
+        ],
+      };
+    }
   }
-  */
 
   async run() {
     const transport = new StdioServerTransport();

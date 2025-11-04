@@ -14,16 +14,24 @@
     "start": "node dist/index.js",
     "prepublishOnly": "pnpm run build",
     "inspector": "pnpm dlx @modelcontextprotocol/inspector dist/index.js",
-    "test": "echo \"No tests yet\" && exit 0",
-    "lint": "eslint src/**/*.ts",
-    "format": "prettier --write src/**/*.ts",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "lint": "eslint src/**/*.ts tests/**/*.ts",
+    "format": "prettier --write src/**/*.ts tests/**/*.ts",
     "prebuild": "pnpm run lint && pnpm clean",
-    "postbuild": "chmod +x dist/index.js && cp -r src/templates dist/templates"
+    "postbuild": "chmod +x dist/index.js && cp -r src/templates dist/templates",
+    "pretest": "pnpm run build",
+    "pretest:integration": "pnpm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.0",
     "unique-names-generator": "^4.7.1",
-    "winston": "^3.18.3"
+    "winston": "^3.18.3",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@eslint/css": "^0.13.0",
@@ -31,12 +39,17 @@
     "@eslint/json": "^0.13.2",
     "@eslint/markdown": "^7.4.0",
     "@ianvs/prettier-plugin-sort-imports": "^4.7.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.7.2",
+    "@vitest/coverage-v8": "4.0.3",
+    "@vitest/ui": "^4.0.3",
     "eslint": "^9.37.0",
     "globals": "^16.4.0",
     "prettier": "^3.6.2",
+    "shadcn": "^3.5.0",
     "typescript": "^5",
-    "typescript-eslint": "^8.46.1"
+    "typescript-eslint": "^8.46.2",
+    "vitest": "^4.0.3"
   },
   "files": [
     "dist/**/*",
@@ -65,5 +78,5 @@
     "url": "https://github.com/chukaofili/next-mcp/issues"
   },
   "homepage": "https://github.com/chukaofili/next-mcp#readme",
-  "packageManager": "pnpm@10.18.3+sha512.bbd16e6d7286fd7e01f6b3c0b3c932cda2965c06a908328f74663f10a9aea51f1129eea615134bf992831b009eabe167ecb7008b597f40ff9bc75946aadfb08d"
+  "packageManager": "pnpm@10.20.0+sha512.cf9998222162dd85864d0a8102e7892e7ba4ceadebbf5a31f9c2fce48dfce317a9c53b9f6464d1ef9042cba2e02ae02a9f7c143a2b438cd93c91840f0192b9dd"
 }
