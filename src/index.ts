@@ -60,8 +60,8 @@ const PACKAGE_VERSIONS = {
   '@types/react-redux': '^7',
 
   // ORM & Database
-  '@prisma/client': '^6',
-  prisma: '^6',
+  '@prisma/client': '^7',
+  prisma: '^7',
   'drizzle-orm': '^0.44.6',
   'drizzle-kit': '^0.31.5',
   mongoose: '^8',
