@@ -9,7 +9,8 @@
  */
 import { execSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, promises as fs } from 'node:fs';
+import { existsSync, mkdirSync, promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,12 +26,21 @@ import details from '../package.json' with { type: 'json' };
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Setup log directory in user's HOME directory
+const LOG_DIR = path.join(os.homedir(), '.next-mcp');
+if (!existsSync(LOG_DIR)) {
+  mkdirSync(LOG_DIR, { recursive: true });
+}
+
 let logLevel = 'info';
-let logTransportFilename = 'next-mcp.log';
+let logFilename = 'next-mcp.log';
 if (process.env.NODE_ENV === 'test') {
   logLevel = 'debug';
-  logTransportFilename = 'next-mcp-test.log';
+  logFilename = 'next-mcp-test.log';
 }
+
+const logTransportFilename = path.join(LOG_DIR, logFilename);
 
 // Configure logger
 const logger = winston.createLogger({
