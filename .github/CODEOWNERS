@@ -1,0 +1,19 @@
+# This file defines code ownership for the repository
+# Each line is a file pattern followed by one or more owners
+
+# Default owner for everything in the repo
+* @chukaofili
+
+# Workflow files
+/.github/ @chukaofili
+
+# Package configuration
+/package.json @chukaofili
+/pnpm-lock.yaml @chukaofili
+
+# TypeScript configuration
+/tsconfig.json @chukaofili
+
+# Documentation
+/README.md @chukaofili
+/LICENSE @chukaofili
