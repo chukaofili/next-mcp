@@ -1,6 +1,6 @@
 # @chukaofili/next-mcp
 
-A powerful Model Context Protocol (MCP) server for scaffolding production-ready Next.js applications with Docker support, authentication, database integration, and more.
+A Model Context Protocol (MCP) server for scaffolding production-ready Next.js applications with Docker support, authentication, database integration, and more.
 
 [![npm version](https://badge.fury.io/js/@chukaofili%2Fnext-mcp.svg)](https://www.npmjs.com/package/@chukaofili/next-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -8,73 +8,26 @@ A powerful Model Context Protocol (MCP) server for scaffolding production-ready 
 ## Features
 
 - **Automated Next.js Setup**: Generate complete Next.js projects with TypeScript, React Compiler, and modern tooling
-- **Database Integration**: Support for PostgreSQL, MySQL, MongoDB, and SQLite
-- **ORM Options**: Choose from Prisma, Drizzle, or Mongoose
+- **Database Integration**: Support for PostgreSQL, MySQL, MongoDB, and SQLite with Prisma, Drizzle, or Mongoose
 - **Authentication**: Pre-configured better-auth integration with user management
 - **UI Components**: Automatic shadcn/ui setup with all components
 - **State Management**: Optional Zustand or Redux integration
 - **Testing**: Built-in support for Vitest, Jest, or Playwright
 - **Docker Support**: Production-ready Dockerfile and docker-compose.yml generation
-- **Base Components**: Pre-built layouts, navigation, and common components
-- **Validation**: Project validation and health checks
 
 ## Installation
 
 ### Prerequisites
 
 - Node.js >= 24
-- pnpm >= 10 (recommended) or npm/yarn/bun
+- pnpm >= 10 (or npm/yarn/bun)
 
-### Using MCP Inspector (Development)
+### Claude Desktop
 
-```bash
-# Clone the repository
-git clone https://github.com/chukaofili/next-mcp.git
-cd next-mcp
-
-# Install dependencies
-pnpm install
-
-# Build the project
-pnpm build
-
-# Run with MCP Inspector
-pnpm inspector
-```
-
-### Installing as a Package
-
-```bash
-# Install globally
-npm install -g @chukaofili/next-mcp
-
-# Or with pnpm
-pnpm add -g @chukaofili/next-mcp
-
-# Or with yarn
-yarn global add @chukaofili/next-mcp
-```
-
-### Using with Claude Desktop
-
-Add to your Claude Desktop configuration file:
+Add to your configuration file:
 
 **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "next-mcp": {
-      "command": "node",
-      "args": ["/path/to/next-mcp/dist/index.js"]
-    }
-  }
-}
-```
-
-Or if installed globally:
 
 ```json
 {
@@ -87,51 +40,77 @@ Or if installed globally:
 }
 ```
 
-Or using the global installation:
+### Cursor IDE
+
+1. Open Cursor Settings (Cmd/Ctrl + Shift + P → "Preferences: Open User Settings (JSON)")
+2. Add to your settings:
 
 ```json
 {
-  "mcpServers": {
+  "mcp.servers": {
     "next-mcp": {
-      "command": "next-mcp"
+      "command": "npx",
+      "args": ["@chukaofili/next-mcp"]
     }
   }
 }
 ```
 
-## Usage
+### Google Gemini Code Assist
 
-The next-mcp server provides several tools that can be called through MCP clients like Claude Desktop:
+Add to your Gemini configuration file (`~/.config/gemini/mcp.json`):
 
-### Available Tools
+```json
+{
+  "mcpServers": {
+    "next-mcp": {
+      "command": "npx",
+      "args": ["@chukaofili/next-mcp"]
+    }
+  }
+}
+```
 
-#### 1. scaffold_project
+### ChatGPT Desktop (via MCP Bridge)
+
+Install an MCP bridge for ChatGPT, then configure:
+
+```json
+{
+  "servers": {
+    "next-mcp": {
+      "command": "npx",
+      "args": ["@chukaofili/next-mcp"]
+    }
+  }
+}
+```
+
+> Note: ChatGPT doesn't natively support MCP. You'll need a third-party bridge like [mcp-chatgpt-bridge](https://github.com/modelcontextprotocol/mcp-chatgpt-bridge).
+
+## Available Tools
+
+### scaffold_project
 
 Create a complete Next.js project with your specified configuration.
 
-**Parameters:**
-- `config`: Project configuration object
-  - `name` (optional): Project name (auto-generated if not provided)
-  - `description` (optional): Project description
-  - `architecture`: Technology stack configuration
-    - `typescript` (default: `true`): Enable TypeScript
-    - `reactCompiler` (default: `false`): Enable experimental React Compiler
-    - `skipInstall` (default: `false`): Skip dependency installation
-    - `packageManager` (default: `'pnpm'`): Package manager (`npm`, `pnpm`, `yarn`, `bun`)
-    - `database` (default: `'postgres'`): Database system (`none`, `postgres`, `mysql`, `mongodb`, `sqlite`)
-    - `orm` (default: `'prisma'`): ORM toolkit (`none`, `prisma`, `drizzle`, `mongoose`)
-    - `auth` (default: `'better-auth'`): Authentication system (`none`, `better-auth`)
-    - `uiLibrary` (default: `'shadcn'`): UI component library (`none`, `shadcn`)
-    - `stateManagement` (default: `'none'`): State management (`none`, `zustand`, `redux`)
-    - `testing` (default: `'none'`): Testing framework (`none`, `jest`, `vitest`, `playwright`)
-- `targetPath`: Directory where the project will be created
+**Key Configuration Options:**
+
+- `typescript` (default: `true`): Enable TypeScript
+- `database`: `none`, `postgres`, `mysql`, `mongodb`, `sqlite`
+- `orm`: `none`, `prisma`, `drizzle`, `mongoose`
+- `auth`: `none`, `better-auth`
+- `uiLibrary`: `none`, `shadcn`
+- `stateManagement`: `none`, `zustand`, `redux`
+- `testing`: `none`, `jest`, `vitest`, `playwright`
+- `packageManager`: `npm`, `pnpm`, `yarn`, `bun`
 
 **Example:**
+
 ```json
 {
   "config": {
     "name": "my-awesome-app",
-    "description": "A production-ready Next.js application",
     "architecture": {
       "typescript": true,
       "database": "postgres",
@@ -146,85 +125,26 @@ Create a complete Next.js project with your specified configuration.
 }
 ```
 
-#### 2. generate_dockerfile
+### Other Tools
 
-Generate production-ready Docker configuration files.
-
-**Outputs:**
-- `Dockerfile`: Multi-stage build for optimized images
-- `docker-compose.yml`: Complete stack with database services
-- `.dockerignore`: Optimized for Next.js builds
-
-#### 3. setup_shadcn
-
-Initialize shadcn/ui with default configuration and install all available components.
-
-**What it does:**
-- Initializes shadcn/ui configuration
-- Installs all shadcn components
-- Sets up proper TypeScript paths
-- Configures Tailwind CSS
-
-#### 4. generate_base_components
-
-Generate essential React components and layouts.
-
-**Includes:**
-- App layout with navigation
-- Common UI components
-- Page templates
-- Utility components
-
-#### 5. setup_database
-
-Configure database connection and generate migrations.
-
-**Supports:**
-- Prisma schema and client setup
-- Drizzle configuration and schema
-- Mongoose connection and models
-- Direct database drivers (pg, mysql2, mongodb, better-sqlite3)
-
-#### 6. setup_authentication
-
-Configure the authentication system with better-auth.
-
-**Includes:**
-- Auth configuration
-- Login/signup pages
-- User session management
-- Protected routes
-- User profile components
-
-#### 7. validate_project
-
-Run comprehensive validation checks on the generated project.
-
-**Checks:**
-- TypeScript compilation
-- ESLint validation
-- Package.json integrity
-- File structure
-- Configuration files
-
-#### 8. generate_readme
-
-Generate a comprehensive README.md for your project with:
-- Setup instructions
-- Technology stack documentation
-- Development commands
-- Deployment guidelines
+- **generate_dockerfile**: Generate production-ready Docker configuration
+- **setup_shadcn**: Initialize shadcn/ui with all components
+- **generate_base_components**: Generate essential React components and layouts
+- **setup_database**: Configure database connection and migrations
+- **setup_authentication**: Configure better-auth with login/signup pages
+- **validate_project**: Run comprehensive validation checks
+- **generate_readme**: Generate comprehensive project documentation
 
 ## Example Workflow
 
-Here's a typical workflow using next-mcp:
-
 1. **Create the project:**
+
    ```text
    "Use next-mcp to scaffold a new Next.js project called 'my-app' with PostgreSQL, Prisma, and better-auth"
    ```
 
 2. **Add Docker support:**
+
    ```text
    "Generate Dockerfile and docker-compose.yml for the project"
    ```
@@ -232,11 +152,6 @@ Here's a typical workflow using next-mcp:
 3. **Set up UI components:**
    ```text
    "Initialize shadcn/ui and generate base components"
-   ```
-
-4. **Validate the setup:**
-   ```text
-   "Validate the project to ensure everything is configured correctly"
    ```
 
 ## Configuration Examples
@@ -266,149 +181,52 @@ Here's a typical workflow using next-mcp:
     "database": "none",
     "orm": "none",
     "auth": "none",
-    "uiLibrary": "shadcn",
-    "stateManagement": "none",
-    "testing": "none"
-  }
-}
-```
-
-### MongoDB App
-
-```json
-{
-  "architecture": {
-    "typescript": true,
-    "database": "mongodb",
-    "orm": "mongoose",
-    "auth": "better-auth",
-    "uiLibrary": "shadcn",
-    "testing": "playwright"
+    "uiLibrary": "shadcn"
   }
 }
 ```
 
 ## Development
 
-### Build the Project
+### Build and Test
 
 ```bash
+# Build
 pnpm build
-```
 
-### Run in Development Mode
-
-```bash
-pnpm dev
-```
-
-### Run Tests
-
-```bash
-# Run all tests
+# Run tests
 pnpm test
 
-# Run unit tests only
-pnpm test:unit
+# Run with MCP Inspector
+pnpm inspector
 
-# Run integration tests
-pnpm test:integration
-
-# Run with coverage
-pnpm test:coverage
-
-# Run in watch mode
-pnpm test:watch
-
-# Open test UI
-pnpm test:ui
-```
-
-### Lint and Format
-
-```bash
-# Lint code
+# Lint and format
 pnpm lint
-
-# Format code
 pnpm format
 ```
 
+### Project Structure
 
-## Project Structure
-
-```
+```text
 next-mcp/
 ├── src/
 │   ├── index.ts              # Main MCP server
 │   └── templates/            # Project templates
-│       ├── auth/             # Authentication templates
-│       ├── database/         # Database configurations
-│       │   ├── prisma/
-│       │   ├── drizzle/
-│       │   ├── mongoose/
-│       │   └── direct/
-│       └── docker/           # Docker templates
+│       ├── auth/
+│       ├── database/
+│       └── docker/
 ├── tests/
-│   ├── unit/                 # Unit tests
-│   └── integration/          # Integration tests
-├── dist/                     # Compiled output
-├── package.json
-├── tsconfig.json
-└── vitest.config.ts
+│   ├── unit/
+│   └── integration/
+└── dist/                     # Compiled output
 ```
-
-## Technology Stack
-
-- **Runtime**: Node.js >= 24
-- **Language**: TypeScript 5
-- **Framework**: Next.js 15
-- **Package Manager**: pnpm 10
-- **Testing**: Vitest
-- **MCP SDK**: @modelcontextprotocol/sdk
-- **Logging**: winston
-- **Validation**: Zod
-
-## Supported Technologies
-
-### Databases
-- PostgreSQL
-- MySQL
-- MongoDB
-- SQLite
-
-### ORMs
-- Prisma
-- Drizzle
-- Mongoose
-
-### Authentication
-- better-auth with @daveyplate/better-auth-ui
-
-### UI Libraries
-- shadcn/ui (Tailwind CSS + Radix UI)
-
-### State Management
-- Zustand
-- Redux Toolkit
-
-### Testing Frameworks
-- Vitest (Unit/Integration)
-- Jest (Unit/Integration)
-- Playwright (E2E)
-
-### Package Managers
-- pnpm (recommended)
-- npm
-- yarn
-- bun
 
 ## Environment Variables
 
-After scaffolding a project, configure these environment variables:
+After scaffolding, configure these in your project's `.env`:
 
 ```env
-# Database (example for PostgreSQL)
+# Database
 DATABASE_URL="postgresql://user:password@localhost:5432/dbname"
 
 # Authentication
@@ -421,35 +239,10 @@ NEXT_PUBLIC_APP_URL="http://localhost:3000"
 
 ## Troubleshooting
 
-### Build Errors
+### Logs
 
-```bash
-# Clean and rebuild
-pnpm clean
-pnpm build
-```
+All logs are stored in `~/.next-mcp/`:
 
-### Test Failures
-
-```bash
-# Run tests with detailed output
-pnpm test -- --reporter=verbose
-```
-
-### MCP Connection Issues
-
-1. Check your Claude Desktop configuration file syntax
-2. Verify the path to the dist/index.js file
-3. Ensure the project is built (`pnpm build`)
-4. Check the logs in `~/.next-mcp/next-mcp.log`
-
-### Log Files
-
-All log files are stored in the `~/.next-mcp/` directory in your home folder:
-- Production logs: `~/.next-mcp/next-mcp.log`
-- Test logs: `~/.next-mcp/next-mcp-test.log`
-
-To view logs:
 ```bash
 # View production logs
 tail -f ~/.next-mcp/next-mcp.log
@@ -458,46 +251,26 @@ tail -f ~/.next-mcp/next-mcp.log
 tail -f ~/.next-mcp/next-mcp-test.log
 ```
 
+### MCP Connection Issues
+
+1. Check your Claude Desktop configuration syntax
+2. Verify the project is built (`pnpm build` if running locally)
+3. Ensure Node.js >= 24 is installed
+4. Check logs in `~/.next-mcp/next-mcp.log`
+
 ## Contributing
 
-Contributions are welcome! Please follow these steps:
+Contributions are welcome! Please:
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Guidelines
-
-- Write tests for new features
-- Follow the existing code style
-- Update documentation as needed
-- Ensure all tests pass before submitting PR
-
-## Testing
-
-This project uses Vitest for comprehensive testing. See [TESTING.md](./TESTING.md) for detailed testing documentation.
-
-```bash
-# Run all tests
-pnpm test
-
-# Run with coverage
-pnpm test:coverage
-
-# Run specific test suite
-pnpm test:unit
-pnpm test:integration
-```
+2. Create a feature branch
+3. Write tests for new features
+4. Ensure all tests pass
+5. Submit a Pull Request
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details
-
-## Author
-
-Chuka Ofili
 
 ## Links
 
@@ -506,21 +279,6 @@ Chuka Ofili
 - [Model Context Protocol](https://modelcontextprotocol.io)
 - [Next.js Documentation](https://nextjs.org/docs)
 - [shadcn/ui](https://ui.shadcn.com)
-
-## Acknowledgments
-
-- Built on the [Model Context Protocol](https://modelcontextprotocol.io)
-- Uses [shadcn/ui](https://ui.shadcn.com) for beautiful components
-- Powered by [Next.js](https://nextjs.org)
-- Authentication via [better-auth](https://better-auth.com)
-
-## Support
-
-If you encounter any issues or have questions:
-
-1. Check the [documentation](https://github.com/chukaofili/next-mcp#readme)
-2. Search [existing issues](https://github.com/chukaofili/next-mcp/issues)
-3. Create a [new issue](https://github.com/chukaofili/next-mcp/issues/new) if needed
 
 ---
 
