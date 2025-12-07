@@ -95,6 +95,7 @@ Install an MCP bridge for ChatGPT, then configure:
 Create a complete Next.js project with your specified configuration.
 
 **Key Configuration Options:**
+
 - `typescript` (default: `true`): Enable TypeScript
 - `database`: `none`, `postgres`, `mysql`, `mongodb`, `sqlite`
 - `orm`: `none`, `prisma`, `drizzle`, `mongoose`
@@ -105,6 +106,7 @@ Create a complete Next.js project with your specified configuration.
 - `packageManager`: `npm`, `pnpm`, `yarn`, `bun`
 
 **Example:**
+
 ```json
 {
   "config": {
@@ -136,11 +138,13 @@ Create a complete Next.js project with your specified configuration.
 ## Example Workflow
 
 1. **Create the project:**
+
    ```text
    "Use next-mcp to scaffold a new Next.js project called 'my-app' with PostgreSQL, Prisma, and better-auth"
    ```
 
 2. **Add Docker support:**
+
    ```text
    "Generate Dockerfile and docker-compose.yml for the project"
    ```
@@ -153,6 +157,7 @@ Create a complete Next.js project with your specified configuration.
 ## Configuration Examples
 
 ### Full-Stack App with Auth
+
 ```json
 {
   "architecture": {
@@ -168,6 +173,7 @@ Create a complete Next.js project with your specified configuration.
 ```
 
 ### Simple Landing Page
+
 ```json
 {
   "architecture": {
@@ -201,7 +207,7 @@ pnpm format
 
 ### Project Structure
 
-```
+```text
 next-mcp/
 ├── src/
 │   ├── index.ts              # Main MCP server
