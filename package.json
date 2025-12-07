@@ -1,11 +1,14 @@
 {
-  "name": "next-mcp",
+  "name": "@chukaofili/next-mcp",
   "version": "1.0.0",
   "description": "MCP server for scaffolding Next.js applications with Docker support",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
     "next-mcp": "dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -b",
@@ -54,6 +57,7 @@
   "files": [
     "dist/**/*",
     "README.md",
+    "LICENSE",
     "package.json"
   ],
   "engines": {
@@ -62,11 +66,19 @@
   },
   "keywords": [
     "mcp",
+    "model-context-protocol",
     "nextjs",
+    "next.js",
     "scaffolding",
     "docker",
-    "cloud",
-    "web-development"
+    "better-auth",
+    "prisma",
+    "drizzle",
+    "shadcn",
+    "shadcn-ui",
+    "web-development",
+    "typescript",
+    "react"
   ],
   "author": "Chuka Ofili",
   "license": "MIT",
