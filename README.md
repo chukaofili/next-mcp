@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for scaffolding production-ready Next.js applications with Docker support, authentication, database integration, and more.
 
-[![npm version](https://badge.fury.io/js/@chukaofili%2Fnext-mcp.svg)](https://www.npmjs.com/package/@chukaofili/next-mcp)
+[![npm version](https://badge.fury.io/js/%40chukaofili%2Fnext-mcp.svg)](https://www.npmjs.com/package/@chukaofili/next-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
