@@ -735,6 +735,7 @@ class NextMCPServer {
       let databaseEnv = '';
       let prismaCommand = '';
       let prismaVolumes = '';
+      let migrateService = '';
 
       // Add Prisma migration command if using Prisma
       if (config.architecture.orm === 'prisma') {
@@ -827,12 +828,26 @@ class NextMCPServer {
   sqlite_data:`;
             break;
         }
+
+        // Generate migrate service if using Prisma with a database
+        if (config.architecture.orm === 'prisma') {
+          migrateService = `  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    environment:
+      - DATABASE_URL=${databaseEnv.replace('- DATABASE_URL=', '')}
+    depends_on:
+      db:
+        condition: service_healthy`;
+        }
       }
 
       // Replace template placeholders
       const dockerCompose = dockerComposeTemplate
         .replace('__DATABASE_DEPENDS_ON__', databaseDependsOn)
         .replace('__DATABASE_SERVICE__', databaseService)
+        .replace('__MIGRATE_SERVICE__', migrateService)
         .replace('__VOLUMES_SECTION__', volumesSection)
         .replace('__DATABASE_ENV__', databaseEnv)
         .replace('__PRISMA_COMMAND__', prismaCommand)
@@ -851,11 +866,22 @@ class NextMCPServer {
       await fs.writeFile(path.join(projectPath, '.dockerignore'), finalDockerignore);
       await fs.writeFile(path.join(projectPath, 'docker-compose.yml'), dockerCompose);
 
+      // Copy Dockerfile.migrate if using Prisma with a database
+      let migrateDockerfileMessage = '';
+      if (config.architecture.orm === 'prisma' && config.architecture.database !== 'none') {
+        const dockerfileMigrateTemplate = await fs.readFile(
+          path.join(__dirname, 'templates', 'docker', 'Dockerfile.migrate'),
+          'utf-8'
+        );
+        await fs.writeFile(path.join(projectPath, 'Dockerfile.migrate'), dockerfileMigrateTemplate);
+        migrateDockerfileMessage = '\n- Dockerfile.migrate for running Prisma migrations';
+      }
+
       return {
         content: [
           {
             type: 'text',
-            text: `✅ Generated Docker configuration:\n- Dockerfile (from template)\n- docker-compose.yml with ${config.architecture.database} database setup`,
+            text: `✅ Generated Docker configuration:\n- Dockerfile (from template)\n- docker-compose.yml with ${config.architecture.database} database setup${migrateDockerfileMessage}`,
           },
         ],
       };

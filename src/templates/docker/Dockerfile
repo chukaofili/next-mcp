@@ -26,6 +26,9 @@ COPY . .
 # Declare build arguments for NEXT_PUBLIC_ variables
 ARG NEXT_PUBLIC_BETTER_AUTH_URL
 ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
+# Provide a dummy DATABASE_URL for prisma generate (only needed for schema, not actual connection)
+ARG DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
+ENV DATABASE_URL=${DATABASE_URL}
 
 # Build the application
 RUN if [ -f yarn.lock ]; then yarn build; \
