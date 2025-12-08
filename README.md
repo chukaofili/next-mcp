@@ -22,71 +22,37 @@ A Model Context Protocol (MCP) server for scaffolding production-ready Next.js a
 - Node.js >= 24
 - pnpm >= 10 (or npm/yarn/bun)
 
-### Claude Desktop
+### Claude CLI
 
-Add to your configuration file:
+Run the following command to add `next-mcp` as an MCP server:
 
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+```bash
+claude mcp add --transport stdio --scope user next-mcp -- npx @chukaofili/next-mcp@latest
+```
 
-```json
-{
-  "mcpServers": {
-    "next-mcp": {
-      "command": "npx",
-      "args": ["@chukaofili/next-mcp"]
-    }
-  }
-}
+### Google Gemini CLI
+
+Run the following command to add `next-mcp` as an MCP server:
+
+```bash
+gemini mcp add --transport stdio --scope user next-mcp npx @chukaofili/next-mcp@latest
 ```
 
 ### Cursor IDE
 
-1. Open Cursor Settings (Cmd/Ctrl + Shift + P → "Preferences: Open User Settings (JSON)")
-2. Add to your settings:
-
-```json
-{
-  "mcp.servers": {
-    "next-mcp": {
-      "command": "npx",
-      "args": ["@chukaofili/next-mcp"]
-    }
-  }
-}
-```
-
-### Google Gemini Code Assist
-
-Add to your Gemini configuration file (`~/.config/gemini/mcp.json`):
+Add to your Cursor configuration file (`~/.cursor/mcp.json`):
 
 ```json
 {
   "mcpServers": {
     "next-mcp": {
+      "type": "stdio",
       "command": "npx",
-      "args": ["@chukaofili/next-mcp"]
+      "args": ["@chukaofili/next-mcp@latest"]
     }
   }
 }
 ```
-
-### ChatGPT Desktop (via MCP Bridge)
-
-Install an MCP bridge for ChatGPT, then configure:
-
-```json
-{
-  "servers": {
-    "next-mcp": {
-      "command": "npx",
-      "args": ["@chukaofili/next-mcp"]
-    }
-  }
-}
-```
-
-> Note: ChatGPT doesn't natively support MCP. You'll need a third-party bridge like [mcp-chatgpt-bridge](https://github.com/modelcontextprotocol/mcp-chatgpt-bridge).
 
 ## Available Tools
 
@@ -153,38 +119,6 @@ Create a complete Next.js project with your specified configuration.
    ```text
    "Initialize shadcn/ui and generate base components"
    ```
-
-## Configuration Examples
-
-### Full-Stack App with Auth
-
-```json
-{
-  "architecture": {
-    "typescript": true,
-    "database": "postgres",
-    "orm": "prisma",
-    "auth": "better-auth",
-    "uiLibrary": "shadcn",
-    "stateManagement": "zustand",
-    "testing": "vitest"
-  }
-}
-```
-
-### Simple Landing Page
-
-```json
-{
-  "architecture": {
-    "typescript": true,
-    "database": "none",
-    "orm": "none",
-    "auth": "none",
-    "uiLibrary": "shadcn"
-  }
-}
-```
 
 ## Development
 
@@ -267,10 +201,6 @@ Contributions are welcome! Please:
 3. Write tests for new features
 4. Ensure all tests pass
 5. Submit a Pull Request
-
-## License
-
-MIT License - see [LICENSE](LICENSE) file for details
 
 ## Links
 
