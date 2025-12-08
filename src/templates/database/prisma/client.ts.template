@@ -5,7 +5,7 @@ if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL environment variable is not set.');
 }
 
-const connectionString = process.env.DATABASE_URL!;
+const connectionString = process.env.DATABASE_URL;
 const schema = new URL(connectionString).searchParams.get('schema') || 'public';
 const adapter = new PrismaPg({ connectionString }, { schema });
 const globalForPrisma = global as unknown as { prisma: PrismaClient };
