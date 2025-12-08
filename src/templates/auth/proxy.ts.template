@@ -21,7 +21,7 @@ const publicRoutes = ['/auth', '/api/auth', '/api/health'];
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Try to get session from cookie cache with explicit secret
+  // Try to get session from cookie cache
   const session = getSessionCookie(request);
 
   if (session && pathname.startsWith('/auth') && pathname !== '/auth/sign-out') {
