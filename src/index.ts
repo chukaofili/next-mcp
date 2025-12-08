@@ -78,6 +78,7 @@ const PACKAGE_VERSIONS = {
 
   // Database Drivers
   pg: '^8',
+  '@prisma/adapter-pg': '^7',
   mysql2: '^3',
   mongodb: '^6',
   'better-sqlite3': '^12',
@@ -603,6 +604,8 @@ class NextMCPServer {
 
       // Database + ORM
       if (config.architecture.orm === 'prisma') {
+        additionalDeps.pg = PACKAGE_VERSIONS.pg;
+        additionalDeps['@prisma/adapter-pg'] = PACKAGE_VERSIONS['@prisma/adapter-pg'];
         additionalDeps['@prisma/client'] = PACKAGE_VERSIONS['@prisma/client'];
         additionalDeps.dotenv = PACKAGE_VERSIONS.dotenv;
         additionalDevDeps.prisma = PACKAGE_VERSIONS.prisma;
