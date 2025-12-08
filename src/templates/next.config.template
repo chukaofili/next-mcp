@@ -1,4 +1,9 @@
 import type { NextConfig } from "next";
+import dotenv from 'dotenv';
+
+if (process.env.CI) {
+  dotenv.config({ path: '.env.ci' });
+}
 
 const nextConfig: NextConfig = {
   output: "standalone",
