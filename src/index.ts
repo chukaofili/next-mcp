@@ -1158,14 +1158,6 @@ export async function GET() {
   return NextResponse.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    project: '${config.name}',
-    features: {
-      database: '${config.architecture.database}',
-      auth: '${config.architecture.auth}',
-      styling: 'tailwind',
-      stateManagement: '${config.architecture.stateManagement}',
-      testing: '${config.architecture.testing}',
-    },
   });
 }
 `;
