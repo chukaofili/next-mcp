@@ -753,6 +753,7 @@ class NextMCPServer {
       let databaseService = '';
       let volumesSection = '';
       let databaseEnv = '';
+      let databaseUrl = '';
       let prismaCommand = '';
       let prismaVolumes = '';
       let migrateService = '';
@@ -771,7 +772,8 @@ class NextMCPServer {
             databaseDependsOn = `    depends_on:
       db:
         condition: service_healthy`;
-            databaseEnv = `- DATABASE_URL=postgresql://postgres:postgres@db:5432/${config.name}`;
+            databaseUrl = `postgresql://postgres:postgres@db:5432/${config.name}`;
+            databaseEnv = `- DATABASE_URL=${databaseUrl}`;
             databaseService = `  db:
     image: postgres:17-alpine
     environment:
@@ -795,7 +797,8 @@ class NextMCPServer {
             databaseDependsOn = `    depends_on:
       db:
         condition: service_healthy`;
-            databaseEnv = `- DATABASE_URL=mysql://mysql:mysql@db:3306/${config.name}`;
+            databaseUrl = `mysql://mysql:mysql@db:3306/${config.name}`;
+            databaseEnv = `- DATABASE_URL=${databaseUrl}`;
             databaseService = `  db:
     image: mysql:9
     environment:
@@ -820,7 +823,8 @@ class NextMCPServer {
             databaseDependsOn = `    depends_on:
       db:
         condition: service_healthy`;
-            databaseEnv = `- DATABASE_URL=mongodb://db:27017/${config.name}`;
+            databaseUrl = `mongodb://db:27017/${config.name}`;
+            databaseEnv = `- DATABASE_URL=${databaseUrl}`;
             databaseService = `  db:
     image: mongo:8-noble
     environment:
@@ -843,7 +847,8 @@ class NextMCPServer {
             // But we need to ensure the database file persists
             databaseDependsOn = `    volumes:
       - sqlite_data:/app/data`;
-            databaseEnv = `- DATABASE_URL=file:/app/data/${config.name}.db`;
+            databaseUrl = `file:/app/data/${config.name}.db`;
+            databaseEnv = `- DATABASE_URL=${databaseUrl}`;
             volumesSection = `volumes:
   sqlite_data:`;
             break;
@@ -856,7 +861,7 @@ class NextMCPServer {
       context: .
       dockerfile: Dockerfile.migrate
     environment:
-      - DATABASE_URL=${databaseEnv.replace('- DATABASE_URL=', '')}
+      - DATABASE_URL=${databaseUrl}
     depends_on:
       db:
         condition: service_healthy`;
