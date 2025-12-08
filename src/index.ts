@@ -9,7 +9,7 @@
  */
 import { execSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, promises as fs } from 'node:fs';
+import { existsSync, promises as fs, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,8 +57,8 @@ const uniqueNamesGeneratorConfig: Config = {
 };
 
 // Prisma configuration constants
-const PRISMA_OUTPUT_PATH = '../src/lib/db/generated/prisma';
-const PRISMA_GENERATED_DIR = 'src/lib/db/generated';
+const PRISMA_OUTPUT_PATH = '../src/lib/db/.prisma';
+const PRISMA_GENERATED_DIR = 'src/lib/db/.prisma';
 
 // Package version constants - centralized version management
 const CREATE_NEXT_APP_VERSION = 'create-next-app@^16';
@@ -78,6 +78,7 @@ const PACKAGE_VERSIONS = {
 
   // Database Drivers
   pg: '^8',
+  '@prisma/adapter-pg': '^7',
   mysql2: '^3',
   mongodb: '^6',
   'better-sqlite3': '^12',
@@ -603,6 +604,8 @@ class NextMCPServer {
 
       // Database + ORM
       if (config.architecture.orm === 'prisma') {
+        additionalDeps.pg = PACKAGE_VERSIONS.pg;
+        additionalDeps['@prisma/adapter-pg'] = PACKAGE_VERSIONS['@prisma/adapter-pg'];
         additionalDeps['@prisma/client'] = PACKAGE_VERSIONS['@prisma/client'];
         additionalDeps.dotenv = PACKAGE_VERSIONS.dotenv;
         additionalDevDeps.prisma = PACKAGE_VERSIONS.prisma;
@@ -880,6 +883,7 @@ class NextMCPServer {
       // Read template files
       // Define template-to-destination mappings
       const templateMappings = [
+        { template: '.env.ci.template', destination: '.env.ci' },
         { template: 'next.config.template', destination: 'next.config.ts' },
         { template: 'privacy-page.tsx.template', destination: path.join('src', 'app', 'privacy', 'page.tsx') },
         { template: 'terms-page.tsx.template', destination: path.join('src', 'app', 'terms', 'page.tsx') },
