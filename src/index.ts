@@ -433,6 +433,9 @@ class NextMCPServer {
       // Verify the project was created
       await fs.access(projectPath);
 
+      // Post-process .gitignore to exclude .env.ci from being ignored
+      await this.updateGitignore(projectPath);
+
       await this.createDirectoryStructure(config, projectPath);
       await this.updatePackageJson(config, projectPath);
       await this.generateNextJSCustomCode(projectPath);
@@ -461,6 +464,23 @@ class NextMCPServer {
           },
         ],
       };
+    }
+  }
+
+  private async updateGitignore(projectPath: string) {
+    const gitignorePath = path.join(projectPath, '.gitignore');
+    try {
+      let content = await fs.readFile(gitignorePath, 'utf-8');
+
+      // Check if .env.ci exclusion already exists
+      if (!content.includes('!.env.ci')) {
+        // Add exclusion for .env.ci after .env* pattern
+        content = content.replace(/^(\.env\*)$/m, '$1\n!.env.ci');
+        await fs.writeFile(gitignorePath, content);
+        logger.info('Updated .gitignore to exclude .env.ci from being ignored');
+      }
+    } catch (error) {
+      logger.warn(`Could not update .gitignore: ${error}`);
     }
   }
 
