@@ -433,6 +433,9 @@ class NextMCPServer {
       // Verify the project was created
       await fs.access(projectPath);
 
+      // Post-process .gitignore to exclude .env.ci from being ignored
+      await this.updateGitignore(projectPath);
+
       await this.createDirectoryStructure(config, projectPath);
       await this.updatePackageJson(config, projectPath);
       await this.generateNextJSCustomCode(projectPath);
@@ -461,6 +464,23 @@ class NextMCPServer {
           },
         ],
       };
+    }
+  }
+
+  private async updateGitignore(projectPath: string) {
+    const gitignorePath = path.join(projectPath, '.gitignore');
+    try {
+      let content = await fs.readFile(gitignorePath, 'utf-8');
+
+      // Check if .env.ci exclusion already exists
+      if (!content.includes('!.env.ci')) {
+        // Add exclusion for .env.ci after .env* pattern
+        content = content.replace(/^(\.env\*)$/m, '$1\n!.env.ci');
+        await fs.writeFile(gitignorePath, content);
+        logger.info('Updated .gitignore to exclude .env.ci from being ignored');
+      }
+    } catch (error) {
+      logger.warn(`Could not update .gitignore: ${error}`);
     }
   }
 
@@ -733,8 +753,10 @@ class NextMCPServer {
       let databaseService = '';
       let volumesSection = '';
       let databaseEnv = '';
+      let databaseUrl = '';
       let prismaCommand = '';
       let prismaVolumes = '';
+      let migrateService = '';
 
       // Add Prisma migration command if using Prisma
       if (config.architecture.orm === 'prisma') {
@@ -750,7 +772,8 @@ class NextMCPServer {
             databaseDependsOn = `    depends_on:
       db:
         condition: service_healthy`;
-            databaseEnv = `- DATABASE_URL=postgresql://postgres:postgres@db:5432/${config.name}`;
+            databaseUrl = `postgresql://postgres:postgres@db:5432/${config.name}`;
+            databaseEnv = `- DATABASE_URL=${databaseUrl}`;
             databaseService = `  db:
     image: postgres:17-alpine
     environment:
@@ -774,7 +797,8 @@ class NextMCPServer {
             databaseDependsOn = `    depends_on:
       db:
         condition: service_healthy`;
-            databaseEnv = `- DATABASE_URL=mysql://mysql:mysql@db:3306/${config.name}`;
+            databaseUrl = `mysql://mysql:mysql@db:3306/${config.name}`;
+            databaseEnv = `- DATABASE_URL=${databaseUrl}`;
             databaseService = `  db:
     image: mysql:9
     environment:
@@ -799,7 +823,8 @@ class NextMCPServer {
             databaseDependsOn = `    depends_on:
       db:
         condition: service_healthy`;
-            databaseEnv = `- DATABASE_URL=mongodb://db:27017/${config.name}`;
+            databaseUrl = `mongodb://db:27017/${config.name}`;
+            databaseEnv = `- DATABASE_URL=${databaseUrl}`;
             databaseService = `  db:
     image: mongo:8-noble
     environment:
@@ -822,10 +847,24 @@ class NextMCPServer {
             // But we need to ensure the database file persists
             databaseDependsOn = `    volumes:
       - sqlite_data:/app/data`;
-            databaseEnv = `- DATABASE_URL=file:/app/data/${config.name}.db`;
+            databaseUrl = `file:/app/data/${config.name}.db`;
+            databaseEnv = `- DATABASE_URL=${databaseUrl}`;
             volumesSection = `volumes:
   sqlite_data:`;
             break;
+        }
+
+        // Generate migrate service if using Prisma with a database
+        if (config.architecture.orm === 'prisma') {
+          migrateService = `  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    environment:
+      - DATABASE_URL=${databaseUrl}
+    depends_on:
+      db:
+        condition: service_healthy`;
         }
       }
 
@@ -833,6 +872,7 @@ class NextMCPServer {
       const dockerCompose = dockerComposeTemplate
         .replace('__DATABASE_DEPENDS_ON__', databaseDependsOn)
         .replace('__DATABASE_SERVICE__', databaseService)
+        .replace('__MIGRATE_SERVICE__', migrateService)
         .replace('__VOLUMES_SECTION__', volumesSection)
         .replace('__DATABASE_ENV__', databaseEnv)
         .replace('__PRISMA_COMMAND__', prismaCommand)
@@ -851,11 +891,22 @@ class NextMCPServer {
       await fs.writeFile(path.join(projectPath, '.dockerignore'), finalDockerignore);
       await fs.writeFile(path.join(projectPath, 'docker-compose.yml'), dockerCompose);
 
+      // Copy Dockerfile.migrate if using Prisma with a database
+      let migrateDockerfileMessage = '';
+      if (config.architecture.orm === 'prisma' && config.architecture.database !== 'none') {
+        const dockerfileMigrateTemplate = await fs.readFile(
+          path.join(__dirname, 'templates', 'docker', 'Dockerfile.migrate'),
+          'utf-8'
+        );
+        await fs.writeFile(path.join(projectPath, 'Dockerfile.migrate'), dockerfileMigrateTemplate);
+        migrateDockerfileMessage = '\n- Dockerfile.migrate for running Prisma migrations';
+      }
+
       return {
         content: [
           {
             type: 'text',
-            text: `✅ Generated Docker configuration:\n- Dockerfile (from template)\n- docker-compose.yml with ${config.architecture.database} database setup`,
+            text: `✅ Generated Docker configuration:\n- Dockerfile (from template)\n- docker-compose.yml with ${config.architecture.database} database setup${migrateDockerfileMessage}`,
           },
         ],
       };
@@ -1158,14 +1209,6 @@ export async function GET() {
   return NextResponse.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    project: '${config.name}',
-    features: {
-      database: '${config.architecture.database}',
-      auth: '${config.architecture.auth}',
-      styling: 'tailwind',
-      stateManagement: '${config.architecture.stateManagement}',
-      testing: '${config.architecture.testing}',
-    },
   });
 }
 `;

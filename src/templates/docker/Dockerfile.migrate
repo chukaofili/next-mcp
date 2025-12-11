@@ -1,0 +1,14 @@
+FROM node:24-alpine
+WORKDIR /app
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Copy only what's needed for migrations
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml* ./
+COPY prisma ./prisma
+COPY prisma.config.ts ./
+
+# Install only prisma dependencies
+RUN pnpm add prisma @prisma/client dotenv
+
+CMD ["npx", "prisma", "migrate", "deploy"]
