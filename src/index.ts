@@ -138,6 +138,15 @@ export function getShadcnRunner(packageManager: PackageManager): string {
   }
 }
 
+export function buildShadcnInitCommand(
+  packageManager: PackageManager,
+  monorepoMode: 'none' | 'minimal' | 'full'
+): string {
+  const runner = getShadcnRunner(packageManager);
+  const monorepoFlag = monorepoMode !== 'none' ? ' --monorepo' : '';
+  return `${runner} shadcn@latest init --preset b0 --template next${monorepoFlag} --pointer`;
+}
+
 export function substituteProjectName(content: string, projectName: string): string {
   return content.replaceAll('<projectName>', projectName).replaceAll('__PROJECT_NAME__', projectName);
 }
@@ -1353,7 +1362,11 @@ class NextMCPServer {
 
     try {
       const packageManager = config.architecture.packageManager;
-      const packageRunner = this.getPackageRunnerDlx(packageManager);
+      const monorepoMode = config.architecture.monorepo;
+      const shadcnInitCommand = buildShadcnInitCommand(packageManager, monorepoMode);
+      const shadcnRunner = getShadcnRunner(packageManager);
+      const shadcnAddAllCommand = `${shadcnRunner} shadcn@latest add --all -y -o`;
+      const appPath = getAppPath(config, projectPath);
       const results: string[] = [];
       logger.info(`Initializing shadcn/ui with ${packageManager}...`);
 
@@ -1371,8 +1384,7 @@ class NextMCPServer {
 
       // Step 1: Initialize shadcn/ui with default configuration
       try {
-        const shadcnInitCommand = `${packageRunner} shadcn@latest init -y -d`;
-        const result = this.execCommand(shadcnInitCommand, projectPath, 'shadcn init');
+        const result = this.execCommand(shadcnInitCommand, appPath, 'shadcn init (apps/web)');
 
         if (!result.success) {
           throw new Error('[shadcn init failed]: Check logs for details');
@@ -1395,8 +1407,7 @@ class NextMCPServer {
       // Step 2: Install all shadcn/ui components using the --all flag
       logger.info(`Installing all shadcn/ui components with ${packageManager}...`);
       try {
-        const shadcnAddAllCommand = `${packageRunner} shadcn@latest add --all -y -o`;
-        const result = this.execCommand(shadcnAddAllCommand, projectPath, 'shadcn add all');
+        const result = this.execCommand(shadcnAddAllCommand, appPath, 'shadcn add all (apps/web)');
 
         if (!result.success) {
           throw new Error('[shadcn init failed]: Check logs for details');
@@ -1405,7 +1416,21 @@ class NextMCPServer {
         results.push(`✅ Successfully installed all shadcn/ui components`);
         logger.info(`shadcn/ui add all components executed successfully`);
 
-        const globalsCssPath = path.join(projectPath, 'src/app/globals.css');
+        // Step 3: When full + shadcn, also run init+add against packages/ui
+        if (config.architecture.monorepo === 'full' && config.architecture.uiLibrary === 'shadcn') {
+          const uiCwd = path.join(projectPath, 'packages/ui');
+          const uiInitResult = this.execCommand(shadcnInitCommand, uiCwd, 'shadcn init (packages/ui)');
+          if (!uiInitResult.success) {
+            throw new Error('[shadcn init (packages/ui) failed]: Check logs for details');
+          }
+          const uiAddResult = this.execCommand(shadcnAddAllCommand, uiCwd, 'shadcn add all (packages/ui)');
+          if (!uiAddResult.success) {
+            throw new Error('[shadcn add all (packages/ui) failed]: Check logs for details');
+          }
+          results.push(`✅ Successfully installed shadcn/ui components in packages/ui`);
+        }
+
+        const globalsCssPath = path.join(appPath, 'src/app/globals.css');
         let globalsCss = await fs.readFile(globalsCssPath, 'utf-8');
 
         if (!globalsCss.includes('--chart-1: oklch(0.646 0.222 41.116)')) {
@@ -1418,7 +1443,7 @@ class NextMCPServer {
 
         await fs.writeFile(globalsCssPath, globalsCss);
 
-        const layoutPath = path.join(projectPath, 'src/app/layout.tsx');
+        const layoutPath = path.join(appPath, 'src/app/layout.tsx');
         let layoutContent = await fs.readFile(layoutPath, 'utf-8');
         if (!layoutContent.includes('Toaster')) {
           // Add import at the top
