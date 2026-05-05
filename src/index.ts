@@ -1904,7 +1904,7 @@ export const db = drizzle(pool, { schema });`;
       }
 
       if (orm === 'prisma') {
-        await this.setupPrisma(config, projectPath, dbBaseDir, dbSrcDir);
+        await this.setupPrisma(config, dbBaseDir, dbSrcDir);
       } else if (orm === 'drizzle') {
         await this.setupDrizzle(config, dbBaseDir, dbSrcDir);
       } else if (orm === 'mongoose') {
@@ -1948,7 +1948,6 @@ export const db = drizzle(pool, { schema });`;
 
   private async setupPrisma(
     config: ProjectConfig,
-    projectPath: string,
     dbBaseDir: string,
     dbSrcDir: string
   ): Promise<void> {
