@@ -213,4 +213,16 @@ describe('substituteCatalog', () => {
     expect(out.dependencies.react).toBe('^19');
     expect(out.dependencies.typescript).toBe('^6');
   });
+
+  it('throws on residual catalog: in unhandled sections (e.g. optionalDependencies)', () => {
+    const json = '{"optionalDependencies":{"fsevents":"catalog:"}}';
+    expect(() => substituteCatalog(json, 'npm', { fsevents: '^2' }))
+      .toThrow(/optionalDependencies\.fsevents/);
+  });
+
+  it('substitutes within peerDependencies', () => {
+    const json = '{"peerDependencies":{"typescript":"catalog:"}}';
+    const out = JSON.parse(substituteCatalog(json, 'yarn', { typescript: '^6' }));
+    expect(out.peerDependencies.typescript).toBe('^6');
+  });
 });

@@ -142,6 +142,19 @@ export function substituteProjectName(content: string, projectName: string): str
   return content.replaceAll('<projectName>', projectName).replaceAll('__PROJECT_NAME__', projectName);
 }
 
+function assertNoResidualCatalog(value: unknown, pathParts: string[] = []): void {
+  if (typeof value === 'string' && value === 'catalog:') {
+    throw new Error(
+      `Residual "catalog:" reference at ${pathParts.join('.') || '<root>'} not handled by substituteCatalog. Add this section to the substitution loop.`
+    );
+  }
+  if (value && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      assertNoResidualCatalog(v, [...pathParts, k]);
+    }
+  }
+}
+
 export function substituteCatalog(
   packageJsonContent: string,
   packageManager: string,
@@ -162,6 +175,7 @@ export function substituteCatalog(
       }
     }
   }
+  assertNoResidualCatalog(pkg);
   return JSON.stringify(pkg, null, 2) + '\n';
 }
 
