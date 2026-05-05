@@ -199,4 +199,38 @@ describe('scaffold_project tool — monorepo:full', () => {
     const authPkg = JSON.parse(await fs.readFile(authPkgPath, 'utf-8'));
     expect(authPkg.name).toBe(`@${projectName}/auth`);
   }, 120000);
+
+  it('full mode + shadcn generates packages/ui with components.json + utils', async () => {
+    const projectName = 'full-ui';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'none',
+        orm: 'none',
+        auth: 'none',
+        uiLibrary: 'shadcn',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const projectPath = path.join(tempDir, projectName);
+    const uiDir = path.join(projectPath, 'packages', 'ui');
+
+    expect(await fileExists(path.join(uiDir, 'package.json'))).toBe(true);
+    expect(await fileExists(path.join(uiDir, 'components.json'))).toBe(true);
+    expect(await fileExists(path.join(uiDir, 'src', 'lib', 'utils.ts'))).toBe(true);
+    expect(await fileExists(path.join(uiDir, 'src', 'styles', 'globals.css'))).toBe(true);
+
+    const uiPkg = JSON.parse(await fs.readFile(path.join(uiDir, 'package.json'), 'utf-8'));
+    expect(uiPkg.name).toBe(`@${projectName}/ui`);
+  }, 120000);
 });
