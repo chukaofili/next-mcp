@@ -124,7 +124,7 @@ export function getAppPath(config: ProjectConfig, projectPath: string): string {
     : path.join(projectPath, 'apps/web');
 }
 
-export function getShadcnRunner(packageManager: string): string {
+export function getShadcnRunner(packageManager: PackageManager): string {
   switch (packageManager) {
     case 'pnpm':
       return 'pnpm dlx';
@@ -157,7 +157,7 @@ function assertNoResidualCatalog(value: unknown, pathParts: string[] = []): void
 
 export function substituteCatalog(
   packageJsonContent: string,
-  packageManager: string,
+  packageManager: PackageManager,
   catalog: Record<string, string>
 ): string {
   if (packageManager === 'pnpm') return packageJsonContent;
@@ -244,6 +244,8 @@ export const ProjectConfigSchema = z
   );
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
+
+export type PackageManager = NonNullable<ProjectConfig['architecture']['packageManager']>;
 
 const inputSchemaJson = z.toJSONSchema(
   z.object({
