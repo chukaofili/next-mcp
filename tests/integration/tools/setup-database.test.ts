@@ -192,6 +192,43 @@ describe('setup_database tool — monorepo:minimal', () => {
     // Confirm we did NOT pollute projectPath with a top-level prisma/ folder.
     expect(await dirExists(path.join(projectPath, 'prisma'))).toBe(false);
   }, 120000);
+
+  it('writes drizzle.config.ts with the legacy schema path in minimal mode', async () => {
+    // In minimal mode, drizzle.config.ts lives at `apps/web/drizzle.config.ts`
+    // and the schema lives at `apps/web/src/lib/db/schema.ts`. The `schema:`
+    // field is interpreted relative to the config's own location, so the
+    // correct value here is `./src/lib/db/schema.ts`. This test pins that to
+    // ensure the full-mode fix did not regress the legacy layout.
+    const projectName = 'minimal-db-drizzle';
+    const projectPath = path.join(tempDir, projectName);
+    const appPath = path.join(projectPath, 'apps', 'web');
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'minimal',
+        database: 'postgres',
+        orm: 'drizzle',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const result = await client.callTool('setup_database', { config, projectPath });
+    expect(client.isSuccess(result)).toBe(true);
+
+    const drizzleConfig = await fs.readFile(
+      path.join(appPath, 'drizzle.config.ts'),
+      'utf-8'
+    );
+    expect(drizzleConfig).toContain("schema: './src/lib/db/schema.ts'");
+    // The placeholder must be substituted, not leaked through.
+    expect(drizzleConfig).not.toContain('__SCHEMA_PATH__');
+  }, 120000);
 });
 
 describe('setup_database tool — monorepo:full', () => {
@@ -245,6 +282,16 @@ describe('setup_database tool — monorepo:full', () => {
     // apps/web/package.json contains the workspace dep
     const appPkg = JSON.parse(await fs.readFile(path.join(appPath, 'package.json'), 'utf-8'));
     expect(appPkg.dependencies?.[`@${projectName}/db`]).toBe('workspace:*');
+
+    // The success-message text quotes the workspace import specifier, NOT the
+    // legacy `@/lib/db` alias. This is what the MCP caller sees right after
+    // the tool reports success, so it has to point at imports that actually
+    // resolve in `apps/web` (which now depends on the workspace package).
+    const text = client.getTextContent(result);
+    expect(text).toBeDefined();
+    expect(text).toContain(`@${projectName}/db`);
+    expect(text).not.toContain("'@/lib/db'");
+    expect(text).toContain('packages/db/src/');
   }, 120000);
 
   it('routes drizzle schema/config/migrations into packages/db in full mode', async () => {
@@ -275,6 +322,18 @@ describe('setup_database tool — monorepo:full', () => {
     expect(await fileExists(path.join(dbPkgDir, 'src', 'client.ts'))).toBe(true);
     expect(await fileExists(path.join(dbPkgDir, 'src', 'index.ts'))).toBe(true);
     expect(await dirExists(path.join(dbPkgDir, 'drizzle', 'migrations'))).toBe(true);
+
+    // The `schema:` field in drizzle.config.ts must resolve from the config's
+    // own location (`packages/db/drizzle.config.ts`) to the schema file
+    // (`packages/db/src/schema.ts`). With the legacy hardcoded value of
+    // `./src/lib/db/schema.ts`, drizzle-kit would fail at runtime — so this
+    // assertion guards the regression.
+    const drizzleConfig = await fs.readFile(
+      path.join(dbPkgDir, 'drizzle.config.ts'),
+      'utf-8'
+    );
+    expect(drizzleConfig).toContain("schema: './src/schema.ts'");
+    expect(drizzleConfig).not.toContain("schema: './src/lib/db/schema.ts'");
   }, 120000);
 
   it('routes mongoose connection/models into packages/db in full mode', async () => {
@@ -377,6 +436,67 @@ describe('setup_database tool — monorepo:full', () => {
     expect(rewritten).toContain(`from '@${projectName}/db'`);
     expect(rewritten).toContain(`from '@${projectName}/db/types'`);
     expect(rewritten).not.toContain("from '@/lib/db'");
+  }, 120000);
+
+  it('import-rewrite leaves non-import string literals containing @/lib/db alone', async () => {
+    // Regression guard: the rewrite regex must anchor on import context. A
+    // file that mentions `@/lib/db` only inside a non-import string literal
+    // (JSDoc, console.log, fixtures, etc.) must NOT be touched, while a real
+    // import in the same file must still be rewritten.
+    const projectName = 'full-db-rewrite-anchored';
+    const projectPath = path.join(tempDir, projectName);
+    const appPath = path.join(projectPath, 'apps', 'web');
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const targetFile = path.join(appPath, 'src', 'mixed-usage.ts');
+    await fs.writeFile(
+      targetFile,
+      [
+        "import { db } from '@/lib/db';",
+        "const note = '@/lib/db tip';",
+        "const log = 'see @/lib/db/types';",
+        "console.log('@/lib/db');",
+        '/**',
+        " * @example import x from '@/lib/db'",
+        ' */',
+        'export const ref = db;',
+        'export const meta = { note, log };',
+        '',
+      ].join('\n'),
+      'utf-8'
+    );
+
+    const result = await client.callTool('setup_database', { config, projectPath });
+    expect(client.isSuccess(result)).toBe(true);
+
+    const rewritten = await fs.readFile(targetFile, 'utf-8');
+
+    // The real import on line 1 IS rewritten.
+    expect(rewritten).toContain(`from '@${projectName}/db'`);
+
+    // String literals that merely contain `@/lib/db` are NOT rewritten — they
+    // are user data, not module specifiers.
+    expect(rewritten).toContain("const note = '@/lib/db tip';");
+    expect(rewritten).toContain("const log = 'see @/lib/db/types';");
+    expect(rewritten).toContain("console.log('@/lib/db');");
+    // The JSDoc `@example` line happens to contain a real `import x from '...'`
+    // form. It's inside a comment, but our regex is text-based and will rewrite
+    // it — that's acceptable; comments don't affect runtime resolution. The
+    // load-bearing assertions are the three string-literal checks above.
   }, 120000);
 
   it('import-rewrite is a no-op when apps/web has no @/lib/db imports', async () => {

@@ -162,11 +162,28 @@ export function getDbSrcDir(config: ProjectConfig, projectPath: string): string 
  * by Prisma as **relative to the schema file** (`<dbBase>/prisma/schema.prisma`),
  * so the result must be a sibling of the `prisma/` directory.
  *
+ * The endpoints (`<dbBase>/prisma`, `<dbBase>/<dbSrc>/.prisma`) are derived from
+ * the same logical shape that {@link getDbSrcDir} uses, so the two helpers can
+ * not silently drift if the src-dir layout ever changes. We always use
+ * `path.posix` for the final `relative()` so the returned string is stable on
+ * Windows hosts (Prisma config and our generated artifacts are POSIX-flavored).
+ *
  * - `full + orm`:           `../src/.prisma`        (sits next to packages/db/prisma)
  * - other modes:            `../src/lib/db/.prisma` (preserves legacy layout)
  */
 export function getPrismaOutputArg(config: ProjectConfig): string {
-  return shouldRouteToDbPackage(config) ? '../src/.prisma' : '../src/lib/db/.prisma';
+  // Anchor both endpoints at a synthetic dbBase so the math is the same shape
+  // as the real absolute paths but free of OS-dependent separators. Whatever
+  // `getDbSrcDir` decides is the src root, the prisma output sits at
+  // `<src>/.prisma`, and the schema lives at `<dbBase>/prisma/`.
+  const dbBaseDir = '.';
+  const dbSrcDir = shouldRouteToDbPackage(config)
+    ? path.posix.join(dbBaseDir, 'src')
+    : path.posix.join(dbBaseDir, 'src/lib/db');
+  return path.posix.relative(
+    path.posix.join(dbBaseDir, 'prisma'),
+    path.posix.join(dbSrcDir, '.prisma')
+  );
 }
 
 export function getShadcnRunner(packageManager: PackageManager): string {
@@ -1915,12 +1932,15 @@ export const db = drizzle(pool, { schema });`;
 
       // In `full` mode with packages/db routing, wire apps/web to depend on it
       // and rewrite any pre-existing `@/lib/db` imports in apps/web sources.
+      // We capture the resolved package name so the user-facing instructions
+      // can quote the exact import specifier that was wired.
+      let dbPkgName: string | undefined;
       if (shouldRouteToDbPackage(config)) {
-        await this.wireAppsWebToDbPackage(config, projectPath);
+        dbPkgName = await this.wireAppsWebToDbPackage(config, projectPath);
       }
 
       // Generate success message with instructions
-      const instructions = this.generateDatabaseInstructions(config);
+      const instructions = this.generateDatabaseInstructions(config, dbPkgName);
       logger.info('Database setup completed successfully');
       logger.info(instructions);
 
@@ -2018,9 +2038,19 @@ export const db = drizzle(pool, { schema });`;
     const configTemplatePath = path.join(__dirname, 'templates/database/drizzle/drizzle.config.ts.template');
     let configTemplate = await fs.readFile(configTemplatePath, 'utf-8');
 
+    // Schema path is interpreted relative to drizzle.config.ts. In `full + orm`
+    // routing, the config sits at `packages/db/drizzle.config.ts` and the schema
+    // at `packages/db/src/schema.ts`. In other modes, both live under
+    // `<app>/src/lib/db/`. Compute the right path so drizzle-kit can find the
+    // schema at runtime.
+    const drizzleSchemaPath = shouldRouteToDbPackage(config)
+      ? './src/schema.ts'
+      : './src/lib/db/schema.ts';
+
     configTemplate = configTemplate
       .replace(/__DIALECT__/g, this.getDrizzleDialect(database))
-      .replace(/__DB_CREDENTIALS__/g, this.getDrizzleCredentials(database));
+      .replace(/__DB_CREDENTIALS__/g, this.getDrizzleCredentials(database))
+      .replace(/__SCHEMA_PATH__/g, drizzleSchemaPath);
 
     const configPath = path.join(dbBaseDir, 'drizzle.config.ts');
     await fs.writeFile(configPath, configTemplate);
@@ -2114,18 +2144,35 @@ export const db = drizzle(pool, { schema });`;
    * Walk is scoped to `apps/web/src` and `apps/web/app` (if present). We do not
    * descend into `node_modules`, `.next`, `.prisma`, or `public`.
    */
-  private async wireAppsWebToDbPackage(config: ProjectConfig, projectPath: string): Promise<void> {
+  private async wireAppsWebToDbPackage(_config: ProjectConfig, projectPath: string): Promise<string> {
     const appPath = path.join(projectPath, 'apps/web');
     const dbPkgJsonPath = path.join(projectPath, 'packages/db/package.json');
 
-    // 1. Resolve db package name (fallback to convention if package.json is missing
-    //    for any reason — shouldn't happen because Group D scaffolds it first).
-    let dbPkgName = `@${config.name}/db`;
-    if (existsSync(dbPkgJsonPath)) {
+    // 1. Resolve db package name from the on-disk package.json. This function is
+    //    only called when `shouldRouteToDbPackage(config)` is true, which means
+    //    Group D MUST have already emitted `packages/db/package.json`. A missing
+    //    or unparsable file here is an invariant violation, not a soft fault —
+    //    we surface it loudly rather than guessing a name.
+    if (!existsSync(dbPkgJsonPath)) {
+      throw new Error(
+        'wireAppsWebToDbPackage: expected packages/db/package.json to exist ' +
+          '(Group D should have emitted it). Did setup_database run before scaffold_project?'
+      );
+    }
+    let dbPkgName: string;
+    try {
       const dbPkg = JSON.parse(await fs.readFile(dbPkgJsonPath, 'utf-8'));
-      if (typeof dbPkg.name === 'string' && dbPkg.name.length > 0) {
-        dbPkgName = dbPkg.name;
+      if (typeof dbPkg.name !== 'string' || dbPkg.name.length === 0) {
+        throw new Error('packages/db/package.json has no usable "name" field');
       }
+      dbPkgName = dbPkg.name;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `wireAppsWebToDbPackage: failed to read packages/db/package.json (Group D ` +
+          `should have emitted it). Did setup_database run before scaffold_project? ` +
+          `Underlying error: ${reason}`
+      );
     }
 
     // 2. Add workspace dep to apps/web/package.json
@@ -2147,6 +2194,8 @@ export const db = drizzle(pool, { schema });`;
         await this.rewriteDbImportsInTree(root, dbPkgName);
       }
     }
+
+    return dbPkgName;
   }
 
   /**
@@ -2168,11 +2217,20 @@ export const db = drizzle(pool, { schema });`;
       if (!/\.(ts|tsx)$/.test(entry.name)) continue;
 
       const content = await fs.readFile(fullPath, 'utf-8');
-      // Match both `@/lib/db` exact and `@/lib/db/<anything>` subpaths inside
-      // single- or double-quoted module specifiers.
+      // Anchor on import context so we don't accidentally rewrite string
+      // literals in JSDoc, console logs, fixtures, etc. We cover three forms:
+      //   - static `from '...'` (default/named/side-effect after `export from`)
+      //   - bare side-effect `import '...'`
+      //   - dynamic `import('...')` (the `(` is captured as part of the prefix)
+      //   - CJS `require('...')`
+      // Each prefix is preserved verbatim and only the specifier is replaced,
+      // and the rewrite is idempotent: a file with no `@/lib/db` imports passes
+      // through untouched.
+      const importRewrite = /((?:from|import|require)\s*\(?\s*)(['"])@\/lib\/db(\/[^'"]*)?\2/g;
       const updated = content.replace(
-        /(['"])@\/lib\/db(\/[^'"]*)?\1/g,
-        (_match, quote: string, sub: string | undefined) => `${quote}${dbPkgName}${sub ?? ''}${quote}`
+        importRewrite,
+        (_match, prefix: string, quote: string, sub: string | undefined) =>
+          `${prefix}${quote}${dbPkgName}${sub ?? ''}${quote}`
       );
       if (updated !== content) {
         await fs.writeFile(fullPath, updated);
@@ -2181,16 +2239,28 @@ export const db = drizzle(pool, { schema });`;
     }
   }
 
-  private generateDatabaseInstructions(config: ProjectConfig): string {
+  private generateDatabaseInstructions(config: ProjectConfig, dbPkgName?: string): string {
     const orm = config.architecture.orm || 'none';
     const database = config.architecture.database;
     const packageRunner = this.getPackageRunner(config.architecture.packageManager);
+
+    // Surface the actual on-disk routing in the success message. In `full + orm`,
+    // sources land in `packages/db/src` and consumers import them via the
+    // workspace package whose name was resolved from
+    // `packages/db/package.json` (passed in via `dbPkgName`); in all other modes
+    // the legacy `src/lib/db/` layout applies and the path-alias `@/lib/db`
+    // resolves to it.
+    const routedToDbPkg = shouldRouteToDbPackage(config);
+    const importSpecifier = routedToDbPkg ? (dbPkgName ?? `@${config.name}/db`) : '@/lib/db';
+    const filesCreatedIn = routedToDbPkg ? 'packages/db/src/' : 'src/lib/db/';
+    const schemaLocationDrizzle = routedToDbPkg ? 'packages/db/src/schema.ts' : 'src/lib/db/schema.ts';
+    const modelsLocationMongoose = routedToDbPkg ? 'packages/db/src/models/' : 'src/lib/db/models/';
 
     let instructions = `Database setup completed successfully!\n\n`;
     instructions += `Configuration:\n`;
     instructions += `- Database: ${database}\n`;
     instructions += `- ORM: ${orm}\n`;
-    instructions += `- Files created in: src/lib/db/\n\n`;
+    instructions += `- Files created in: ${filesCreatedIn}\n\n`;
 
     instructions += `Next steps:\n`;
 
@@ -2199,19 +2269,19 @@ export const db = drizzle(pool, { schema });`;
       instructions += `2. Update your schema in prisma/schema.prisma (optional)\n`;
       instructions += `3. Run: ${packageRunner} prisma db push (or prisma migrate dev)\n`;
       instructions += `4. After schema changes, run: ${packageRunner} prisma generate\n`;
-      instructions += `5. Import and use: import { db } from '@/lib/db'\n`;
+      instructions += `5. Import and use: import { db } from '${importSpecifier}'\n`;
     } else if (orm === 'drizzle') {
-      instructions += `1. Define your schema in src/lib/db/schema.ts\n`;
+      instructions += `1. Define your schema in ${schemaLocationDrizzle}\n`;
       instructions += `2. Run: ${packageRunner} drizzle-kit generate\n`;
       instructions += `3. Run: ${packageRunner} drizzle-kit push (or migrate)\n`;
-      instructions += `4. Import and use: import { db } from '@/lib/db'\n`;
+      instructions += `4. Import and use: import { db } from '${importSpecifier}'\n`;
     } else if (orm === 'mongoose') {
-      instructions += `1. Create your models in src/lib/db/models/\n`;
-      instructions += `2. Import connection: import { connectDB } from '@/lib/db'\n`;
+      instructions += `1. Create your models in ${modelsLocationMongoose}\n`;
+      instructions += `2. Import connection: import { connectDB } from '${importSpecifier}'\n`;
       instructions += `3. Call connectDB() before using models\n`;
       instructions += `4. Export and use your models from the models directory\n`;
     } else {
-      instructions += `1. Import the database client: import { db } from '@/lib/db'\n`;
+      instructions += `1. Import the database client: import { db } from '${importSpecifier}'\n`;
       instructions += `2. Use the provided query helpers or pool directly\n`;
       instructions += `3. Refer to the ${database} documentation for query syntax\n`;
     }
