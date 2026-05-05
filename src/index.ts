@@ -88,7 +88,6 @@ const PACKAGE_VERSIONS = {
 
   // Authentication
   'better-auth': '^1',
-  '@daveyplate/better-auth-ui': '^3',
 
   // Testing - Vitest
   vitest: '^4',
@@ -108,6 +107,16 @@ const PACKAGE_VERSIONS = {
   dotenv: '^17',
   '@types/node': '^25',
 } as const;
+
+export const CATALOG_VERSIONS: Record<string, string> = {
+  '@types/node': '^25',
+  typescript: '^6',
+  eslint: '^10',
+  vitest: '^4',
+  dotenv: '^17',
+  'better-auth': '^1',
+  '@better-auth/api-key': '^1',
+};
 
 // Zod schema for ProjectConfig with validation and defaults
 export const ProjectConfigSchema = z
@@ -681,7 +690,6 @@ class NextMCPServer {
       // Authentication
       if (config.architecture.auth === 'better-auth') {
         additionalDeps['better-auth'] = PACKAGE_VERSIONS['better-auth'];
-        additionalDeps['@daveyplate/better-auth-ui'] = PACKAGE_VERSIONS['@daveyplate/better-auth-ui'];
       }
 
       // Testing
