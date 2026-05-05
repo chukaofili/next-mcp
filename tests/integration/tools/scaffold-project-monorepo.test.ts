@@ -134,4 +134,38 @@ describe('scaffold_project tool — monorepo:full', () => {
     expect(eslintPkg.name).toBe(`@${projectName}/eslint-config`);
     expect(tsPkg.name).toBe(`@${projectName}/typescript-config`);
   }, 120000);
+
+  it('full mode + postgres/prisma generates packages/db', async () => {
+    const projectName = 'full-db-prisma';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const projectPath = path.join(tempDir, projectName);
+    const dbDir = path.join(projectPath, 'packages', 'db');
+
+    expect(await fileExists(path.join(dbDir, 'package.json'))).toBe(true);
+    expect(await fileExists(path.join(dbDir, 'tsconfig.json'))).toBe(true);
+    expect(await fileExists(path.join(dbDir, 'eslint.config.mjs'))).toBe(true);
+
+    const dbPkg = JSON.parse(await fs.readFile(path.join(dbDir, 'package.json'), 'utf-8'));
+    expect(dbPkg.name).toBe(`@${projectName}/db`);
+    expect(dbPkg.scripts['db:migrate']).toBe('prisma migrate dev');
+  }, 120000);
 });
