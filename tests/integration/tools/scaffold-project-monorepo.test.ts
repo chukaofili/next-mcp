@@ -168,4 +168,35 @@ describe('scaffold_project tool — monorepo:full', () => {
     expect(dbPkg.name).toBe(`@${projectName}/db`);
     expect(dbPkg.scripts['db:migrate']).toBe('prisma migrate dev');
   }, 120000);
+
+  it('full mode + better-auth generates packages/auth', async () => {
+    const projectName = 'full-auth';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'none',
+        orm: 'none',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const projectPath = path.join(tempDir, projectName);
+    const authPkgPath = path.join(projectPath, 'packages', 'auth', 'package.json');
+
+    expect(await fileExists(authPkgPath)).toBe(true);
+
+    const authPkg = JSON.parse(await fs.readFile(authPkgPath, 'utf-8'));
+    expect(authPkg.name).toBe(`@${projectName}/auth`);
+  }, 120000);
 });
