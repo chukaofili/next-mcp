@@ -145,6 +145,7 @@ export function substituteProjectName(content: string, projectName: string): str
 type DockerfilePlaceholderValues = {
   __BASE_IMAGE__: string;
   __COREPACK_SETUP__: string;
+  __PM_PATH_SETUP__: string;
   __PM__: string;
   __PM_DLX__: string;
   __PM_INSTALL__: string;
@@ -157,6 +158,7 @@ const DOCKERFILE_PM_VALUES: Record<PackageManager, DockerfilePlaceholderValues> 
   pnpm: {
     __BASE_IMAGE__: 'node:24-alpine',
     __COREPACK_SETUP__: 'corepack enable && corepack prepare pnpm@latest --activate',
+    __PM_PATH_SETUP__: 'ENV PNPM_HOME="/pnpm"\nENV PATH="$PNPM_HOME:$PATH"',
     __PM__: 'pnpm',
     __PM_DLX__: 'pnpm dlx',
     __PM_INSTALL__: 'pnpm install --frozen-lockfile',
@@ -167,6 +169,7 @@ const DOCKERFILE_PM_VALUES: Record<PackageManager, DockerfilePlaceholderValues> 
   npm: {
     __BASE_IMAGE__: 'node:24-alpine',
     __COREPACK_SETUP__: 'corepack enable && corepack prepare npm@latest --activate',
+    __PM_PATH_SETUP__: '# no extra PATH setup',
     __PM__: 'npm',
     __PM_DLX__: 'npx',
     __PM_INSTALL__: 'npm ci',
@@ -177,6 +180,7 @@ const DOCKERFILE_PM_VALUES: Record<PackageManager, DockerfilePlaceholderValues> 
   yarn: {
     __BASE_IMAGE__: 'node:24-alpine',
     __COREPACK_SETUP__: 'corepack enable && corepack prepare yarn@stable --activate',
+    __PM_PATH_SETUP__: '# no extra PATH setup',
     __PM__: 'yarn',
     __PM_DLX__: 'yarn dlx',
     __PM_INSTALL__: 'yarn install --immutable',
@@ -187,6 +191,7 @@ const DOCKERFILE_PM_VALUES: Record<PackageManager, DockerfilePlaceholderValues> 
   bun: {
     __BASE_IMAGE__: 'oven/bun:1-alpine',
     __COREPACK_SETUP__: 'true',
+    __PM_PATH_SETUP__: '# no extra PATH setup',
     __PM__: 'bun',
     __PM_DLX__: 'bunx',
     __PM_INSTALL__: 'bun install --frozen-lockfile',

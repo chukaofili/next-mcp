@@ -231,6 +231,7 @@ describe('substituteCatalog', () => {
 describe('substituteDockerfilePlaceholders', () => {
   const tpl = `__COREPACK_SETUP__
 FROM __BASE_IMAGE__
+__PM_PATH_SETUP__
 RUN __PM_INSTALL__
 ARG PACKAGE="@__PROJECT_NAME__/web"
 RUN __PM_DLX__ turbo prune
@@ -249,6 +250,7 @@ COPY --from=deps /app/out/__LOCKFILE__ ./
     expect(out).toContain('--mount=type=cache,id=pnpm,target=/pnpm/store');
     expect(out).toContain('pnpm-lock.yaml');
     expect(out).toContain('@my-app/web');
+    expect(out).toContain('ENV PNPM_HOME="/pnpm"');
   });
 
   it('substitutes for npm', () => {
@@ -260,6 +262,7 @@ COPY --from=deps /app/out/__LOCKFILE__ ./
     expect(out).toContain('npm run turbo build');
     expect(out).toContain('--mount=type=cache,id=npm,target=/root/.npm');
     expect(out).toContain('package-lock.json');
+    expect(out).not.toContain('PNPM_HOME');
   });
 
   it('substitutes for yarn', () => {
@@ -271,6 +274,7 @@ COPY --from=deps /app/out/__LOCKFILE__ ./
     expect(out).toContain('yarn turbo build');
     expect(out).toContain('--mount=type=cache,id=yarn,target=/usr/local/share/.cache/yarn');
     expect(out).toContain('yarn.lock');
+    expect(out).not.toContain('PNPM_HOME');
   });
 
   it('substitutes for bun (different base image, no corepack)', () => {
@@ -282,6 +286,7 @@ COPY --from=deps /app/out/__LOCKFILE__ ./
     expect(out).toContain('bun run turbo build');
     expect(out).toContain('--mount=type=cache,id=bun,target=/root/.bun/install/cache');
     expect(out).toContain('bun.lockb');
+    expect(out).not.toContain('PNPM_HOME');
   });
 });
 
