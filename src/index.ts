@@ -611,6 +611,7 @@ class NextMCPServer {
         // output: 'standalone'. No need for a separate inject step.
         await this.ensureEnvExample(appPath);
         await this.scaffoldMonorepoRoot(config, projectPath);
+        await this.generateFullModePackages(config, projectPath);
       }
 
       // Post-process .gitignore to exclude .env.ci from being ignored (per-app)
@@ -730,6 +731,121 @@ class NextMCPServer {
         'utf-8'
       );
       await fs.writeFile(path.join(projectPath, 'pnpm-workspace.yaml'), workspaceTpl);
+    }
+  }
+
+  /**
+   * Recursively copy a directory of templates into a destination, applying:
+   *   - substituteProjectName to file contents that came from .template files
+   *   - substituteCatalog to package.json files (when not pnpm)
+   *   - .template suffix removal on output filenames
+   * Files without a .template suffix (e.g. base.json, next.js) are copied verbatim.
+   */
+  private async copyTemplateTree(
+    srcDir: string,
+    destDir: string,
+    projectName: string,
+    packageManager: PackageManager
+  ): Promise<void> {
+    await fs.mkdir(destDir, { recursive: true });
+    const entries = await fs.readdir(srcDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcPath = path.join(srcDir, entry.name);
+      const destName = entry.name.replace(/\.template$/, '');
+      const destPath = path.join(destDir, destName);
+
+      if (entry.isDirectory()) {
+        await this.copyTemplateTree(srcPath, destPath, projectName, packageManager);
+        continue;
+      }
+
+      let content = await fs.readFile(srcPath, 'utf-8');
+      if (entry.name.endsWith('.template')) {
+        content = substituteProjectName(content, projectName);
+      }
+
+      // Catalog substitution applies only to actual package.json files.
+      if (destName === 'package.json') {
+        content = substituteCatalog(content, packageManager, CATALOG_VERSIONS);
+      }
+
+      await fs.writeFile(destPath, content);
+    }
+  }
+
+  /**
+   * Copy one always-on or conditional package from templates/packages/<srcSubdir>
+   * into <projectPath>/packages/<pkgName>.
+   *
+   * For db ORM variants (`db/prisma`, `db/drizzle`, `db/mongoose`), also copies
+   * the shared `db/tsconfig.json.template` and `db/eslint.config.mjs.template`
+   * sibling files into the destination.
+   */
+  private async copyPackageTemplate(
+    config: ProjectConfig,
+    projectPath: string,
+    pkgName: string,
+    srcSubdir = pkgName
+  ): Promise<void> {
+    const templatesRoot = path.join(__dirname, 'templates/packages');
+    const srcDir = path.join(templatesRoot, srcSubdir);
+    const destDir = path.join(projectPath, 'packages', pkgName);
+    const projectName = config.name!;
+    const pm = config.architecture.packageManager;
+
+    await this.copyTemplateTree(srcDir, destDir, projectName, pm);
+
+    // Special handling for db ORM variants: also copy shared sibling files
+    // from packages/db/ that aren't inside the ORM-specific subdir.
+    if (srcSubdir.startsWith('db/')) {
+      const sharedFiles = ['tsconfig.json.template', 'eslint.config.mjs.template'];
+      for (const f of sharedFiles) {
+        const src = path.join(templatesRoot, 'db', f);
+        const dest = path.join(destDir, f.replace(/\.template$/, ''));
+        let content = await fs.readFile(src, 'utf-8');
+        content = substituteProjectName(content, projectName);
+        await fs.writeFile(dest, content);
+      }
+    }
+  }
+
+  /**
+   * Generate all packages/* for monorepo:'full' mode.
+   * Always emits eslint-config + typescript-config.
+   * Conditionally emits db/auth/ui/orpc based on other config fields.
+   */
+  private async generateFullModePackages(
+    config: ProjectConfig,
+    projectPath: string
+  ): Promise<void> {
+    if (config.architecture.monorepo !== 'full') return;
+
+    // Always-on
+    await this.copyPackageTemplate(config, projectPath, 'eslint-config');
+    await this.copyPackageTemplate(config, projectPath, 'typescript-config');
+
+    const { database, orm, auth, uiLibrary, rpc } = config.architecture;
+
+    // db (D3)
+    if (database !== 'none') {
+      const ormSubdir =
+        orm === 'drizzle' ? 'db/drizzle' : orm === 'mongoose' ? 'db/mongoose' : 'db/prisma';
+      await this.copyPackageTemplate(config, projectPath, 'db', ormSubdir);
+    }
+
+    // auth (D4)
+    if (auth === 'better-auth') {
+      await this.copyPackageTemplate(config, projectPath, 'auth');
+    }
+
+    // ui (D5)
+    if (uiLibrary === 'shadcn') {
+      await this.copyPackageTemplate(config, projectPath, 'ui');
+    }
+
+    // orpc (D6)
+    if (rpc === 'orpc') {
+      await this.copyPackageTemplate(config, projectPath, 'orpc');
     }
   }
 

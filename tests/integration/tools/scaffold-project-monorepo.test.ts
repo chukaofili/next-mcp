@@ -81,3 +81,57 @@ describe('scaffold_project tool — monorepo:minimal', () => {
     expect(nextConfigContent!).toMatch(/output:\s*['"]standalone['"]/);
   }, 120000);
 });
+
+describe('scaffold_project tool — monorepo:full', () => {
+  let client: MCPTestClient;
+  let tempDir: string;
+  const serverPath = path.join(__dirname, '../../../dist/index.js');
+
+  beforeAll(async () => {
+    client = new MCPTestClient();
+    await client.connect(serverPath);
+    tempDir = await createTempDir();
+  }, 60000);
+
+  afterAll(async () => {
+    await client.disconnect();
+    await cleanupTempDir(tempDir);
+  });
+
+  it('always emits eslint-config and typescript-config', async () => {
+    const projectName = 'full-baseline';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'none',
+        orm: 'none',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const projectPath = path.join(tempDir, projectName);
+
+    const eslintPkgPath = path.join(projectPath, 'packages', 'eslint-config', 'package.json');
+    const tsPkgPath = path.join(projectPath, 'packages', 'typescript-config', 'package.json');
+
+    expect(await fileExists(eslintPkgPath)).toBe(true);
+    expect(await fileExists(tsPkgPath)).toBe(true);
+
+    const eslintPkg = JSON.parse(await fs.readFile(eslintPkgPath, 'utf-8'));
+    const tsPkg = JSON.parse(await fs.readFile(tsPkgPath, 'utf-8'));
+
+    expect(eslintPkg.name).toBe(`@${projectName}/eslint-config`);
+    expect(tsPkg.name).toBe(`@${projectName}/typescript-config`);
+  }, 120000);
+});
