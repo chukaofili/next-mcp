@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { getAppPath, getShadcnRunner, substituteCatalog, substituteProjectName } from '../../src/index.js';
+import { getAppPath, getShadcnRunner, substituteCatalog, substituteDockerfilePlaceholders, substituteProjectName } from '../../src/index.js';
 import type { ProjectConfig } from '../../src/index.js';
 import {
   cleanupTempDir,
@@ -224,5 +224,62 @@ describe('substituteCatalog', () => {
     const json = '{"peerDependencies":{"typescript":"catalog:"}}';
     const out = JSON.parse(substituteCatalog(json, 'yarn', { typescript: '^6' }));
     expect(out.peerDependencies.typescript).toBe('^6');
+  });
+});
+
+describe('substituteDockerfilePlaceholders', () => {
+  const tpl = `__COREPACK_SETUP__
+FROM __BASE_IMAGE__
+RUN __PM_INSTALL__
+ARG PACKAGE="@__PROJECT_NAME__/web"
+RUN __PM_DLX__ turbo prune
+RUN __PM_RUN__ turbo build
+RUN __CACHE_MOUNT__ install
+COPY --from=deps /app/out/__LOCKFILE__ ./
+`;
+
+  it('substitutes for pnpm', () => {
+    const out = substituteDockerfilePlaceholders(tpl, 'pnpm', 'my-app');
+    expect(out).toContain('FROM node:24-alpine');
+    expect(out).toContain('corepack enable && corepack prepare pnpm@latest --activate');
+    expect(out).toContain('pnpm install --frozen-lockfile');
+    expect(out).toContain('pnpm dlx turbo prune');
+    expect(out).toContain('pnpm turbo build');
+    expect(out).toContain('--mount=type=cache,id=pnpm,target=/pnpm/store');
+    expect(out).toContain('pnpm-lock.yaml');
+    expect(out).toContain('@my-app/web');
+  });
+
+  it('substitutes for npm', () => {
+    const out = substituteDockerfilePlaceholders(tpl, 'npm', 'my-app');
+    expect(out).toContain('FROM node:24-alpine');
+    expect(out).toContain('corepack enable && corepack prepare npm@latest --activate');
+    expect(out).toContain('npm ci');
+    expect(out).toContain('npx turbo prune');
+    expect(out).toContain('npm run turbo build');
+    expect(out).toContain('--mount=type=cache,id=npm,target=/root/.npm');
+    expect(out).toContain('package-lock.json');
+  });
+
+  it('substitutes for yarn', () => {
+    const out = substituteDockerfilePlaceholders(tpl, 'yarn', 'my-app');
+    expect(out).toContain('FROM node:24-alpine');
+    expect(out).toContain('corepack enable && corepack prepare yarn@stable --activate');
+    expect(out).toContain('yarn install --immutable');
+    expect(out).toContain('yarn dlx turbo prune');
+    expect(out).toContain('yarn turbo build');
+    expect(out).toContain('--mount=type=cache,id=yarn,target=/usr/local/share/.cache/yarn');
+    expect(out).toContain('yarn.lock');
+  });
+
+  it('substitutes for bun (different base image, no corepack)', () => {
+    const out = substituteDockerfilePlaceholders(tpl, 'bun', 'my-app');
+    expect(out).toContain('FROM oven/bun:1-alpine');
+    expect(out).not.toContain('corepack');
+    expect(out).toContain('bun install --frozen-lockfile');
+    expect(out).toContain('bunx turbo prune');
+    expect(out).toContain('bun run turbo build');
+    expect(out).toContain('--mount=type=cache,id=bun,target=/root/.bun/install/cache');
+    expect(out).toContain('bun.lockb');
   });
 });

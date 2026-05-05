@@ -142,6 +142,76 @@ export function substituteProjectName(content: string, projectName: string): str
   return content.replaceAll('<projectName>', projectName).replaceAll('__PROJECT_NAME__', projectName);
 }
 
+type DockerfilePlaceholderValues = {
+  __BASE_IMAGE__: string;
+  __COREPACK_SETUP__: string;
+  __PM__: string;
+  __PM_DLX__: string;
+  __PM_INSTALL__: string;
+  __PM_RUN__: string;
+  __LOCKFILE__: string;
+  __CACHE_MOUNT__: string;
+};
+
+const DOCKERFILE_PM_VALUES: Record<PackageManager, DockerfilePlaceholderValues> = {
+  pnpm: {
+    __BASE_IMAGE__: 'node:24-alpine',
+    __COREPACK_SETUP__: 'corepack enable && corepack prepare pnpm@latest --activate',
+    __PM__: 'pnpm',
+    __PM_DLX__: 'pnpm dlx',
+    __PM_INSTALL__: 'pnpm install --frozen-lockfile',
+    __PM_RUN__: 'pnpm',
+    __LOCKFILE__: 'pnpm-lock.yaml',
+    __CACHE_MOUNT__: '--mount=type=cache,id=pnpm,target=/pnpm/store',
+  },
+  npm: {
+    __BASE_IMAGE__: 'node:24-alpine',
+    __COREPACK_SETUP__: 'corepack enable && corepack prepare npm@latest --activate',
+    __PM__: 'npm',
+    __PM_DLX__: 'npx',
+    __PM_INSTALL__: 'npm ci',
+    __PM_RUN__: 'npm run',
+    __LOCKFILE__: 'package-lock.json',
+    __CACHE_MOUNT__: '--mount=type=cache,id=npm,target=/root/.npm',
+  },
+  yarn: {
+    __BASE_IMAGE__: 'node:24-alpine',
+    __COREPACK_SETUP__: 'corepack enable && corepack prepare yarn@stable --activate',
+    __PM__: 'yarn',
+    __PM_DLX__: 'yarn dlx',
+    __PM_INSTALL__: 'yarn install --immutable',
+    __PM_RUN__: 'yarn',
+    __LOCKFILE__: 'yarn.lock',
+    __CACHE_MOUNT__: '--mount=type=cache,id=yarn,target=/usr/local/share/.cache/yarn',
+  },
+  bun: {
+    __BASE_IMAGE__: 'oven/bun:1-alpine',
+    __COREPACK_SETUP__: '',
+    __PM__: 'bun',
+    __PM_DLX__: 'bunx',
+    __PM_INSTALL__: 'bun install --frozen-lockfile',
+    __PM_RUN__: 'bun run',
+    __LOCKFILE__: 'bun.lockb',
+    __CACHE_MOUNT__: '--mount=type=cache,id=bun,target=/root/.bun/install/cache',
+  },
+};
+
+export function substituteDockerfilePlaceholders(
+  template: string,
+  packageManager: PackageManager,
+  projectName: string
+): string {
+  const values = DOCKERFILE_PM_VALUES[packageManager];
+  // Sort by key length descending so longer placeholders (e.g. __PM_DLX__) are
+  // replaced before any shorter prefix (e.g. __PM__) that would otherwise corrupt them.
+  const entries = Object.entries(values).sort(([a], [b]) => b.length - a.length);
+  let out = template;
+  for (const [key, value] of entries) {
+    out = out.replaceAll(key, value);
+  }
+  return substituteProjectName(out, projectName);
+}
+
 function assertNoResidualCatalog(value: unknown, pathParts: string[] = []): void {
   if (typeof value === 'string' && value === 'catalog:') {
     throw new Error(
