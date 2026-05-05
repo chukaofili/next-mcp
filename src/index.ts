@@ -67,20 +67,19 @@ const PACKAGE_VERSIONS = {
   zustand: '^5',
   '@reduxjs/toolkit': '^2',
   'react-redux': '^9',
-  '@types/react-redux': '^7',
 
   // ORM & Database
   '@prisma/client': '^7',
   prisma: '^7',
-  'drizzle-orm': '^0.44.6',
-  'drizzle-kit': '^0.31.5',
-  mongoose: '^8',
+  'drizzle-orm': '^0.45',
+  'drizzle-kit': '^0.31',
+  mongoose: '^9',
 
   // Database Drivers
   pg: '^8',
   '@prisma/adapter-pg': '^7',
   mysql2: '^3',
-  mongodb: '^6',
+  mongodb: '^7',
   'better-sqlite3': '^12',
   '@types/better-sqlite3': '^7',
 
@@ -92,22 +91,22 @@ const PACKAGE_VERSIONS = {
   '@daveyplate/better-auth-ui': '^3',
 
   // Testing - Vitest
-  vitest: '^1',
-  '@vitejs/plugin-react': '^4',
-  '@testing-library/react': '^14',
+  vitest: '^4',
+  '@vitejs/plugin-react': '^6',
+  '@testing-library/react': '^16',
   '@testing-library/jest-dom': '^6',
-  jsdom: '^23.0.1',
+  jsdom: '^29',
 
   // Testing - Jest
-  jest: '^29',
-  'jest-environment-jsdom': '^29',
+  jest: '^30',
+  'jest-environment-jsdom': '^30',
 
   // Testing - Playwright
   '@playwright/test': '^1',
 
   // Utilities
   dotenv: '^17',
-  '@types/node': '^24',
+  '@types/node': '^25',
 } as const;
 
 // Zod schema for ProjectConfig with validation and defaults
@@ -619,7 +618,6 @@ class NextMCPServer {
       } else if (config.architecture.stateManagement === 'redux') {
         additionalDeps['@reduxjs/toolkit'] = PACKAGE_VERSIONS['@reduxjs/toolkit'];
         additionalDeps['react-redux'] = PACKAGE_VERSIONS['react-redux'];
-        additionalDevDeps['@types/react-redux'] = PACKAGE_VERSIONS['@types/react-redux'];
       }
 
       // Database + ORM
