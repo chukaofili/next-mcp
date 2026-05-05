@@ -614,9 +614,10 @@ class NextMCPServer {
       // Post-process .gitignore to exclude .env.ci from being ignored (per-app)
       await this.updateGitignore(appPath);
 
-      await this.createDirectoryStructure(config, projectPath);
-      await this.updatePackageJson(config, projectPath);
-      await this.generateNextJSCustomCode(projectPath);
+      // Per-app file ops always operate on the app directory.
+      await this.createDirectoryStructure(config, appPath);
+      await this.updatePackageJson(config, appPath);
+      await this.generateNextJSCustomCode(appPath);
 
       if (!config.architecture.skipInstall) {
         logger.info('Install not skipped: Installing dependencies as part of project scaffolding');
@@ -796,7 +797,7 @@ class NextMCPServer {
     return flags.join(' ');
   }
 
-  private async createDirectoryStructure(config: ProjectConfig, projectPath: string) {
+  private async createDirectoryStructure(config: ProjectConfig, appPath: string) {
     // Additional directories that create-next-app doesn't create
     const additionalDirectories = ['src/components/ui', 'src/components/forms', 'src/lib', 'src/hooks'];
 
@@ -823,7 +824,7 @@ class NextMCPServer {
     // Create the additional directories
     for (const dir of additionalDirectories) {
       try {
-        await fs.mkdir(path.join(projectPath, dir), { recursive: true });
+        await fs.mkdir(path.join(appPath, dir), { recursive: true });
       } catch (error) {
         // Directory might already exist, continue
         logger.error(`Note: Directory ${dir} might already exist`, error);
@@ -840,10 +841,10 @@ class NextMCPServer {
     };
   }
 
-  private async updatePackageJson(config: ProjectConfig, projectPath: string) {
+  private async updatePackageJson(config: ProjectConfig, appPath: string) {
     try {
       // Read the existing package.json created by create-next-app
-      const packageJsonPath = path.join(projectPath, 'package.json');
+      const packageJsonPath = path.join(appPath, 'package.json');
       const existingPackageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
 
       // Add additional scripts
@@ -1194,12 +1195,12 @@ class NextMCPServer {
     }
   }
 
-  private async generateNextJSCustomCode(projectPath: string) {
+  private async generateNextJSCustomCode(appPath: string) {
     try {
       const customDirs = ['src/app/privacy', 'src/app/terms'];
 
       for (const dir of customDirs) {
-        await fs.mkdir(path.join(projectPath, dir), { recursive: true });
+        await fs.mkdir(path.join(appPath, dir), { recursive: true });
       }
 
       // Read template files
@@ -1215,7 +1216,7 @@ class NextMCPServer {
       await Promise.all(
         templateMappings.map(async ({ template, destination }) => {
           const content = await fs.readFile(path.join(__dirname, 'templates', template), 'utf-8');
-          await fs.writeFile(path.join(projectPath, destination), content);
+          await fs.writeFile(path.join(appPath, destination), content);
         })
       );
 
