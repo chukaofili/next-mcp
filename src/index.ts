@@ -56,8 +56,10 @@ const uniqueNamesGeneratorConfig: Config = {
   style: 'lowerCase',
 };
 
-// Prisma configuration constants
-const PRISMA_OUTPUT_PATH = '../src/lib/db/.prisma';
+// Prisma configuration constants. The schema-relative `--output` arg is now
+// computed per-config via {@link getPrismaOutputArg}, so PRISMA_OUTPUT_PATH is
+// no longer kept here. PRISMA_GENERATED_DIR is still used by the Dockerfile
+// path (Group H will re-evaluate it for monorepo modes).
 const PRISMA_GENERATED_DIR = 'src/lib/db/.prisma';
 
 // Package version constants - centralized version management
@@ -122,6 +124,49 @@ export function getAppPath(config: ProjectConfig, projectPath: string): string {
   return config.architecture.monorepo === 'none'
     ? projectPath
     : path.join(projectPath, 'apps/web');
+}
+
+/**
+ * Returns true when database sources should be routed into `packages/db`.
+ * This mirrors the gate in {@link generateFullModePackages}: only `monorepo: 'full'`
+ * with a real ORM emits `packages/db`. For `orm: 'none'` (direct driver), even in
+ * full mode, sources fall back to the app directory.
+ */
+export function shouldRouteToDbPackage(config: ProjectConfig): boolean {
+  return config.architecture.monorepo === 'full' && config.architecture.orm !== 'none';
+}
+
+/**
+ * Resolves the base directory for database sources.
+ * - `full + orm`:           `<projectPath>/packages/db`
+ * - `minimal` / `none` / `full + orm:none`: app directory (via {@link getAppPath})
+ */
+export function getDbBaseDir(config: ProjectConfig, projectPath: string): string {
+  return shouldRouteToDbPackage(config)
+    ? path.join(projectPath, 'packages/db')
+    : getAppPath(config, projectPath);
+}
+
+/**
+ * Resolves the directory where db client/index/schema source files should land.
+ * - When routed to `packages/db`: `<base>/src` (the package's own source root)
+ * - Otherwise:                    `<base>/src/lib/db`
+ */
+export function getDbSrcDir(config: ProjectConfig, projectPath: string): string {
+  const base = getDbBaseDir(config, projectPath);
+  return shouldRouteToDbPackage(config) ? path.join(base, 'src') : path.join(base, 'src/lib/db');
+}
+
+/**
+ * Returns the value to pass to `prisma init --output`. The path is interpreted
+ * by Prisma as **relative to the schema file** (`<dbBase>/prisma/schema.prisma`),
+ * so the result must be a sibling of the `prisma/` directory.
+ *
+ * - `full + orm`:           `../src/.prisma`        (sits next to packages/db/prisma)
+ * - other modes:            `../src/lib/db/.prisma` (preserves legacy layout)
+ */
+export function getPrismaOutputArg(config: ProjectConfig): string {
+  return shouldRouteToDbPackage(config) ? '../src/.prisma' : '../src/lib/db/.prisma';
 }
 
 export function getShadcnRunner(packageManager: PackageManager): string {
@@ -720,7 +765,13 @@ class NextMCPServer {
       rootPkgRaw = JSON.stringify(parsed, null, 2) + '\n';
     } else {
       const parsed = JSON.parse(rootPkgRaw);
-      parsed.packageManager = 'pnpm@10';
+      // The `packageManager` field requires a fully pinned semver — Corepack
+      // rejects shorthand like `pnpm@10` ("Invalid package manager
+      // specification ... expected a semver version"). Pin to a known-good
+      // minor; pnpm 10.0.0 has a workspace regression that breaks `pnpm dlx`
+      // from inside a child workspace package, so we steer clear of the first
+      // 10.x release.
+      parsed.packageManager = 'pnpm@10.18.0';
       parsed.engines = { ...(parsed.engines || { node: '>=24' }), pnpm: '>=10' };
       rootPkgRaw = JSON.stringify(parsed, null, 2) + '\n';
     }
@@ -1819,22 +1870,26 @@ export const db = drizzle(pool, { schema });`;
     }
 
     try {
-      const dbDirs = ['src/lib/db'];
+      // Resolve where db assets should land based on monorepo mode + orm.
+      const dbBaseDir = getDbBaseDir(config, projectPath);
+      const dbSrcDir = getDbSrcDir(config, projectPath);
 
+      const dbDirs: string[] = [dbSrcDir];
       if (orm === 'drizzle') {
-        dbDirs.push('drizzle/migrations');
+        dbDirs.push(path.join(dbBaseDir, 'drizzle/migrations'));
       } else if (orm === 'mongoose') {
-        dbDirs.push('src/lib/db/models');
+        dbDirs.push(path.join(dbSrcDir, 'models'));
       }
 
       for (const dir of dbDirs) {
-        await fs.mkdir(path.join(projectPath, dir), { recursive: true });
+        await fs.mkdir(dir, { recursive: true });
       }
 
       const databaseUrl = this.getDatabaseUrl(config);
       const envEntry = `DATABASE_URL="${databaseUrl}"`;
 
-      // Update or add DATABASE_URL to both .env files
+      // .env* files always live at the workspace root (projectPath) — that is the
+      // project root in `none` mode and the monorepo root in `minimal`/`full` modes.
       const envFiles = ['.env', '.env.example', '.env.local'];
       for (const envFile of envFiles) {
         const envPath = path.join(projectPath, envFile);
@@ -1849,13 +1904,19 @@ export const db = drizzle(pool, { schema });`;
       }
 
       if (orm === 'prisma') {
-        await this.setupPrisma(config, projectPath);
+        await this.setupPrisma(config, projectPath, dbBaseDir, dbSrcDir);
       } else if (orm === 'drizzle') {
-        await this.setupDrizzle(config, projectPath);
+        await this.setupDrizzle(config, dbBaseDir, dbSrcDir);
       } else if (orm === 'mongoose') {
-        await this.setupMongoose(config, projectPath);
+        await this.setupMongoose(dbSrcDir);
       } else {
-        await this.setupDirectDriver(config, projectPath);
+        await this.setupDirectDriver(config, dbSrcDir);
+      }
+
+      // In `full` mode with packages/db routing, wire apps/web to depend on it
+      // and rewrite any pre-existing `@/lib/db` imports in apps/web sources.
+      if (shouldRouteToDbPackage(config)) {
+        await this.wireAppsWebToDbPackage(config, projectPath);
       }
 
       // Generate success message with instructions
@@ -1885,16 +1946,24 @@ export const db = drizzle(pool, { schema });`;
     }
   }
 
-  private async setupPrisma(config: ProjectConfig, projectPath: string) {
+  private async setupPrisma(
+    config: ProjectConfig,
+    projectPath: string,
+    dbBaseDir: string,
+    dbSrcDir: string
+  ): Promise<void> {
     const database = config.architecture.database;
     const packageRunner = config.architecture.skipInstall
       ? this.getPackageRunnerDlx(config.architecture.packageManager)
       : this.getPackageRunner(config.architecture.packageManager);
     const provider = this.getPrismaProvider(database);
+    const prismaOutputArg = getPrismaOutputArg(config);
 
-    if (!existsSync(path.join(projectPath, 'prisma', 'schema.prisma'))) {
-      const prismaInitCmd = `${packageRunner} prisma init --datasource-provider ${provider} --generator-provider prisma-client --output ${PRISMA_OUTPUT_PATH}`;
-      const result = this.execCommand(prismaInitCmd, projectPath, 'prisma init');
+    // `prisma init` writes `prisma/schema.prisma` relative to its cwd. To land
+    // schema files in the right place per monorepo mode, run it inside dbBaseDir.
+    if (!existsSync(path.join(dbBaseDir, 'prisma', 'schema.prisma'))) {
+      const prismaInitCmd = `${packageRunner} prisma init --datasource-provider ${provider} --generator-provider prisma-client --output ${prismaOutputArg}`;
+      const result = this.execCommand(prismaInitCmd, dbBaseDir, 'prisma init');
 
       if (!result.success) {
         throw new Error('[prisma init failed]: Check logs for details');
@@ -1903,8 +1972,8 @@ export const db = drizzle(pool, { schema });`;
       logger.info('[prisma init skipped]: Prisma schema already exists, skipping prisma init');
     }
 
-    // Modify prisma.config.ts if it exists
-    const prismaConfigPath = path.join(projectPath, 'prisma.config.ts');
+    // Modify prisma.config.ts if it exists (located alongside schema in dbBaseDir)
+    const prismaConfigPath = path.join(dbBaseDir, 'prisma.config.ts');
     if (existsSync(prismaConfigPath)) {
       const prismaConfigContent = await fs.readFile(prismaConfigPath, 'utf-8');
       const dotenvImport = `import dotenv from 'dotenv';\ndotenv.config();\n\n`;
@@ -1919,19 +1988,19 @@ export const db = drizzle(pool, { schema });`;
     // Copy client template
     const clientTemplatePath = path.join(__dirname, 'templates/database/prisma/client.ts.template');
     const clientTemplate = await fs.readFile(clientTemplatePath, 'utf-8');
-    const clientPath = path.join(projectPath, 'src/lib/db/client.ts');
+    const clientPath = path.join(dbSrcDir, 'client.ts');
     await fs.writeFile(clientPath, clientTemplate);
 
     // Copy index template
     const indexTemplatePath = path.join(__dirname, 'templates/database/prisma/index.ts.template');
     const indexTemplate = await fs.readFile(indexTemplatePath, 'utf-8');
-    const indexPath = path.join(projectPath, 'src/lib/db/index.ts');
+    const indexPath = path.join(dbSrcDir, 'index.ts');
     await fs.writeFile(indexPath, indexTemplate);
 
     // Run prisma generate to create the Prisma client if not skipped
     if (!config.architecture.skipInstall) {
       const prismaGenerateCmd = `${packageRunner} prisma generate`;
-      const result = this.execCommand(prismaGenerateCmd, projectPath, 'prisma generate');
+      const result = this.execCommand(prismaGenerateCmd, dbBaseDir, 'prisma generate');
 
       if (!result.success) {
         throw new Error('[prisma generate failed]: Check logs for details');
@@ -1939,7 +2008,11 @@ export const db = drizzle(pool, { schema });`;
     }
   }
 
-  private async setupDrizzle(config: ProjectConfig, projectPath: string) {
+  private async setupDrizzle(
+    config: ProjectConfig,
+    dbBaseDir: string,
+    dbSrcDir: string
+  ): Promise<void> {
     const database = config.architecture.database;
 
     // Read and process drizzle config template
@@ -1950,7 +2023,7 @@ export const db = drizzle(pool, { schema });`;
       .replace(/__DIALECT__/g, this.getDrizzleDialect(database))
       .replace(/__DB_CREDENTIALS__/g, this.getDrizzleCredentials(database));
 
-    const configPath = path.join(projectPath, 'drizzle.config.ts');
+    const configPath = path.join(dbBaseDir, 'drizzle.config.ts');
     await fs.writeFile(configPath, configTemplate);
 
     // Read and process schema template
@@ -1959,7 +2032,7 @@ export const db = drizzle(pool, { schema });`;
 
     schemaTemplate = this.generateDrizzleSchemaImports(database, schemaTemplate);
 
-    const schemaPath = path.join(projectPath, 'src/lib/db/schema.ts');
+    const schemaPath = path.join(dbSrcDir, 'schema.ts');
     await fs.writeFile(schemaPath, schemaTemplate);
 
     // Read and process client template
@@ -1968,27 +2041,27 @@ export const db = drizzle(pool, { schema });`;
 
     clientTemplate = this.generateDrizzleClient(database, clientTemplate);
 
-    const clientPath = path.join(projectPath, 'src/lib/db/client.ts');
+    const clientPath = path.join(dbSrcDir, 'client.ts');
     await fs.writeFile(clientPath, clientTemplate);
 
     // Copy index template
     const indexTemplatePath = path.join(__dirname, 'templates/database/drizzle/index.ts.template');
     const indexTemplate = await fs.readFile(indexTemplatePath, 'utf-8');
 
-    const indexPath = path.join(projectPath, 'src/lib/db/index.ts');
+    const indexPath = path.join(dbSrcDir, 'index.ts');
     await fs.writeFile(indexPath, indexTemplate);
   }
 
-  private async setupMongoose(_config: ProjectConfig, projectPath: string) {
+  private async setupMongoose(dbSrcDir: string): Promise<void> {
     // Copy connection template
     const connectionTemplatePath = path.join(__dirname, 'templates/database/mongoose/connection.ts.template');
     const connectionTemplate = await fs.readFile(connectionTemplatePath, 'utf-8');
 
-    const connectionPath = path.join(projectPath, 'src/lib/db/connection.ts');
+    const connectionPath = path.join(dbSrcDir, 'connection.ts');
     await fs.writeFile(connectionPath, connectionTemplate);
 
     // Create models directory with .gitkeep
-    const modelsDir = path.join(projectPath, 'src/lib/db/models');
+    const modelsDir = path.join(dbSrcDir, 'models');
     await fs.mkdir(modelsDir, { recursive: true });
     await fs.writeFile(path.join(modelsDir, '.gitkeep'), '');
 
@@ -1996,11 +2069,11 @@ export const db = drizzle(pool, { schema });`;
     const indexTemplatePath = path.join(__dirname, 'templates/database/mongoose/index.ts.template');
     const indexTemplate = await fs.readFile(indexTemplatePath, 'utf-8');
 
-    const indexPath = path.join(projectPath, 'src/lib/db/index.ts');
+    const indexPath = path.join(dbSrcDir, 'index.ts');
     await fs.writeFile(indexPath, indexTemplate);
   }
 
-  private async setupDirectDriver(config: ProjectConfig, projectPath: string) {
+  private async setupDirectDriver(config: ProjectConfig, dbSrcDir: string): Promise<void> {
     const database = config.architecture.database;
 
     // Determine which template to use
@@ -2021,8 +2094,92 @@ export const db = drizzle(pool, { schema });`;
     const templatePath = path.join(__dirname, `templates/database/direct/${templateName}`);
     const template = await fs.readFile(templatePath, 'utf-8');
 
-    const dbPath = path.join(projectPath, 'src/lib/db/index.ts');
+    const dbPath = path.join(dbSrcDir, 'index.ts');
     await fs.writeFile(dbPath, template);
+  }
+
+  /**
+   * Wire `apps/web` to consume the `packages/db` workspace package after the
+   * db sources have been routed there. Two effects:
+   *
+   *  1. Ensure `apps/web/package.json` lists `@<projectName>/db: workspace:*` under
+   *     `dependencies`. We pull the package name straight from the scaffolded
+   *     `packages/db/package.json` rather than recomputing — that guards against
+   *     drift if a future template changes the convention.
+   *  2. Rewrite any `apps/web` source file that imports from `@/lib/db` (or a
+   *     subpath like `@/lib/db/types`) to import from `@<projectName>/db` instead.
+   *     Today, no callers of `setup_database` will have produced such imports
+   *     yet — but `setup_authentication` and user code may, and this contract
+   *     keeps the rewrite idempotent for those paths.
+   *
+   * Walk is scoped to `apps/web/src` and `apps/web/app` (if present). We do not
+   * descend into `node_modules`, `.next`, `.prisma`, or `public`.
+   */
+  private async wireAppsWebToDbPackage(config: ProjectConfig, projectPath: string): Promise<void> {
+    const appPath = path.join(projectPath, 'apps/web');
+    const dbPkgJsonPath = path.join(projectPath, 'packages/db/package.json');
+
+    // 1. Resolve db package name (fallback to convention if package.json is missing
+    //    for any reason — shouldn't happen because Group D scaffolds it first).
+    let dbPkgName = `@${config.name}/db`;
+    if (existsSync(dbPkgJsonPath)) {
+      const dbPkg = JSON.parse(await fs.readFile(dbPkgJsonPath, 'utf-8'));
+      if (typeof dbPkg.name === 'string' && dbPkg.name.length > 0) {
+        dbPkgName = dbPkg.name;
+      }
+    }
+
+    // 2. Add workspace dep to apps/web/package.json
+    const appPkgPath = path.join(appPath, 'package.json');
+    if (existsSync(appPkgPath)) {
+      const appPkg = JSON.parse(await fs.readFile(appPkgPath, 'utf-8'));
+      appPkg.dependencies = appPkg.dependencies || {};
+      if (appPkg.dependencies[dbPkgName] !== 'workspace:*') {
+        appPkg.dependencies[dbPkgName] = 'workspace:*';
+        await fs.writeFile(appPkgPath, JSON.stringify(appPkg, null, 2) + '\n');
+        logger.info(`Added ${dbPkgName}: workspace:* to apps/web/package.json`);
+      }
+    }
+
+    // 3. Rewrite `@/lib/db` imports inside apps/web sources.
+    for (const sub of ['src', 'app']) {
+      const root = path.join(appPath, sub);
+      if (existsSync(root)) {
+        await this.rewriteDbImportsInTree(root, dbPkgName);
+      }
+    }
+  }
+
+  /**
+   * Recursively visit `.ts` / `.tsx` files under `root` and replace any import
+   * specifier of the form `@/lib/db` or `@/lib/db/<sub>` with `<dbPkgName>` /
+   * `<dbPkgName>/<sub>`. Idempotent: a file with no matches is left untouched.
+   */
+  private async rewriteDbImportsInTree(root: string, dbPkgName: string): Promise<void> {
+    const skipDirs = new Set(['node_modules', '.next', '.prisma', '.turbo', 'dist', 'public']);
+    const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const fullPath = path.join(root, entry.name);
+      if (entry.isDirectory()) {
+        if (skipDirs.has(entry.name)) continue;
+        await this.rewriteDbImportsInTree(fullPath, dbPkgName);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+
+      const content = await fs.readFile(fullPath, 'utf-8');
+      // Match both `@/lib/db` exact and `@/lib/db/<anything>` subpaths inside
+      // single- or double-quoted module specifiers.
+      const updated = content.replace(
+        /(['"])@\/lib\/db(\/[^'"]*)?\1/g,
+        (_match, quote: string, sub: string | undefined) => `${quote}${dbPkgName}${sub ?? ''}${quote}`
+      );
+      if (updated !== content) {
+        await fs.writeFile(fullPath, updated);
+        logger.info(`Rewrote @/lib/db imports in ${path.relative(root, fullPath)}`);
+      }
+    }
   }
 
   private generateDatabaseInstructions(config: ProjectConfig): string {
