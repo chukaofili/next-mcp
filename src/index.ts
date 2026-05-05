@@ -118,6 +118,26 @@ export const CATALOG_VERSIONS: Record<string, string> = {
   '@better-auth/api-key': '^1',
 };
 
+export function getAppPath(config: ProjectConfig, projectPath: string): string {
+  return config.architecture.monorepo === 'none'
+    ? projectPath
+    : path.join(projectPath, 'apps/web');
+}
+
+export function getShadcnRunner(packageManager: string): string {
+  switch (packageManager) {
+    case 'pnpm':
+      return 'pnpm dlx';
+    case 'yarn':
+      return 'yarn dlx';
+    case 'bun':
+      return 'bunx --bun';
+    case 'npm':
+    default:
+      return 'npx';
+  }
+}
+
 // Zod schema for ProjectConfig with validation and defaults
 export const ProjectConfigSchema = z
   .object({

@@ -3,6 +3,8 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { getAppPath, getShadcnRunner } from '../../src/index.js';
+import type { ProjectConfig } from '../../src/index.js';
 import {
   cleanupTempDir,
   createPackageJson,
@@ -141,5 +143,31 @@ describe('Test Utilities', () => {
     it('should not throw on non-existent directory', async () => {
       await expect(cleanupTempDir('/nonexistent/path')).resolves.not.toThrow();
     });
+  });
+});
+
+describe('getAppPath', () => {
+  it('returns projectPath when monorepo:none', () => {
+    const cfg = { architecture: { monorepo: 'none' } } as ProjectConfig;
+    expect(getAppPath(cfg, '/p')).toBe('/p');
+  });
+  it('returns apps/web when monorepo:minimal', () => {
+    const cfg = { architecture: { monorepo: 'minimal' } } as ProjectConfig;
+    expect(getAppPath(cfg, '/p')).toBe('/p/apps/web');
+  });
+  it('returns apps/web when monorepo:full', () => {
+    const cfg = { architecture: { monorepo: 'full' } } as ProjectConfig;
+    expect(getAppPath(cfg, '/p')).toBe('/p/apps/web');
+  });
+});
+
+describe('getShadcnRunner', () => {
+  it.each([
+    ['pnpm', 'pnpm dlx'],
+    ['npm', 'npx'],
+    ['yarn', 'yarn dlx'],
+    ['bun', 'bunx --bun'],
+  ])('%s -> %s', (pm, expected) => {
+    expect(getShadcnRunner(pm)).toBe(expected);
   });
 });
