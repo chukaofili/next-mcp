@@ -138,6 +138,33 @@ export function getShadcnRunner(packageManager: string): string {
   }
 }
 
+export function substituteProjectName(content: string, projectName: string): string {
+  return content.replaceAll('<projectName>', projectName).replaceAll('__PROJECT_NAME__', projectName);
+}
+
+export function substituteCatalog(
+  packageJsonContent: string,
+  packageManager: string,
+  catalog: Record<string, string>
+): string {
+  if (packageManager === 'pnpm') return packageJsonContent;
+
+  const pkg = JSON.parse(packageJsonContent);
+  for (const section of ['dependencies', 'devDependencies', 'peerDependencies'] as const) {
+    const deps = pkg[section];
+    if (!deps) continue;
+    for (const [name, version] of Object.entries(deps)) {
+      if (version === 'catalog:') {
+        if (!(name in catalog)) {
+          throw new Error(`No CATALOG_VERSIONS entry for "${name}" (in ${section})`);
+        }
+        deps[name] = catalog[name];
+      }
+    }
+  }
+  return JSON.stringify(pkg, null, 2) + '\n';
+}
+
 // Zod schema for ProjectConfig with validation and defaults
 export const ProjectConfigSchema = z
   .object({

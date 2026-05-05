@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { getAppPath, getShadcnRunner } from '../../src/index.js';
+import { getAppPath, getShadcnRunner, substituteCatalog, substituteProjectName } from '../../src/index.js';
 import type { ProjectConfig } from '../../src/index.js';
 import {
   cleanupTempDir,
@@ -169,5 +169,48 @@ describe('getShadcnRunner', () => {
     ['bun', 'bunx --bun'],
   ])('%s -> %s', (pm, expected) => {
     expect(getShadcnRunner(pm)).toBe(expected);
+  });
+});
+
+describe('substituteProjectName', () => {
+  it('replaces <projectName> placeholder', () => {
+    expect(substituteProjectName('@<projectName>/web', 'my-app')).toBe('@my-app/web');
+  });
+  it('replaces __PROJECT_NAME__ placeholder', () => {
+    expect(substituteProjectName('@__PROJECT_NAME__/web', 'my-app')).toBe('@my-app/web');
+  });
+});
+
+describe('substituteCatalog', () => {
+  const catalog = { typescript: '^6', '@types/node': '^25' };
+
+  it('passes through for pnpm', () => {
+    const json = '{"devDependencies":{"typescript":"catalog:"}}';
+    expect(substituteCatalog(json, 'pnpm', catalog)).toBe(json);
+  });
+
+  it('substitutes literal versions for npm', () => {
+    const json = '{"devDependencies":{"typescript":"catalog:","@types/node":"catalog:"}}';
+    const result = JSON.parse(substituteCatalog(json, 'npm', catalog));
+    expect(result.devDependencies.typescript).toBe('^6');
+    expect(result.devDependencies['@types/node']).toBe('^25');
+  });
+
+  it('substitutes for yarn and bun', () => {
+    const json = '{"dependencies":{"typescript":"catalog:"}}';
+    expect(JSON.parse(substituteCatalog(json, 'yarn', catalog)).dependencies.typescript).toBe('^6');
+    expect(JSON.parse(substituteCatalog(json, 'bun', catalog)).dependencies.typescript).toBe('^6');
+  });
+
+  it('throws on unknown catalog entry for non-pnpm', () => {
+    const json = '{"dependencies":{"unknown-dep":"catalog:"}}';
+    expect(() => substituteCatalog(json, 'npm', catalog)).toThrow(/unknown-dep/);
+  });
+
+  it('leaves non-catalog versions untouched', () => {
+    const json = '{"dependencies":{"react":"^19","typescript":"catalog:"}}';
+    const out = JSON.parse(substituteCatalog(json, 'npm', catalog));
+    expect(out.dependencies.react).toBe('^19');
+    expect(out.dependencies.typescript).toBe('^6');
   });
 });
