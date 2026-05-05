@@ -233,4 +233,43 @@ describe('scaffold_project tool — monorepo:full', () => {
     const uiPkg = JSON.parse(await fs.readFile(path.join(uiDir, 'package.json'), 'utf-8'));
     expect(uiPkg.name).toBe(`@${projectName}/ui`);
   }, 120000);
+
+  it('full mode + orpc generates packages/orpc with router and middleware', async () => {
+    const projectName = 'full-orpc';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'none',
+        orm: 'none',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        rpc: 'orpc',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const projectPath = path.join(tempDir, projectName);
+    const orpcDir = path.join(projectPath, 'packages', 'orpc');
+
+    expect(await fileExists(path.join(orpcDir, 'package.json'))).toBe(true);
+
+    const routerPath = path.join(orpcDir, 'src', 'router.ts');
+    expect(await fileExists(routerPath)).toBe(true);
+    const routerContent = await fs.readFile(routerPath, 'utf-8');
+    expect(routerContent).toContain('AppRouter');
+
+    expect(await fileExists(path.join(orpcDir, 'src', 'middleware', 'auth.ts'))).toBe(true);
+    expect(await fileExists(path.join(orpcDir, 'src', 'procedures', 'health', 'router.ts'))).toBe(
+      true
+    );
+  }, 120000);
 });
