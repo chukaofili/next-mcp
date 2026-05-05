@@ -322,6 +322,12 @@ export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
 export type PackageManager = NonNullable<ProjectConfig['architecture']['packageManager']>;
 
+const ORM_PACKAGE_SUBDIR: Partial<Record<NonNullable<ProjectConfig['architecture']['orm']>, string>> = {
+  prisma: 'db/prisma',
+  drizzle: 'db/drizzle',
+  mongoose: 'db/mongoose',
+};
+
 const inputSchemaJson = z.toJSONSchema(
   z.object({
     config: ProjectConfigSchema,
@@ -760,9 +766,7 @@ class NextMCPServer {
       }
 
       let content = await fs.readFile(srcPath, 'utf-8');
-      if (entry.name.endsWith('.template')) {
-        content = substituteProjectName(content, projectName);
-      }
+      content = substituteProjectName(content, projectName);
 
       // Catalog substitution applies only to actual package.json files.
       if (destName === 'package.json') {
@@ -827,14 +831,14 @@ class NextMCPServer {
     const { database, orm, auth, uiLibrary, rpc } = config.architecture;
 
     // db (D3)
-    if (database !== 'none') {
-      const ormSubdir =
-        orm === 'drizzle' ? 'db/drizzle' : orm === 'mongoose' ? 'db/mongoose' : 'db/prisma';
-      await this.copyPackageTemplate(config, projectPath, 'db', ormSubdir);
+    if (database !== 'none' && orm !== 'none') {
+      const subdir = ORM_PACKAGE_SUBDIR[orm];
+      if (!subdir) throw new Error(`No packages/db template subdir for orm: ${orm}`);
+      await this.copyPackageTemplate(config, projectPath, 'db', subdir);
     }
 
     // auth (D4)
-    if (auth === 'better-auth') {
+    if (auth === 'better-auth' && database !== 'none') {
       await this.copyPackageTemplate(config, projectPath, 'auth');
     }
 

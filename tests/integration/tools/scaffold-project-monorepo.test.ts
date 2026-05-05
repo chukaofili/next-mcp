@@ -175,8 +175,8 @@ describe('scaffold_project tool — monorepo:full', () => {
       name: projectName,
       architecture: {
         monorepo: 'full',
-        database: 'none',
-        orm: 'none',
+        database: 'postgres',
+        orm: 'prisma',
         auth: 'better-auth',
         uiLibrary: 'none',
         testing: 'none',
@@ -271,5 +271,61 @@ describe('scaffold_project tool — monorepo:full', () => {
     expect(await fileExists(path.join(orpcDir, 'src', 'procedures', 'health', 'router.ts'))).toBe(
       true
     );
+  }, 120000);
+
+  it('full mode + database:postgres + orm:none does NOT emit packages/db', async () => {
+    const projectName = 'full-db-no-orm';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'postgres',
+        orm: 'none',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const projectPath = path.join(tempDir, projectName);
+    const dbDir = path.join(projectPath, 'packages', 'db');
+
+    expect(await fileExists(dbDir)).toBe(false);
+  }, 120000);
+
+  it('full mode + auth:better-auth + database:none does NOT emit packages/auth', async () => {
+    const projectName = 'full-auth-no-db';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'none',
+        orm: 'none',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const projectPath = path.join(tempDir, projectName);
+    const authDir = path.join(projectPath, 'packages', 'auth');
+
+    expect(await fileExists(authDir)).toBe(false);
   }, 120000);
 });
