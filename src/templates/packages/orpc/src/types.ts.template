@@ -1,0 +1,37 @@
+/**
+ * oRPC Context Definition
+ *
+ * Framework-agnostic context type. The actual context is created by
+ * the consuming app (e.g., App, Builder, etc) and injected at request time.
+ */
+
+/** The authenticated user session. Populated by `resolveAuth` via middleware. */
+export type ORPCContextSession = {
+  user: {
+    id: string;
+    [key: string]: unknown;
+  };
+  session: {
+    activeOrganizationId?: string | null;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+} | null;
+
+export type ORPCContextResolvedAuth = {
+  session: ORPCContextSession;
+};
+
+export interface ORPCContext {
+  /** The type of request (e.g., 'rpc' or 'api') */
+  type: 'rpc' | 'api';
+
+  /**
+   * Lazily resolve authentication for API routes.
+   * Called by `requiredAuthMiddleware` so unauthenticated routes (e.g. OpenAPI docs) skip the cost.
+   * Injected by the consuming app — typically wraps `auth.api.verifyApiKey` + `getSession`.
+   */
+  resolveAuth: () => Promise<ORPCContextResolvedAuth>;
+}
+
+export type { AppRouter } from './router.js';

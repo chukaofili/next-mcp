@@ -1,0 +1,67 @@
+FROM node:24-alpine AS base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+
+# Install dependencies only when needed
+FROM base AS deps
+ARG PACKAGE="@__PROJECT_NAME__/web"
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY . .
+RUN pnpm dlx turbo@^2 prune $PACKAGE --docker
+
+# Build the application from the pruned subgraph
+FROM base AS builder
+ARG PACKAGE="@__PROJECT_NAME__/web"
+ARG PACKAGE_PATH="apps/web"
+ARG BUILD_ENV
+ARG TURBO_TEAM
+ARG TURBO_TOKEN
+RUN apk add --no-cache libc6-compat
+ENV BUILD_ENV=${BUILD_ENV:-production}
+ENV TURBO_TEAM=$TURBO_TEAM
+ENV TURBO_TOKEN=$TURBO_TOKEN
+ENV CI=true
+WORKDIR /app
+
+# First install the dependencies (as they change less often)
+COPY --from=deps /app/out/json/ .
+COPY --from=deps /app/out/pnpm-lock.yaml ./pnpm-lock.yaml
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+
+COPY --from=deps /app/out/full/ .
+
+# Copy any .env* files (requires at least one, e.g. .env.example, in $PACKAGE_PATH).
+# Rename .env.${BUILD_ENV} to .env.production so Next.js bakes the right values into the build.
+COPY $PACKAGE_PATH/.env* ./$PACKAGE_PATH/
+RUN if [ -f ./$PACKAGE_PATH/.env.${BUILD_ENV} ]; then \
+      cp ./$PACKAGE_PATH/.env.${BUILD_ENV} ./$PACKAGE_PATH/.env.production; \
+    fi
+
+RUN pnpm turbo build --filter=$PACKAGE...
+
+# Production image
+FROM base AS runner
+ARG PACKAGE_PATH="apps/web"
+ENV PACKAGE_PATH=$PACKAGE_PATH
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+WORKDIR /app
+
+# Don't run production as root
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+USER nextjs
+
+# Standalone output is self-contained; runtime tree only.
+COPY --from=builder --chown=nextjs:nodejs /app/$PACKAGE_PATH/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/$PACKAGE_PATH/.next/static ./$PACKAGE_PATH/.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/$PACKAGE_PATH/public ./$PACKAGE_PATH/public
+
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["sh", "-c", "node ${PACKAGE_PATH}/server.js"]

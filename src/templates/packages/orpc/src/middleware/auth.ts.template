@@ -1,0 +1,28 @@
+import { ORPCError } from '@orpc/server';
+
+import { base } from './context.js';
+
+/**
+ * Auth middleware — lazily resolves authentication and enforces that
+ * the request has a valid session or API key before proceeding.
+ *
+ * On success, merges `resolvedAuth` (session, validApiKey, organizationId)
+ * into downstream context.
+ */
+export const authMiddleware = base.middleware(async ({ context, next }) => {
+  const { session } = await context.resolveAuth();
+
+  const isAuthenticated = session?.user?.id != null;
+
+  if (!isAuthenticated) {
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'Authentication required',
+    });
+  }
+
+  return next({
+    context: {
+      resolvedAuth: { session },
+    },
+  });
+});

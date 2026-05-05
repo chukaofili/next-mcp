@@ -1,0 +1,17 @@
+{
+  "extends": "@<projectName>/typescript-config/base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "noUncheckedIndexedAccess": false
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "**/*.test.ts",
+    "node_modules",
+    "dist",
+    "coverage"
+  ]
+}
