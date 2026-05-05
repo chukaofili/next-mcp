@@ -11,7 +11,7 @@ const config = {
   printWidth: 120,
   plugins: ['@ianvs/prettier-plugin-sort-imports'],
   importOrderParserPlugins: ['typescript'],
-  importOrderTypeScriptVersion: '5.9.3',
+  importOrderTypeScriptVersion: '6.0.3',
   importOrder: [
     '^node:$',
     '',
