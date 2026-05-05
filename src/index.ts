@@ -576,12 +576,24 @@ class NextMCPServer {
   private async scaffoldProject(config: ProjectConfig, targetPath: string) {
     try {
       const projectPath = path.join(targetPath, config.name!);
+      const isMonorepo = config.architecture.monorepo !== 'none';
+      const appPath = getAppPath(config, projectPath);
 
       // Build create-next-app command based on configuration
-      const createCommand = this.buildCreateNextAppCommand(config);
+      // For monorepo, create-next-app produces <projectPath>/apps/web; for flat,
+      // it produces <projectPath>/<projectName>.
+      const createCommand = isMonorepo
+        ? this.buildCreateNextAppCommand(config, './web')
+        : this.buildCreateNextAppCommand(config);
+
+      // For monorepo, ensure apps/ exists before running create-next-app there.
+      const createCwd = isMonorepo ? path.join(projectPath, 'apps') : targetPath;
+      if (isMonorepo) {
+        await fs.mkdir(createCwd, { recursive: true });
+      }
 
       // Run create-next-app
-      const result = this.execCommand(createCommand, targetPath, 'create-next-app');
+      const result = this.execCommand(createCommand, createCwd, 'create-next-app');
       if (!result.success) {
         throw new Error('[create-next-app failed]: Check logs for details');
       }
@@ -589,11 +601,18 @@ class NextMCPServer {
       const stdout = result.output || '';
       logger.info(`create-next-app completed successfully: ${stdout}`);
 
-      // Verify the project was created
-      await fs.access(projectPath);
+      // Verify the app directory was created
+      await fs.access(appPath);
 
-      // Post-process .gitignore to exclude .env.ci from being ignored
-      await this.updateGitignore(projectPath);
+      if (isMonorepo) {
+        await this.renameAppPackage(appPath, config.name!);
+        await this.forceStandaloneOutput(appPath);
+        await this.ensureEnvExample(appPath);
+        await this.scaffoldMonorepoRoot(config, projectPath);
+      }
+
+      // Post-process .gitignore to exclude .env.ci from being ignored (per-app)
+      await this.updateGitignore(appPath);
 
       await this.createDirectoryStructure(config, projectPath);
       await this.updatePackageJson(config, projectPath);
@@ -643,9 +662,104 @@ class NextMCPServer {
     }
   }
 
-  private buildCreateNextAppCommand(config: ProjectConfig): string {
+  private async renameAppPackage(appPath: string, projectName: string): Promise<void> {
+    const pkgPath = path.join(appPath, 'package.json');
+    const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
+    pkg.name = `@${projectName}/web`;
+    await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+  }
+
+  private async forceStandaloneOutput(appPath: string): Promise<void> {
+    // create-next-app produces next.config.ts (or .js/.mjs) at the app root.
+    const candidates = ['next.config.ts', 'next.config.mjs', 'next.config.js'];
+    for (const c of candidates) {
+      const p = path.join(appPath, c);
+      try {
+        let content = await fs.readFile(p, 'utf-8');
+        if (/output:\s*['"]standalone['"]/.test(content)) return;
+        // Inject `output: 'standalone'` into the existing config object.
+        // Heuristic: find the first config object literal and prepend the field.
+        content = content.replace(
+          /(const\s+nextConfig\s*[:=][^=]*?=\s*\{|export\s+default\s+\{)/m,
+          (m) => `${m}\n  output: 'standalone',`
+        );
+        await fs.writeFile(p, content);
+        return;
+      } catch {
+        // try next candidate
+      }
+    }
+    // If no next.config.* found, write a minimal one in TS.
+    await fs.writeFile(
+      path.join(appPath, 'next.config.ts'),
+      `import type { NextConfig } from 'next';\n\nconst nextConfig: NextConfig = {\n  output: 'standalone',\n};\n\nexport default nextConfig;\n`
+    );
+  }
+
+  private async ensureEnvExample(appPath: string): Promise<void> {
+    const p = path.join(appPath, '.env.example');
+    try {
+      await fs.access(p);
+      return; // already exists
+    } catch {
+      await fs.writeFile(p, '# Example environment variables — copy to .env.local and fill in.\n');
+    }
+  }
+
+  private async scaffoldMonorepoRoot(config: ProjectConfig, projectPath: string): Promise<void> {
+    const projectName = config.name!;
+    const description = config.description || '';
+    const pm = config.architecture.packageManager;
+
+    const templatesDir = path.join(__dirname, 'templates');
+
+    // 1. Root package.json
+    const pkgTpl = await fs.readFile(path.join(templatesDir, 'package.json.template'), 'utf-8');
+    let rootPkgRaw = pkgTpl
+      .replaceAll('<projectName>', projectName)
+      .replaceAll('<description>', description);
+
+    // For non-pnpm, substitute catalog: references (pnpm uses pnpm-workspace.yaml catalog).
+    rootPkgRaw = substituteCatalog(rootPkgRaw, pm, CATALOG_VERSIONS);
+
+    if (pm !== 'pnpm') {
+      const parsed = JSON.parse(rootPkgRaw);
+      parsed.workspaces = ['apps/*', 'packages/*'];
+      rootPkgRaw = JSON.stringify(parsed, null, 2) + '\n';
+    } else {
+      const parsed = JSON.parse(rootPkgRaw);
+      parsed.packageManager = 'pnpm@10';
+      parsed.engines = { ...(parsed.engines || { node: '>=24' }), pnpm: '>=10' };
+      rootPkgRaw = JSON.stringify(parsed, null, 2) + '\n';
+    }
+
+    await fs.writeFile(path.join(projectPath, 'package.json'), rootPkgRaw);
+
+    // 2. tsconfig.json
+    const tsTpl = await fs.readFile(path.join(templatesDir, 'tsconfig.json.template'), 'utf-8');
+    await fs.writeFile(path.join(projectPath, 'tsconfig.json'), tsTpl);
+
+    // 3. turbo.json
+    const turboTpl = await fs.readFile(path.join(templatesDir, 'turbo.json.template'), 'utf-8');
+    await fs.writeFile(path.join(projectPath, 'turbo.json'), turboTpl);
+
+    // 4. .gitignore at workspace root
+    const giTpl = await fs.readFile(path.join(templatesDir, '.gitignore.template'), 'utf-8');
+    await fs.writeFile(path.join(projectPath, '.gitignore'), giTpl);
+
+    // 5. pnpm-workspace.yaml — only for pnpm
+    if (pm === 'pnpm') {
+      const workspaceTpl = await fs.readFile(
+        path.join(templatesDir, 'pnpm-workspace.yaml.template'),
+        'utf-8'
+      );
+      await fs.writeFile(path.join(projectPath, 'pnpm-workspace.yaml'), workspaceTpl);
+    }
+  }
+
+  private buildCreateNextAppCommand(config: ProjectConfig, appDirName = `./${config.name}`): string {
     const packageRunner = this.getPackageRunnerDlx(config.architecture.packageManager);
-    const flags = [`${packageRunner} ${CREATE_NEXT_APP_VERSION}`, `./${config.name}`];
+    const flags = [`${packageRunner} ${CREATE_NEXT_APP_VERSION}`, appDirName];
     logger.info(`Building create-next-app command for config: ${JSON.stringify(config)}`);
 
     if (config.architecture.typescript) {
