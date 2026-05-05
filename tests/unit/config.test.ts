@@ -245,3 +245,29 @@ describe('ProjectConfigSchema Zod Validation', () => {
     expect(() => ProjectConfigSchema.parse(invalidConfig)).toThrow(ZodError);
   });
 });
+
+describe('ProjectConfigSchema — monorepo & rpc', () => {
+  it('defaults monorepo to "none" and rpc to "none"', () => {
+    const c = ProjectConfigSchema.parse({ name: 'x', architecture: {} });
+    expect(c.architecture.monorepo).toBe('none');
+    expect(c.architecture.rpc).toBe('none');
+  });
+
+  it('accepts valid combinations', () => {
+    expect(() =>
+      ProjectConfigSchema.parse({
+        name: 'x',
+        architecture: { monorepo: 'full', rpc: 'orpc' },
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects rpc:orpc without monorepo:full', () => {
+    expect(() =>
+      ProjectConfigSchema.parse({
+        name: 'x',
+        architecture: { monorepo: 'minimal', rpc: 'orpc' },
+      })
+    ).toThrow(/rpc.*orpc.*monorepo.*full/i);
+  });
+});

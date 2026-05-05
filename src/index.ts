@@ -110,55 +110,68 @@ const PACKAGE_VERSIONS = {
 } as const;
 
 // Zod schema for ProjectConfig with validation and defaults
-export const ProjectConfigSchema = z.object({
-  name: z.string().optional().describe('Project name. If not provided, a unique name will be generated automatically.'),
-  description: z.string().optional().describe('Project description. Used in package.json and documentation.'),
-  architecture: z
-    .object({
-      typescript: z
-        .boolean()
-        .default(true)
-        .describe('Enable TypeScript. Configures the project with TypeScript support.'),
-      reactCompiler: z
-        .boolean()
-        .default(false)
-        .describe('Enable React Compiler. Experimental React compiler for automatic optimization.'),
-      skipInstall: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe('Skip npm/pnpm install during setup. Useful for CI/CD or manual dependency management.'),
-      packageManager: z
-        .enum(['npm', 'pnpm', 'yarn', 'bun'])
-        .default('pnpm')
-        .describe('Package manager to use. Determines which commands are used for installing dependencies.'),
-      database: z
-        .enum(['none', 'postgres', 'mysql', 'mongodb', 'sqlite'])
-        .default('postgres')
-        .describe('Database system. Configures the appropriate database driver and connection.'),
-      orm: z
-        .enum(['none', 'prisma', 'drizzle', 'mongoose'])
-        .default('prisma')
-        .describe('ORM/database toolkit. Sets up the chosen ORM with appropriate configurations.'),
-      auth: z
-        .enum(['none', 'better-auth'])
-        .default('better-auth')
-        .describe('Authentication system. Configures authentication with the selected provider.'),
-      uiLibrary: z
-        .enum(['none', 'shadcn'])
-        .default('shadcn')
-        .describe('UI component library. Installs and configures the selected UI library.'),
-      stateManagement: z
-        .enum(['none', 'zustand', 'redux'])
-        .default('none')
-        .describe('State management solution. Sets up global state management with the chosen library.'),
-      testing: z
-        .enum(['none', 'jest', 'vitest', 'playwright'])
-        .default('none')
-        .describe('Testing framework. Configures unit/integration testing or E2E testing setup.'),
-    })
-    .describe('Project architecture configuration. Defines the technology stack and features.'),
-});
+export const ProjectConfigSchema = z
+  .object({
+    name: z.string().optional().describe('Project name. If not provided, a unique name will be generated automatically.'),
+    description: z.string().optional().describe('Project description. Used in package.json and documentation.'),
+    architecture: z
+      .object({
+        typescript: z
+          .boolean()
+          .default(true)
+          .describe('Enable TypeScript. Configures the project with TypeScript support.'),
+        reactCompiler: z
+          .boolean()
+          .default(false)
+          .describe('Enable React Compiler. Experimental React compiler for automatic optimization.'),
+        skipInstall: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe('Skip npm/pnpm install during setup. Useful for CI/CD or manual dependency management.'),
+        packageManager: z
+          .enum(['npm', 'pnpm', 'yarn', 'bun'])
+          .default('pnpm')
+          .describe('Package manager to use. Determines which commands are used for installing dependencies.'),
+        database: z
+          .enum(['none', 'postgres', 'mysql', 'mongodb', 'sqlite'])
+          .default('postgres')
+          .describe('Database system. Configures the appropriate database driver and connection.'),
+        orm: z
+          .enum(['none', 'prisma', 'drizzle', 'mongoose'])
+          .default('prisma')
+          .describe('ORM/database toolkit. Sets up the chosen ORM with appropriate configurations.'),
+        auth: z
+          .enum(['none', 'better-auth'])
+          .default('better-auth')
+          .describe('Authentication system. Configures authentication with the selected provider.'),
+        uiLibrary: z
+          .enum(['none', 'shadcn'])
+          .default('shadcn')
+          .describe('UI component library. Installs and configures the selected UI library.'),
+        stateManagement: z
+          .enum(['none', 'zustand', 'redux'])
+          .default('none')
+          .describe('State management solution. Sets up global state management with the chosen library.'),
+        testing: z
+          .enum(['none', 'jest', 'vitest', 'playwright'])
+          .default('none')
+          .describe('Testing framework. Configures unit/integration testing or E2E testing setup.'),
+        monorepo: z
+          .enum(['none', 'minimal', 'full'])
+          .default('none')
+          .describe('Monorepo layout. `none` = flat project. `minimal` = workspaces + Turborepo with apps/web. `full` = minimal plus opinionated shared packages.'),
+        rpc: z
+          .enum(['none', 'orpc'])
+          .default('none')
+          .describe('RPC layer. `orpc` requires `monorepo === \'full\'` (emits packages/orpc).'),
+      })
+      .describe('Project architecture configuration. Defines the technology stack and features.'),
+  })
+  .refine(
+    (cfg) => !(cfg.architecture.rpc === 'orpc' && cfg.architecture.monorepo !== 'full'),
+    { message: 'rpc: "orpc" requires monorepo: "full"' }
+  );
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
