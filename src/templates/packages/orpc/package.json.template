@@ -11,7 +11,6 @@
       "default": "./dist/index.js"
     },
     "./types": {
-      "sh-dev-source": "./src/types.ts",
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js",
       "default": "./dist/types.js"
@@ -19,9 +18,9 @@
   },
   "scripts": {
     "clean": "rm -rf dist *.tsbuildinfo",
-    "build": "tsc -b tsconfig.build.json",
-    "dev": "tsc -b tsconfig.build.json --watch",
-    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "build": "tsc -b tsconfig.json",
+    "dev": "tsc -b tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --cache",
     "lint:fix": "eslint . --cache --fix",
     "test": "vitest run",

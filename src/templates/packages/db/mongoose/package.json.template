@@ -1,0 +1,29 @@
+{
+  "name": "@<projectName>/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --cache",
+    "lint:fix": "eslint . --cache --fix",
+    "clean": "rm -rf *.tsbuildinfo"
+  },
+  "dependencies": {
+    "mongoose": "^8"
+  },
+  "devDependencies": {
+    "@<projectName>/eslint-config": "workspace:*",
+    "@<projectName>/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

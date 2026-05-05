@@ -38,7 +38,7 @@ const eslintConfig = defineConfig([
     },
   },
   configPrettier,
-  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts', 'src/components/animate-ui/**']),
+  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts']),
 ]);
 
 export default eslintConfig;

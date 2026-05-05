@@ -1,0 +1,12 @@
+{
+  "extends": "@<projectName>/typescript-config/base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "noUncheckedIndexedAccess": false,
+    "jsx": "react-jsx",
+    "lib": ["dom", "dom.iterable", "esnext"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["**/*.test.ts", "node_modules", "dist", "coverage"]
+}

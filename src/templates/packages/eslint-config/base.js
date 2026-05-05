@@ -15,9 +15,9 @@ export const baseConfig = tseslint.config(
   // pluginImportX.flatConfigs.typescript because its string-based resolver
   // lookup ('typescript: true') only finds eslint-import-resolver-typescript
   // when it's hoisted to the linting package's own node_modules — pnpm's
-  // strict layout puts it inside @solidhooks/eslint-config instead.
-  // The factory import below is resolved via @solidhooks/eslint-config and
-  // works regardless of where the consuming package sits in the workspace.
+  // strict layout puts it inside this config package instead.
+  // The factory import below is resolved here and works regardless of where
+  // the consuming package sits in the workspace.
   {
     settings: {
       'import-x/extensions': allExtensions,

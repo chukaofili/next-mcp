@@ -2,9 +2,10 @@
 
 ## Goal
 
-Allow `scaffold_project` to produce a pnpm-workspaces + Turborepo monorepo
-where the Next.js app lives at `apps/web/`, with optional shared packages
-under `packages/`. Downstream tools (`setup_database`, `setup_authentication`,
+Allow `scaffold_project` to produce a workspaces + Turborepo monorepo where
+the Next.js app lives at `apps/web/`, with optional shared packages under
+`packages/`. Supports all four package managers (pnpm, npm, yarn, bun).
+Downstream tools (`setup_database`, `setup_authentication`,
 `generate_dockerfile`, etc.) understand the layout and write files to the
 correct location.
 
@@ -215,6 +216,188 @@ serves all four PMs:
 The bun base image becomes `oven/bun:1-alpine` instead of `node:24-alpine`;
 the `Dockerfile.monorepo` template uses a `__BASE_IMAGE__` placeholder for
 this. (For Node-based PMs the base stays `node:24-alpine`.)
+
+## Catalog Strategy
+
+Several package.json templates declare dependencies as `"catalog:"` (e.g.
+`"typescript": "catalog:"`, `"@types/node": "catalog:"`). pnpm reads these
+from `pnpm-workspace.yaml`'s `catalog:` block. **Other package managers
+don't support catalog references**, so we substitute at scaffold time.
+
+**Source of truth**: a `CATALOG_VERSIONS` map in `src/index.ts` (extends or
+replaces the existing `PACKAGE_VERSIONS` constant) holding `{ name → version }`
+for every catalog entry.
+
+**Substitution at scaffold time**:
+
+| PM    | Behavior                                                                                          |
+| ----- | ------------------------------------------------------------------------------------------------- |
+| pnpm  | Emit `pnpm-workspace.yaml` with `catalog:` block populated from `CATALOG_VERSIONS`. Leave `"catalog:"` references in package.json files untouched. |
+| npm/yarn/bun | Skip `pnpm-workspace.yaml`. In every emitted package.json, walk `dependencies` / `devDependencies` and replace any value `"catalog:"` with `CATALOG_VERSIONS[name]`. Fail fast with a clear error if the catalog has no entry for the requested name. |
+
+Templates always use `"catalog:"` so a single template body serves all four
+PMs; the substitution layer is the only place package-manager logic lives.
+
+## Better Auth UI — shadcn Registry Install
+
+Better Auth UI moved from a single npm package (`@daveyplate/better-auth-ui`)
+to a shadcn-registry distribution. Install method is now a registry add via
+the shadcn CLI; the components are emitted as local files into the consuming
+app/package, with `@better-auth-ui/react` and `@better-auth-ui/core` as the
+underlying npm dependencies.
+
+**`setup_authentication` runs (in addition to existing steps):**
+
+```sh
+<runner> shadcn@latest add https://better-auth-ui.com/r/auth.json
+<runner> shadcn@latest add https://better-auth-ui.com/r/settings.json https://better-auth-ui.com/r/user-button.json
+```
+
+`<runner>` follows `architecture.packageManager`:
+
+| PM    | Runner       |
+| ----- | ------------ |
+| pnpm  | `pnpm dlx`   |
+| npm   | `npx`        |
+| yarn  | `yarn dlx`   |
+| bun   | `bunx --bun` |
+
+**Files emitted by the registry** (auto-installed as registry dependencies):
+
+- `src/components/auth/auth-provider.tsx` (and `error-toaster.tsx`)
+- `src/components/auth/auth.tsx` (the new `<Auth />` component, replaces `<AuthView />`)
+- `src/components/auth/sign-in.tsx`, `sign-up.tsx`, `forgot-password.tsx`,
+  `reset-password.tsx`, `sign-out.tsx`
+- `src/components/auth/settings/settings.tsx` (replaces `<AccountView />`)
+- `src/components/auth/user/user-button.tsx`
+
+**Templates we still own and write** (updated for new imports):
+
+- `auth-ui-provider.tsx.template` → wraps the registry's `AuthProvider` with
+  project-specific config (authClient, navigate via `useRouter`, Link). Lives
+  at `src/providers/auth-ui-provider.tsx`.
+- `auth-page.tsx.template` → mounts `<Auth path={path} />`.
+- `account-page.tsx.template` → mounts `<Settings path={path} />`.
+- `user-button.tsx.template` → re-exports the registry's `UserButton`.
+
+**Removed**: the CSS import `@import "@daveyplate/better-auth-ui/css"` is no
+longer needed (the shadcn registry components style themselves via the
+project's tailwind/shadcn setup).
+
+**Dependency changes (`PACKAGE_VERSIONS` in `src/index.ts`)**:
+
+- Remove: `'@daveyplate/better-auth-ui': '^3'`
+- The registry items declare `@better-auth-ui/react`, `@better-auth-ui/core`,
+  `@tanstack/react-query`, `lucide-react`, and pull in the `sonner` shadcn
+  registry item — all installed automatically by `shadcn add`. We don't need
+  to track these in our `PACKAGE_VERSIONS` (shadcn handles it).
+
+## shadcn `init` Command
+
+`setup_shadcn` invokes shadcn's `init` with the **base preset, Next.js
+template, and pointer mode**. Adds `--monorepo` when `architecture.monorepo`
+is `'minimal'` or `'full'`:
+
+```sh
+# monorepo mode
+<runner> shadcn@latest init --preset b0 --template next --monorepo --pointer
+
+# flat mode
+<runner> shadcn@latest init --preset b0 --template next --pointer
+```
+
+`<runner>` per PM:
+
+| PM    | Runner       |
+| ----- | ------------ |
+| pnpm  | `pnpm dlx`   |
+| npm   | `npx`        |
+| yarn  | `yarn dlx`   |
+| bun   | `bunx --bun` |
+
+The user can later switch presets/templates with their own `shadcn init`.
+
+## Template Inventory
+
+### Already authored (root + per-package shells)
+
+```
+src/templates/
+├── pnpm-workspace.yaml.template          # workspace + catalog (pnpm only)
+├── package.json.template                 # root workspace package.json
+├── tsconfig.json.template                # solution-style root tsconfig
+├── turbo.json.template                   # turbo task pipelines
+├── .gitignore.template                   # workspace-level gitignore
+├── docker/Dockerfile.monorepo            # multi-PM monorepo Dockerfile
+└── packages/
+    ├── eslint-config/
+    │   ├── package.json.template
+    │   ├── base.js
+    │   ├── next.js
+    │   └── react-internal.js
+    ├── typescript-config/
+    │   ├── package.json.template
+    │   ├── base.json
+    │   ├── nextjs.json                  # extends base.json
+    │   └── react-library.json
+    ├── orpc/
+    │   ├── package.json.template
+    │   ├── tsconfig.json.template
+    │   ├── eslint.config.mjs.template
+    │   └── src/
+    │       ├── index.ts.template
+    │       ├── router.ts.template
+    │       ├── types.ts.template
+    │       ├── middleware/{auth,context,index,pipeline}.ts.template
+    │       └── procedures/health/router.ts.template
+    ├── db/
+    │   ├── tsconfig.json.template
+    │   ├── eslint.config.mjs.template
+    │   ├── prisma/package.json.template
+    │   ├── drizzle/package.json.template
+    │   └── mongoose/package.json.template
+    ├── auth/
+    │   ├── package.json.template
+    │   ├── tsconfig.json.template
+    │   └── eslint.config.mjs.template
+    └── ui/
+        ├── package.json.template
+        ├── tsconfig.json.template
+        ├── eslint.config.mjs.template
+        ├── components.json.template      # shadcn config for the package
+        └── src/
+            ├── lib/utils.ts.template     # cn() helper
+            └── styles/globals.css.template
+```
+
+### Source-file mapping for `'full'` mode packages
+
+The package shells above provide the wrapper (package.json, tsconfig,
+eslint.config). The actual source files come from existing flat-layout
+templates with destinations rewritten by the scaffold logic:
+
+| Existing template                                        | Flat dest                          | `'full'` dest                             |
+| -------------------------------------------------------- | ---------------------------------- | ----------------------------------------- |
+| `database/prisma/index.ts.template`                      | `apps/web/src/lib/db/index.ts`     | `packages/db/src/index.ts`                |
+| `database/prisma/client.ts.template`                     | `apps/web/src/lib/db/client.ts`    | `packages/db/src/client.ts`               |
+| `database/drizzle/{client,index,schema,drizzle.config}.ts.template` | `apps/web/src/lib/db/...` | `packages/db/src/...`                     |
+| `database/mongoose/{connection,index}.ts.template`       | `apps/web/src/lib/db/...`          | `packages/db/src/...`                     |
+| `auth/auth.ts.template`                                  | `apps/web/src/lib/auth.ts`         | `packages/auth/src/server.ts`             |
+| `auth/auth-client.ts.template`                           | `apps/web/src/lib/auth-client.ts`  | `packages/auth/src/client.ts`             |
+| `auth/auth-route.ts.template`                            | `apps/web/src/app/api/auth/...`    | `apps/web/src/app/api/auth/...` (still in app — it's a Next.js route handler) |
+| `auth/{auth,account,user-button}-*.template`             | `apps/web/...`                     | `apps/web/...` (page components stay in the app) |
+| Prisma `schema.prisma`                                   | `apps/web/prisma/schema.prisma`    | `packages/db/prisma/schema.prisma`        |
+| `next.config.template`                                   | project root                       | `apps/web/next.config.*`                  |
+
+`packages/auth` exposes `index.ts` that re-exports `client` and `server`.
+`apps/web` imports `@<projectName>/auth/server` for server code,
+`@<projectName>/auth/client` for the React client.
+
+`packages/ui` doesn't have shadcn primitives pre-baked — instead, it ships
+with its own `components.json` so users (and our `setup_shadcn` tool) can
+run `shadcn@latest add <component>` against the package itself, dropping
+primitives into `packages/ui/src/components/`. `apps/web` imports them as
+`@<projectName>/ui/components/<component>`.
 
 ## Constraints / Open Items
 
