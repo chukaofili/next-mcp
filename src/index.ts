@@ -186,7 +186,7 @@ const DOCKERFILE_PM_VALUES: Record<PackageManager, DockerfilePlaceholderValues> 
   },
   bun: {
     __BASE_IMAGE__: 'oven/bun:1-alpine',
-    __COREPACK_SETUP__: '',
+    __COREPACK_SETUP__: 'true',
     __PM__: 'bun',
     __PM_DLX__: 'bunx',
     __PM_INSTALL__: 'bun install --frozen-lockfile',

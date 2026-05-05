@@ -1,7 +1,7 @@
-FROM node:24-alpine AS base
+FROM __BASE_IMAGE__ AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN __COREPACK_SETUP__
 
 
 # Install dependencies only when needed
@@ -10,7 +10,7 @@ ARG PACKAGE="@__PROJECT_NAME__/web"
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY . .
-RUN pnpm dlx turbo@^2 prune $PACKAGE --docker
+RUN __PM_DLX__ turbo@^2 prune $PACKAGE --docker
 
 # Build the application from the pruned subgraph
 FROM base AS builder
@@ -28,8 +28,8 @@ WORKDIR /app
 
 # First install the dependencies (as they change less often)
 COPY --from=deps /app/out/json/ .
-COPY --from=deps /app/out/pnpm-lock.yaml ./pnpm-lock.yaml
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+COPY --from=deps /app/out/__LOCKFILE__ ./__LOCKFILE__
+RUN __CACHE_MOUNT__ __PM_INSTALL__
 
 COPY --from=deps /app/out/full/ .
 
@@ -40,7 +40,7 @@ RUN if [ -f ./$PACKAGE_PATH/.env.${BUILD_ENV} ]; then \
       cp ./$PACKAGE_PATH/.env.${BUILD_ENV} ./$PACKAGE_PATH/.env.production; \
     fi
 
-RUN pnpm turbo build --filter=$PACKAGE...
+RUN __PM_RUN__ turbo build --filter=$PACKAGE...
 
 # Production image
 FROM base AS runner

@@ -1,5 +1,6 @@
-import { promises as fs } from 'node:fs';
+import { promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -280,6 +281,41 @@ COPY --from=deps /app/out/__LOCKFILE__ ./
     expect(out).toContain('bunx turbo prune');
     expect(out).toContain('bun run turbo build');
     expect(out).toContain('--mount=type=cache,id=bun,target=/root/.bun/install/cache');
+    expect(out).toContain('bun.lockb');
+  });
+});
+
+const __dirname2 = path.dirname(fileURLToPath(import.meta.url));
+const DOCKERFILE_MONOREPO_TEMPLATE = readFileSync(
+  path.join(__dirname2, '../../src/templates/docker/Dockerfile.monorepo'),
+  'utf-8'
+);
+
+describe('Dockerfile.monorepo substitution end-to-end', () => {
+  it.each(['pnpm', 'npm', 'yarn', 'bun'] as const)(
+    '%s output has no unresolved placeholders',
+    (pm) => {
+      const out = substituteDockerfilePlaceholders(DOCKERFILE_MONOREPO_TEMPLATE, pm, 'sample');
+      expect(out).not.toMatch(/__[A-Z_]+__/);
+    }
+  );
+
+  it('pnpm output is functionally equivalent to the previous pnpm-specific Dockerfile', () => {
+    const out = substituteDockerfilePlaceholders(DOCKERFILE_MONOREPO_TEMPLATE, 'pnpm', 'sample');
+    expect(out).toContain('FROM node:24-alpine AS base');
+    expect(out).toContain('corepack enable && corepack prepare pnpm@latest --activate');
+    expect(out).toContain('pnpm dlx turbo@^2 prune $PACKAGE --docker');
+    expect(out).toContain('COPY --from=deps /app/out/pnpm-lock.yaml ./pnpm-lock.yaml');
+    expect(out).toContain('--mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile');
+    expect(out).toContain('pnpm turbo build --filter=$PACKAGE...');
+    expect(out).toContain('@sample/web');
+  });
+
+  it('bun output drops corepack and uses oven/bun base image', () => {
+    const out = substituteDockerfilePlaceholders(DOCKERFILE_MONOREPO_TEMPLATE, 'bun', 'sample');
+    expect(out).toContain('FROM oven/bun:1-alpine AS base');
+    expect(out).not.toContain('corepack');
+    expect(out).toContain('bun install --frozen-lockfile');
     expect(out).toContain('bun.lockb');
   });
 });
