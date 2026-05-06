@@ -574,4 +574,158 @@ describe('generate_dockerfile tool', () => {
       }
     });
   });
+
+  describe('Dockerfile.migrate templating (OoS-2 — drizzle support)', () => {
+    it('monorepo:full + drizzle + postgres: emits Dockerfile.migrate with drizzle-kit migrate + packages/db config path', async () => {
+      const dir = await createTempDir('next-mcp-migrate-drizzle-full-');
+      try {
+        const config = createMockConfig({
+          name: 'drizzle-full',
+          architecture: {
+            monorepo: 'full',
+            packageManager: 'pnpm',
+            database: 'postgres',
+            orm: 'drizzle',
+            // Better Auth requires a database; drizzle adapter wires up the same.
+            auth: 'none',
+          },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        const migrate = await readFile(path.join(dir, 'Dockerfile.migrate'));
+        expect(migrate).toContain('drizzle-kit migrate');
+        expect(migrate).toContain('--config=./packages/db/drizzle.config.ts');
+        // Monorepo: full workspace tree + lockfile-driven install.
+        expect(migrate).toMatch(/^COPY \. \.$/m);
+        expect(migrate).toContain('pnpm install --frozen-lockfile');
+        // No prisma references should leak through into the drizzle path.
+        expect(migrate).not.toContain('prisma migrate deploy');
+        expect(migrate).not.toContain('schema.prisma');
+        expect(migrate).not.toMatch(/__[A-Z_]+__/);
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+
+    it('monorepo:none + drizzle + postgres: flat-mode COPY pulls drizzle config + schema dir + migrations out dir', async () => {
+      const dir = await createTempDir('next-mcp-migrate-drizzle-flat-');
+      try {
+        const config = createMockConfig({
+          name: 'drizzle-flat',
+          architecture: {
+            monorepo: 'none',
+            packageManager: 'pnpm',
+            database: 'postgres',
+            orm: 'drizzle',
+            auth: 'none',
+          },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        const migrate = await readFile(path.join(dir, 'Dockerfile.migrate'));
+        // Drizzle CMD with the flat config path.
+        expect(migrate).toContain('--config=./drizzle.config.ts');
+        expect(migrate).toContain('drizzle-kit migrate');
+        // Targeted COPY: drizzle.config.ts + src/lib/db (schema source) +
+        // drizzle/ (the configured `out:` dir for generated migrations).
+        expect(migrate).toContain('COPY drizzle.config.ts ./drizzle.config.ts');
+        expect(migrate).toContain('COPY src/lib/db ./src/lib/db');
+        expect(migrate).toContain('COPY drizzle ./drizzle');
+        // Flat-mode drizzle deps: drizzle-kit + drizzle-orm + driver + dotenv.
+        expect(migrate).toContain('pnpm add drizzle-kit drizzle-orm pg dotenv');
+        // No prisma artifacts should appear in the drizzle output.
+        expect(migrate).not.toContain('schema.prisma');
+        expect(migrate).not.toContain('prisma migrate deploy');
+        expect(migrate).not.toMatch(/__[A-Z_]+__/);
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+
+    it('flat + drizzle + sqlite + bun: deps install includes better-sqlite3 (smoke variant B coverage)', async () => {
+      const dir = await createTempDir('next-mcp-migrate-drizzle-sqlite-');
+      try {
+        const config = createMockConfig({
+          name: 'drizzle-sqlite-bun',
+          architecture: {
+            monorepo: 'none',
+            packageManager: 'bun',
+            database: 'sqlite',
+            orm: 'drizzle',
+            auth: 'none',
+          },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        const migrate = await readFile(path.join(dir, 'Dockerfile.migrate'));
+        expect(migrate).toContain('FROM oven/bun:1-alpine');
+        // sqlite -> better-sqlite3 driver in the deps install.
+        expect(migrate).toContain('bun add drizzle-kit drizzle-orm better-sqlite3 dotenv');
+        expect(migrate).toContain('bunx drizzle-kit migrate');
+        expect(migrate).not.toMatch(/__[A-Z_]+__/);
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+
+    it('drizzle + database:postgres: docker-compose.yml includes the migrate: service (gate widened)', async () => {
+      const dir = await createTempDir('next-mcp-compose-drizzle-');
+      try {
+        const config = createMockConfig({
+          name: 'compose-drizzle',
+          architecture: {
+            monorepo: 'full',
+            packageManager: 'pnpm',
+            database: 'postgres',
+            orm: 'drizzle',
+            auth: 'none',
+          },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        const compose = await readFile(path.join(dir, 'docker-compose.yml'));
+        expect(compose).toContain('migrate:');
+        expect(compose).toContain('dockerfile: Dockerfile.migrate');
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+
+    it('mongoose + database:mongodb: NO Dockerfile.migrate, NO migrate: service (mongoose stays excluded)', async () => {
+      const dir = await createTempDir('next-mcp-migrate-mongoose-');
+      try {
+        const config = createMockConfig({
+          name: 'no-migrate-mongoose',
+          architecture: {
+            monorepo: 'none',
+            packageManager: 'pnpm',
+            database: 'mongodb',
+            orm: 'mongoose',
+            auth: 'none',
+          },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        // Regression guard: widening the gate to drizzle must NOT pull
+        // mongoose into the migrate path. Mongo is schemaless — there are
+        // no SQL migrations to apply.
+        expect(await fileExists(path.join(dir, 'Dockerfile.migrate'))).toBe(false);
+        const compose = await readFile(path.join(dir, 'docker-compose.yml'));
+        expect(compose).not.toContain('migrate:');
+        expect(compose).not.toContain('Dockerfile.migrate');
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+  });
 });

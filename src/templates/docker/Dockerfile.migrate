@@ -7,7 +7,7 @@ RUN __COREPACK_SETUP__
 # Copy what's needed for migrations
 __MIGRATE_COPY__
 
-# Install Prisma + the project's db deps
+# Install ORM CLI + the project's db deps
 RUN __MIGRATE_DEPS_INSTALL__
 
-CMD ["sh", "-c", "__PM_DLX__ prisma migrate deploy --schema=./__SCHEMA_HOST_PATH__/schema.prisma"]
+CMD ["sh", "-c", "__MIGRATE_CMD__"]

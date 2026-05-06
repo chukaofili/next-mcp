@@ -498,6 +498,77 @@ export function getMigrateSchemaHostPath(config: ProjectConfig): string {
 }
 
 /**
+ * Returns the project-relative POSIX path to `drizzle.config.ts` for the
+ * migrate Dockerfile. Mirrors {@link getMigrateSchemaHostPath} for prisma:
+ * the path is interpreted in-container at WORKDIR `/app` and passed verbatim
+ * to `drizzle-kit migrate --config=`.
+ *
+ * - `full + orm:drizzle`:             `packages/db/drizzle.config.ts`
+ * - `minimal + orm:drizzle`:          `apps/web/drizzle.config.ts`
+ * - `none + orm:drizzle`:             `drizzle.config.ts`
+ */
+export function getMigrateDrizzleConfigPath(config: ProjectConfig): string {
+  if (shouldRouteToDbPackage(config)) return 'packages/db/drizzle.config.ts';
+  if (config.architecture.monorepo === 'none') return 'drizzle.config.ts';
+  return 'apps/web/drizzle.config.ts';
+}
+
+/**
+ * Returns the project-relative POSIX directory containing the drizzle source
+ * files (schema.ts + client.ts) for the migrate Dockerfile's flat-mode COPY.
+ * Mirrors the layout {@link setupDrizzle} writes.
+ *
+ * - `full + orm:drizzle`: `packages/db/src` (drizzle.config.ts's `schema:`
+ *   resolves to `./src/schema.ts` from `packages/db/`)
+ * - `minimal + orm:drizzle`: `apps/web/src/lib/db`
+ * - `none + orm:drizzle`: `src/lib/db`
+ *
+ * Only used by flat mode's targeted COPY — monorepo modes do `COPY . .` and
+ * pick this up implicitly.
+ */
+function getMigrateDrizzleSchemaDir(config: ProjectConfig): string {
+  if (shouldRouteToDbPackage(config)) return 'packages/db/src';
+  if (config.architecture.monorepo === 'none') return 'src/lib/db';
+  return 'apps/web/src/lib/db';
+}
+
+/**
+ * Returns the project-relative POSIX directory where drizzle-kit writes
+ * generated migration SQL files (the `out:` field in `drizzle.config.ts`).
+ *
+ * - `full + orm:drizzle`: `packages/db/drizzle/migrations`
+ * - `minimal + orm:drizzle`: `apps/web/drizzle/migrations`
+ * - `none + orm:drizzle`: `drizzle/migrations`
+ *
+ * The migrate image's flat-mode COPY uses this directory; monorepo modes
+ * pick it up via `COPY . .`.
+ */
+function getMigrateDrizzleOutDir(config: ProjectConfig): string {
+  if (shouldRouteToDbPackage(config)) return 'packages/db/drizzle';
+  if (config.architecture.monorepo === 'none') return 'drizzle';
+  return 'apps/web/drizzle';
+}
+
+/**
+ * Maps the configured database to the drizzle runtime driver package needed
+ * for `drizzle-kit migrate` to talk to it. `mongodb` is intentionally absent
+ * — drizzle does not support mongo, and the migrate Dockerfile gate also
+ * excludes mongoose, so this map only needs the SQL flavours.
+ */
+function getDrizzleDriverPackage(database: string): string {
+  switch (database) {
+    case 'postgres':
+      return 'pg';
+    case 'mysql':
+      return 'mysql2';
+    case 'sqlite':
+      return 'better-sqlite3';
+    default:
+      return 'pg';
+  }
+}
+
+/**
  * Per-PM ad-hoc add command used by the migrate Dockerfile in flat mode. The
  * migrate image only needs prisma + the runtime client + dotenv — there's no
  * benefit to a full workspace install when there's no workspace.
@@ -510,24 +581,52 @@ const MIGRATE_DEPS_ADD: Record<PackageManager, string> = {
 };
 
 /**
+ * Per-PM `add` verb (used to build drizzle's flat-mode deps install, where
+ * the package list depends on the configured database driver).
+ */
+const PM_ADD_COMMAND: Record<PackageManager, string> = {
+  pnpm: 'pnpm add',
+  npm: 'npm install',
+  yarn: 'yarn add',
+  bun: 'bun add',
+};
+
+/**
+ * Builds the drizzle flat-mode `<pm> add` command — drizzle-kit + drizzle-orm
+ * + the database driver + dotenv. The driver depends on the configured
+ * database (see {@link getDrizzleDriverPackage}).
+ */
+function buildDrizzleMigrateDepsAdd(pm: PackageManager, database: string): string {
+  const driver = getDrizzleDriverPackage(database);
+  return `${PM_ADD_COMMAND[pm]} drizzle-kit drizzle-orm ${driver} dotenv`;
+}
+
+/**
  * Substitutes placeholders in the Dockerfile.migrate template. Resolves both
  * the shared PM placeholders (via {@link substituteDockerfilePlaceholders})
  * and the migrate-specific ones:
  *
- * - `__SCHEMA_HOST_PATH__`        — directory containing `schema.prisma`,
- *                                   relative to project root and mirrored as
- *                                   the in-container path.
+ * - `__SCHEMA_HOST_PATH__`        — (prisma only) directory containing
+ *                                   `schema.prisma`, relative to project
+ *                                   root and mirrored as the in-container
+ *                                   path. Unused for drizzle.
  * - `__MIGRATE_COPY__`            — COPY block. Flat mode preserves the
  *                                   targeted legacy copy (root manifests +
- *                                   prisma dir + optional prisma.config.ts).
+ *                                   schema sources + optional config files).
  *                                   Monorepo modes do `COPY . .` so the
  *                                   workspace structure is intact for
  *                                   `__PM_INSTALL__` to resolve workspace
  *                                   `db` deps.
- * - `__MIGRATE_DEPS_INSTALL__`    — flat mode: PM-specific
- *                                   `add prisma @prisma/client dotenv`.
+ * - `__MIGRATE_DEPS_INSTALL__`    — flat mode: PM-specific ORM-aware add.
  *                                   Monorepo modes: full
  *                                   `__PM_INSTALL__` (lockfile-driven).
+ * - `__MIGRATE_CMD__`             — ORM-specific CMD body. Prisma:
+ *                                   `<dlx> prisma migrate deploy --schema=...`.
+ *                                   Drizzle:
+ *                                   `<dlx> drizzle-kit migrate --config=...`.
+ *
+ * Mongoose is not supported here — the gate at the call site excludes it
+ * (mongo is schemaless; there are no SQL migrations to apply).
  *
  * All paths use POSIX separators so the result is stable on Windows hosts.
  */
@@ -537,39 +636,81 @@ export function substituteMigrateDockerfilePlaceholders(
 ): string {
   const pm = config.architecture.packageManager;
   const isMonorepo = config.architecture.monorepo !== 'none';
-  const schemaHostPath = getMigrateSchemaHostPath(config);
+  const orm = config.architecture.orm;
   const lockfile = DOCKERFILE_PM_VALUES[pm].__LOCKFILE__;
+  const dlx = DOCKERFILE_PM_VALUES[pm].__PM_DLX__;
+
+  // Prisma is the only ORM that uses __SCHEMA_HOST_PATH__ — we still resolve
+  // it for prisma below, but the placeholder is a no-op for drizzle (unused).
+  const schemaHostPath = orm === 'prisma' ? getMigrateSchemaHostPath(config) : '';
 
   let migrateCopy: string;
   let migrateDepsInstall: string;
+  let migrateCmd: string;
 
-  if (isMonorepo) {
-    // The migrate image needs the full workspace tree so the lockfile-driven
-    // install can resolve workspace `db` deps. `COPY . .` plus `.dockerignore`
-    // keeps the build context lean enough; the migrate is a one-shot, not a
-    // hot-path runtime image.
-    migrateCopy = 'COPY . .';
-    migrateDepsInstall = DOCKERFILE_PM_VALUES[pm].__PM_INSTALL__;
+  if (orm === 'drizzle') {
+    const configPath = getMigrateDrizzleConfigPath(config);
+    migrateCmd = `${dlx} drizzle-kit migrate --config=./${configPath}`;
+
+    if (isMonorepo) {
+      // Same shape as prisma: COPY . . + lockfile-driven install. The
+      // workspace's packages/db/package.json declares drizzle-kit as a
+      // devDep so the install resolves it.
+      migrateCopy = 'COPY . .';
+      migrateDepsInstall = DOCKERFILE_PM_VALUES[pm].__PM_INSTALL__;
+    } else {
+      // Flat mode: targeted COPY of the drizzle config + schema source dir
+      // + the generated migrations output dir.
+      //
+      // The migrations output dir (`drizzle/`) only exists after
+      // `drizzle-kit generate` has been run. The README's drizzle setup
+      // section instructs users to run that before `docker compose run --rm
+      // migrate`, so the COPY is a hard requirement and a missing directory
+      // is a configuration error worth surfacing as a build failure (rather
+      // than silently swallowing it).
+      const schemaDir = getMigrateDrizzleSchemaDir(config);
+      const outDir = getMigrateDrizzleOutDir(config);
+      migrateCopy = [
+        `COPY package.json ${lockfile}* pnpm-workspace.yaml* ./`,
+        `COPY ${configPath} ./${configPath}`,
+        `COPY ${schemaDir} ./${schemaDir}`,
+        `COPY ${outDir} ./${outDir}`,
+      ].join('\n');
+      migrateDepsInstall = buildDrizzleMigrateDepsAdd(pm, config.architecture.database);
+    }
   } else {
-    // Flat mode: keep the legacy targeted COPY pattern. `prisma.config.ts*`
-    // glob handles the case where the file doesn't exist.
-    //
-    // Note: `pnpm-workspace.yaml*` is a no-op glob in flat mode (the file is
-    // never emitted there) and remains for any PM. We keep the line — rather
-    // than gate it on `pm === 'pnpm'` — so the COPY shape stays uniform
-    // across PMs; the `*` makes it a safe match-zero on disk.
-    migrateCopy = [
-      `COPY package.json ${lockfile}* pnpm-workspace.yaml* ./`,
-      `COPY ${schemaHostPath} ./${schemaHostPath}`,
-      'COPY prisma.config.ts* ./',
-    ].join('\n');
-    migrateDepsInstall = MIGRATE_DEPS_ADD[pm];
+    // Prisma branch — preserves the existing layout.
+    migrateCmd = `${dlx} prisma migrate deploy --schema=./${schemaHostPath}/schema.prisma`;
+
+    if (isMonorepo) {
+      // The migrate image needs the full workspace tree so the lockfile-driven
+      // install can resolve workspace `db` deps. `COPY . .` plus `.dockerignore`
+      // keeps the build context lean enough; the migrate is a one-shot, not a
+      // hot-path runtime image.
+      migrateCopy = 'COPY . .';
+      migrateDepsInstall = DOCKERFILE_PM_VALUES[pm].__PM_INSTALL__;
+    } else {
+      // Flat mode: keep the legacy targeted COPY pattern. `prisma.config.ts*`
+      // glob handles the case where the file doesn't exist.
+      //
+      // Note: `pnpm-workspace.yaml*` is a no-op glob in flat mode (the file is
+      // never emitted there) and remains for any PM. We keep the line — rather
+      // than gate it on `pm === 'pnpm'` — so the COPY shape stays uniform
+      // across PMs; the `*` makes it a safe match-zero on disk.
+      migrateCopy = [
+        `COPY package.json ${lockfile}* pnpm-workspace.yaml* ./`,
+        `COPY ${schemaHostPath} ./${schemaHostPath}`,
+        'COPY prisma.config.ts* ./',
+      ].join('\n');
+      migrateDepsInstall = MIGRATE_DEPS_ADD[pm];
+    }
   }
 
   let out = template;
   out = out.replaceAll('__SCHEMA_HOST_PATH__', schemaHostPath);
   out = out.replaceAll('__MIGRATE_COPY__', migrateCopy);
   out = out.replaceAll('__MIGRATE_DEPS_INSTALL__', migrateDepsInstall);
+  out = out.replaceAll('__MIGRATE_CMD__', migrateCmd);
   return substituteDockerfilePlaceholders(out, pm, config.name!);
 }
 
@@ -1854,8 +1995,10 @@ class NextMCPServer {
             break;
         }
 
-        // Generate migrate service if using Prisma with a database
-        if (config.architecture.orm === 'prisma') {
+        // Generate migrate service for any ORM that produces SQL migrations
+        // (prisma, drizzle). Mongoose stays excluded — mongo is schemaless,
+        // there are no SQL migrations to apply.
+        if (config.architecture.orm === 'prisma' || config.architecture.orm === 'drizzle') {
           migrateService = `  migrate:
     build:
       context: .
@@ -1893,19 +2036,23 @@ class NextMCPServer {
       await fs.writeFile(path.join(projectPath, '.dockerignore'), finalDockerignore);
       await fs.writeFile(path.join(projectPath, 'docker-compose.yml'), dockerCompose);
 
-      // Generate Dockerfile.migrate if using Prisma with a database. The
-      // template is fully placeholder-driven so it adapts to all four package
-      // managers and all three monorepo modes — see
-      // {@link substituteMigrateDockerfilePlaceholders}.
+      // Generate Dockerfile.migrate for any ORM that produces SQL migrations
+      // (prisma, drizzle). Mongoose stays excluded — mongo is schemaless.
+      // The template is fully placeholder-driven so it adapts to all four
+      // package managers, all three monorepo modes, and both supported ORMs
+      // — see {@link substituteMigrateDockerfilePlaceholders}.
       let migrateDockerfileMessage = '';
-      if (config.architecture.orm === 'prisma' && config.architecture.database !== 'none') {
+      const ormUsesMigrateImage =
+        config.architecture.orm === 'prisma' || config.architecture.orm === 'drizzle';
+      if (ormUsesMigrateImage && config.architecture.database !== 'none') {
         const dockerfileMigrateTemplate = await fs.readFile(
           path.join(__dirname, 'templates', 'docker', 'Dockerfile.migrate'),
           'utf-8'
         );
         const migrateDockerfile = substituteMigrateDockerfilePlaceholders(dockerfileMigrateTemplate, config);
         await fs.writeFile(path.join(projectPath, 'Dockerfile.migrate'), migrateDockerfile);
-        migrateDockerfileMessage = '\n- Dockerfile.migrate for running Prisma migrations';
+        const ormLabel = config.architecture.orm === 'prisma' ? 'Prisma' : 'Drizzle';
+        migrateDockerfileMessage = `\n- Dockerfile.migrate for running ${ormLabel} migrations`;
       }
 
       return {
@@ -3595,6 +3742,12 @@ export default function Header() {
    ${drizzleCdPrefix}${prismaExec} drizzle-kit generate
    ${drizzleCdPrefix}${prismaExec} drizzle-kit migrate
    \`\`\`
+
+   Or, in the dockerized environment, generate the SQL locally and apply it via the migrate service:
+   \`\`\`bash
+   ${drizzleCdPrefix}${prismaExec} drizzle-kit generate
+   docker compose run --rm migrate
+   \`\`\`
 `;
         } else if (architecture.orm === 'mongoose') {
           databaseSetup = `
@@ -3648,20 +3801,22 @@ For more information, visit [Better Auth Documentation](https://www.better-auth.
 `;
       }
 
-      // Generate Docker monorepo+prisma migrate note. In monorepo mode the
-      // web service no longer auto-applies migrations on boot (Group H made
-      // the inline `prisma migrate deploy` skip web for monorepo), so users
-      // must invoke the dedicated migrate service. `Dockerfile.migrate` now
-      // templatizes the schema path per monorepo mode (see
-      // {@link substituteMigrateDockerfilePlaceholders}), so no workaround
-      // note is needed.
+      // Generate Docker monorepo migrate note. In monorepo mode the web
+      // service no longer auto-applies migrations on boot (Group H made the
+      // inline `prisma migrate deploy` skip web for monorepo), so users must
+      // invoke the dedicated migrate service. `Dockerfile.migrate` now
+      // templatizes per monorepo mode AND per ORM (prisma + drizzle) — see
+      // {@link substituteMigrateDockerfilePlaceholders}.
       let monorepoDockerNotes = '';
-      if (isMonorepo && architecture.orm === 'prisma' && architecture.database !== 'none') {
+      const ormUsesMigrateImage =
+        architecture.orm === 'prisma' || architecture.orm === 'drizzle';
+      if (isMonorepo && ormUsesMigrateImage && architecture.database !== 'none') {
+        const ormLabel = architecture.orm === 'prisma' ? 'Prisma' : 'Drizzle';
         monorepoDockerNotes = `
 
 ### Applying database migrations (monorepo)
 
-The web service no longer runs Prisma migrations on startup in monorepo mode. After bringing the stack up, apply pending migrations explicitly:
+The web service no longer runs ${ormLabel} migrations on startup in monorepo mode. After bringing the stack up, apply pending migrations explicitly:
 
 \`\`\`bash
 docker compose run --rm migrate
@@ -4227,7 +4382,11 @@ ${architecture.testing !== 'none' ? `${pm} test               # Run tests\n` : '
     const dbPackageCd = hasDbPackage ? 'cd packages/db && ' : '';
     const pmExec = pm === 'npm' ? 'npx' : `${pm} exec`;
     const pitfallLines: string[] = [];
-    if (isMonorepo && architecture.orm === 'prisma' && architecture.database !== 'none') {
+    if (
+      isMonorepo &&
+      (architecture.orm === 'prisma' || architecture.orm === 'drizzle') &&
+      architecture.database !== 'none'
+    ) {
       pitfallLines.push(
         `- **Migrations don't run on web boot in monorepo mode.** After \`docker compose up\`, apply pending migrations with \`docker compose run --rm migrate\`.`
       );

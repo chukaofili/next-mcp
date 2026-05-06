@@ -189,11 +189,14 @@ function buildPresets(): Preset[] {
           'apps/web/package.json',
           'packages/db/package.json',
           'Dockerfile',
+          // OoS-2: Dockerfile.migrate now supports Drizzle. Variant B's
+          // post-condition flipped from `absent` to `exists` — drizzle-kit
+          // migrate against sqlite (with better-sqlite3) is the migrate-image
+          // CMD. Mongoose remains excluded; that gate is exercised by the
+          // mongoose unit tests in tests/integration/tools/generate-dockerfile.test.ts.
+          'Dockerfile.migrate',
         ],
         absent: [
-          // orm:'drizzle' so the migrate Dockerfile (gated on prisma) must NOT
-          // be emitted, and docker-compose.yml's migrate: service must not exist.
-          'Dockerfile.migrate',
           // auth/ui/orpc all opted out:
           'packages/auth',
           'packages/ui',
