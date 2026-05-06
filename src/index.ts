@@ -3699,11 +3699,25 @@ Generated with [Next.js MCP Server](https://github.com/anthropics/next-mcp)
 
       await fs.writeFile(path.join(projectPath, 'README.md'), readme);
 
+      // Emit agent-facing docs alongside the README. Both files always live at
+      // the workspace root (not under apps/web), regardless of monorepo mode —
+      // they're project-level documentation. CLAUDE.md is a fixed pointer; the
+      // real content lives in AGENTS.md so we don't drift two copies.
+      await this.generateAgentsMd(config, projectPath);
+      await this.generateClaudeMd(projectPath);
+
       return {
         content: [
           {
             type: 'text',
-            text: '✅ Generated comprehensive README.md with project documentation',
+            text: [
+              '✅ Generated comprehensive project documentation',
+              '',
+              'Files generated:',
+              '- README.md',
+              '- AGENTS.md',
+              '- CLAUDE.md',
+            ].join('\n'),
           },
         ],
       };
@@ -3713,11 +3727,308 @@ Generated with [Next.js MCP Server](https://github.com/anthropics/next-mcp)
         content: [
           {
             type: 'text',
-            text: `❌ Failed to generate README.md: ${errorMessage}`,
+            text: `❌ Failed to generate project documentation: ${errorMessage}`,
           },
         ],
       };
     }
+  }
+
+  /**
+   * Emit `<projectPath>/AGENTS.md` — agent-facing documentation that mirrors
+   * the actual scaffold for this config. Branches on the same gates the
+   * scaffold uses so the doc never claims a `packages/*` exists when it
+   * doesn't, and import strings line up with what F1/G1 wire up
+   * (`@<n>/db`, `@<n>/auth/server`, `@<n>/auth/client` in routed mode;
+   * `@/lib/db`, `@/lib/auth`, `@/lib/auth-client` otherwise).
+   */
+  private async generateAgentsMd(config: ProjectConfig, projectPath: string): Promise<void> {
+    const { architecture } = config;
+    const pm = architecture.packageManager;
+    const isMonorepo = architecture.monorepo !== 'none';
+    const isFullMonorepo = architecture.monorepo === 'full';
+
+    // Mirror generateFullModePackages emission gates (same shape as
+    // generateReadme above) so package mentions match disk reality.
+    const hasDbPackage =
+      isFullMonorepo && architecture.database !== 'none' && architecture.orm !== 'none';
+    const hasAuthPackage =
+      isFullMonorepo &&
+      architecture.auth === 'better-auth' &&
+      architecture.database !== 'none' &&
+      architecture.orm !== 'none';
+    const hasUiPackage = isFullMonorepo && architecture.uiLibrary === 'shadcn';
+    const hasOrpcPackage = isFullMonorepo && architecture.rpc === 'orpc';
+
+    // Compute import strings once. These have to track F1/G1's wiring exactly:
+    // - `shouldRouteToDbPackage` -> `@<projectName>/db` (workspace dep), else `@/lib/db`
+    // - `shouldRouteToAuthPackage` -> `@<projectName>/auth/{server,client}`,
+    //   else `@/lib/auth` and `@/lib/auth-client`.
+    const routedToDbPkg = shouldRouteToDbPackage(config);
+    const routedToAuthPkg = shouldRouteToAuthPackage(config);
+    const dbImportSpec = routedToDbPkg ? `@${config.name}/db` : '@/lib/db';
+    const authServerImportSpec = routedToAuthPkg
+      ? `@${config.name}/auth/server`
+      : '@/lib/auth';
+    const authClientImportSpec = routedToAuthPkg
+      ? `@${config.name}/auth/client`
+      : '@/lib/auth-client';
+
+    // Stack summary (one paragraph)
+    const stackBits: string[] = [`Next.js 16 (App Router)`];
+    stackBits.push(architecture.typescript ? 'TypeScript' : 'JavaScript');
+    stackBits.push(`package manager: ${pm}`);
+    stackBits.push(`monorepo: ${architecture.monorepo}`);
+    if (architecture.database !== 'none') {
+      stackBits.push(
+        `${architecture.database}${architecture.orm !== 'none' ? ` + ${architecture.orm}` : ''}`
+      );
+    }
+    if (architecture.auth !== 'none') stackBits.push(`${architecture.auth}`);
+    if (architecture.uiLibrary === 'shadcn') stackBits.push('shadcn/ui');
+    if (architecture.rpc === 'orpc') stackBits.push('oRPC');
+    if (architecture.testing !== 'none') stackBits.push(`${architecture.testing} (testing)`);
+
+    // Workspace layout block — only meaningful in monorepo modes.
+    let workspaceLayout = '';
+    if (isMonorepo) {
+      const layoutLines: string[] = [];
+      layoutLines.push('- `apps/web/` — the Next.js application (routes, components, hooks).');
+      if (hasDbPackage) {
+        layoutLines.push(
+          `- \`packages/db/\` — database client + ${architecture.orm === 'prisma' ? 'Prisma schema' : architecture.orm === 'drizzle' ? 'Drizzle schema' : 'schema'} (workspace package \`@${config.name}/db\`).`
+        );
+      }
+      if (hasAuthPackage) {
+        layoutLines.push(
+          `- \`packages/auth/\` — Better Auth core (workspace package \`@${config.name}/auth\`, with \`/server\` and \`/client\` subpath exports).`
+        );
+      }
+      if (hasUiPackage) {
+        layoutLines.push(
+          `- \`packages/ui/\` — shared shadcn/ui components (workspace package \`@${config.name}/ui\`).`
+        );
+      }
+      if (hasOrpcPackage) {
+        layoutLines.push(
+          `- \`packages/orpc/\` — oRPC contracts/handlers (workspace package \`@${config.name}/orpc\`).`
+        );
+      }
+      if (isFullMonorepo) {
+        layoutLines.push('- `packages/eslint-config/` — shared ESLint config.');
+        layoutLines.push('- `packages/typescript-config/` — shared TypeScript config (`base.json`).');
+      }
+
+      workspaceLayout = `
+## Workspace layout
+
+${layoutLines.join('\n')}
+
+The workspace is wired through \`pnpm-workspace.yaml\` (or the equivalent \`workspaces\` field) and \`turbo.json\` — \`build\`, \`lint\`, and \`typecheck\` at the root fan out to every workspace.
+`;
+    }
+
+    // Commands block — root-level scripts, plus per-workspace filter examples.
+    let commandsBlock = '';
+    if (isMonorepo) {
+      const filterFlag = pm === 'pnpm' ? '--filter' : '--filter';
+      commandsBlock = `
+## Commands
+
+Run from the workspace root — these delegate to Turborepo, which fans out across all workspaces:
+
+\`\`\`bash
+${pm} install                        # Install dependencies for all workspaces
+${pm} dev                            # Run dev for every workspace
+${pm} build                          # Build every workspace
+${pm} lint                           # Lint every workspace
+${pm} run typecheck                  # Type-check every workspace
+${architecture.testing !== 'none' ? `${pm} test                           # Run tests across workspaces\n` : ''}${pm} run pipeline                   # Run \`build\`, \`lint\`, and \`test\` together (Turbo)
+\`\`\`
+
+To target a single workspace, use ${pm}'s ${filterFlag} flag:
+
+\`\`\`bash
+${pm} ${filterFlag} @${config.name}/web dev       # Dev for apps/web only
+${pm} ${filterFlag} @${config.name}/web build     # Build apps/web only
+\`\`\`
+`;
+    } else {
+      commandsBlock = `
+## Commands
+
+\`\`\`bash
+${pm} install            # Install dependencies
+${pm} dev                # Start the dev server (Turbopack)
+${pm} build              # Build for production
+${pm} start              # Start the production server
+${pm} lint               # Run ESLint
+${pm} run type-check     # Run TypeScript type checking
+${architecture.testing !== 'none' ? `${pm} test               # Run tests\n` : ''}\`\`\`
+`;
+    }
+
+    // Where-to-find pointer block. Only emit a row when the config produces it.
+    const findRows: string[] = [];
+    findRows.push(
+      `- **App routes**: \`${isMonorepo ? 'apps/web/src/app/' : 'src/app/'}\``
+    );
+    if (architecture.uiLibrary === 'shadcn') {
+      findRows.push(
+        `- **UI components**: \`${hasUiPackage ? 'packages/ui/' : isMonorepo ? 'apps/web/src/components/' : 'src/components/'}\``
+      );
+    } else {
+      findRows.push(
+        `- **Components**: \`${isMonorepo ? 'apps/web/src/components/' : 'src/components/'}\``
+      );
+    }
+    if (architecture.database !== 'none' && architecture.orm !== 'none') {
+      findRows.push(
+        `- **Database client**: \`${routedToDbPkg ? 'packages/db/' : isMonorepo ? 'apps/web/src/lib/db/' : 'src/lib/db/'}\``
+      );
+    }
+    if (architecture.auth === 'better-auth') {
+      findRows.push(
+        `- **Auth core**: \`${routedToAuthPkg ? 'packages/auth/' : isMonorepo ? 'apps/web/src/lib/auth.ts' : 'src/lib/auth.ts'}\``
+      );
+      findRows.push(
+        `- **Auth UI**: \`${isMonorepo ? 'apps/web/src/components/auth/' : 'src/components/auth/'}\``
+      );
+    }
+    if (hasOrpcPackage) {
+      findRows.push(`- **oRPC routes/router**: \`packages/orpc/\``);
+    }
+
+    // Conventions section — import strings + workspace dep notation.
+    const conventionLines: string[] = [];
+    if (architecture.database !== 'none' && architecture.orm !== 'none') {
+      conventionLines.push(
+        `- **Database imports**: import the client from \`${dbImportSpec}\`${routedToDbPkg ? ' (workspace package).' : '.'}`
+      );
+    }
+    if (architecture.auth === 'better-auth') {
+      conventionLines.push(
+        `- **Auth imports**: server-side from \`${authServerImportSpec}\`, client-side from \`${authClientImportSpec}\`.`
+      );
+    }
+    if (isFullMonorepo) {
+      conventionLines.push(
+        `- **Workspace deps**: cross-package references use \`workspace:*\` in \`package.json\` and resolve to the local sources at install time.`
+      );
+      if (pm === 'pnpm') {
+        conventionLines.push(
+          `- **Catalog versions** (pnpm): shared dependency versions are declared once under the \`catalog:\` block in \`pnpm-workspace.yaml\` — referenced as \`"catalog:"\` from package.json files.`
+        );
+      }
+      conventionLines.push(
+        `- **Shared config**: ESLint and TypeScript configs are sourced from \`packages/eslint-config\` and \`packages/typescript-config\` — extend those rather than redeclaring per-package.`
+      );
+    }
+
+    // Pitfalls / gotchas — only the ones that apply to this config.
+    const pitfallLines: string[] = [];
+    if (isMonorepo && architecture.orm === 'prisma' && architecture.database !== 'none') {
+      pitfallLines.push(
+        `- **Migrations don't run on web boot in monorepo mode.** After \`docker compose up\`, apply pending migrations with \`docker compose run --rm migrate\`.`
+      );
+      if (isFullMonorepo) {
+        pitfallLines.push(
+          `- **Dockerfile.migrate schema path.** In \`monorepo: full\` the Prisma schema lives at \`packages/db/prisma/schema.prisma\` — \`Dockerfile.migrate\`'s default \`prisma/schema.prisma\` won't resolve, so you may need to pass \`--schema=./packages/db/prisma/schema.prisma\` (edit the Dockerfile \`CMD\` or override it in \`docker-compose.yml\`).`
+        );
+      }
+    }
+    if (isFullMonorepo) {
+      pitfallLines.push(
+        `- **Adding a new package.** Drop it under \`packages/\` and ${pm === 'pnpm' ? "ensure the path matches the glob in `pnpm-workspace.yaml`" : 'ensure it matches the `workspaces` glob in the root `package.json`'} — Turborepo picks it up automatically once it exists in the workspace.`
+      );
+    }
+    if (architecture.orm === 'prisma' && architecture.database !== 'none') {
+      const cd = hasDbPackage ? 'cd packages/db && ' : '';
+      const exec = pm === 'npm' ? 'npx' : `${pm} exec`;
+      pitfallLines.push(
+        `- **Schema changes.** After editing the Prisma schema, regenerate the client: \`${cd}${exec} prisma generate\`.`
+      );
+    }
+    if (architecture.orm === 'drizzle' && architecture.database !== 'none') {
+      const cd = hasDbPackage ? 'cd packages/db && ' : '';
+      const exec = pm === 'npm' ? 'npx' : `${pm} exec`;
+      pitfallLines.push(
+        `- **Schema changes.** After editing the Drizzle schema, regenerate migrations: \`${cd}${exec} drizzle-kit generate\`.`
+      );
+    }
+
+    // Testing pointer.
+    let testingBlock = '';
+    if (architecture.testing !== 'none') {
+      const testsLocation = isMonorepo ? 'apps/web/' : 'the project root';
+      testingBlock = `
+## Testing
+
+Tests run with \`${pm} test\`${architecture.testing === 'vitest' ? ' (Vitest)' : architecture.testing === 'jest' ? ' (Jest)' : architecture.testing === 'playwright' ? ' (Playwright)' : ''}. Test files live alongside the code they cover (see ${testsLocation}).
+`;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Assemble the document.
+    const sections: string[] = [];
+    sections.push(`# AGENTS.md`);
+    sections.push('');
+    sections.push(
+      `Working notes for AI agents (Claude Code, Cursor, etc.) on the **${config.name}** codebase.`
+    );
+    sections.push('');
+    sections.push(`## Project overview`);
+    sections.push('');
+    sections.push(
+      `${config.description || `${config.name} is a Next.js application.`} Stack: ${stackBits.join(', ')}.`
+    );
+
+    if (workspaceLayout) sections.push(workspaceLayout);
+    sections.push(commandsBlock);
+
+    sections.push(`## Where to find things`);
+    sections.push('');
+    sections.push(findRows.join('\n'));
+    sections.push('');
+
+    if (conventionLines.length > 0) {
+      sections.push(`## Conventions`);
+      sections.push('');
+      sections.push(conventionLines.join('\n'));
+      sections.push('');
+    }
+
+    if (pitfallLines.length > 0) {
+      sections.push(`## Pitfalls and gotchas`);
+      sections.push('');
+      sections.push(pitfallLines.join('\n'));
+      sections.push('');
+    }
+
+    if (testingBlock) sections.push(testingBlock);
+
+    sections.push('---');
+    sections.push('');
+    sections.push(
+      `Generated by next-mcp on ${today}. This is a maintenance note, not a contract — keep it in sync with the code by hand if structure shifts.`
+    );
+    sections.push('');
+
+    await fs.writeFile(path.join(projectPath, 'AGENTS.md'), sections.join('\n'));
+  }
+
+  /**
+   * Emit `<projectPath>/CLAUDE.md` — a fixed pointer at AGENTS.md. Same
+   * content for every project; no config-aware branching. Existing files are
+   * overwritten unconditionally (matches README behavior).
+   */
+  private async generateClaudeMd(projectPath: string): Promise<void> {
+    const claudeMd = `# CLAUDE.md
+
+This project's agent guidance lives in [AGENTS.md](./AGENTS.md) — the single source of truth for AI agents working on this codebase.
+`;
+    await fs.writeFile(path.join(projectPath, 'CLAUDE.md'), claudeMd);
   }
 
   async run() {
