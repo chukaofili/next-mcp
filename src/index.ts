@@ -55,11 +55,10 @@ const uniqueNamesGeneratorConfig: Config = {
   style: 'lowerCase',
 };
 
-// Prisma configuration constants. The schema-relative `--output` arg is now
-// computed per-config via {@link getPrismaOutputArg}, so PRISMA_OUTPUT_PATH is
-// no longer kept here. PRISMA_GENERATED_DIR is still used by the Dockerfile
-// path (Group H will re-evaluate it for monorepo modes).
-const PRISMA_GENERATED_DIR = 'src/lib/db/.prisma';
+// Prisma configuration constants. The schema-relative `--output` arg is
+// computed per-config via {@link getPrismaOutputArg}, and the `.dockerignore`
+// path for the generated client is computed per-config via
+// {@link getPrismaGeneratedIgnorePath}. No top-level constants are needed.
 
 // Package version constants - centralized version management
 const CREATE_NEXT_APP_VERSION = 'create-next-app@^16';
@@ -183,6 +182,32 @@ export function getPrismaOutputArg(config: ProjectConfig): string {
     path.posix.join(dbBaseDir, 'prisma'),
     path.posix.join(dbSrcDir, '.prisma')
   );
+}
+
+/**
+ * Returns the project-relative path to the Prisma generated client directory,
+ * suitable for appending to a `.dockerignore` file. Always uses POSIX
+ * separators so the result is stable on Windows hosts (Docker reads
+ * forward-slash paths regardless of the host OS).
+ *
+ * - `full + orm`:    `packages/db/src/.prisma`
+ * - `minimal`:       `apps/web/src/lib/db/.prisma`
+ * - `none`:          `src/lib/db/.prisma`
+ * - `full + orm:none`: falls back to the app path (no `packages/db` exists)
+ */
+export function getPrismaGeneratedIgnorePath(config: ProjectConfig): string {
+  // Use a synthetic root anchor so we get a relative POSIX path regardless of
+  // the caller's actual `projectPath` separators or location.
+  const projectRoot = '.';
+  const dbBaseDir = shouldRouteToDbPackage(config)
+    ? path.posix.join(projectRoot, 'packages/db')
+    : config.architecture.monorepo === 'none'
+      ? projectRoot
+      : path.posix.join(projectRoot, 'apps/web');
+  const dbSrcDir = shouldRouteToDbPackage(config)
+    ? path.posix.join(dbBaseDir, 'src')
+    : path.posix.join(dbBaseDir, 'src/lib/db');
+  return path.posix.relative(projectRoot, path.posix.join(dbSrcDir, '.prisma'));
 }
 
 /**
@@ -1269,8 +1294,23 @@ class NextMCPServer {
 
   private async generateDockerfile(config: ProjectConfig, projectPath: string) {
     try {
-      // Read Dockerfile template
-      const dockerfileTemplate = await fs.readFile(path.join(__dirname, 'templates', 'docker', 'Dockerfile'), 'utf-8');
+      // Pick template based on monorepo flag. The monorepo template uses the
+      // `turbo prune` workflow and is templated for all four package managers
+      // via {@link substituteDockerfilePlaceholders}; the flat template is
+      // hardcoded for the legacy single-package layout.
+      const isMonorepo = config.architecture.monorepo !== 'none';
+      const templateName = isMonorepo ? 'Dockerfile.monorepo' : 'Dockerfile';
+      let dockerfileTemplate = await fs.readFile(
+        path.join(__dirname, 'templates', 'docker', templateName),
+        'utf-8'
+      );
+      if (isMonorepo) {
+        dockerfileTemplate = substituteDockerfilePlaceholders(
+          dockerfileTemplate,
+          config.architecture.packageManager,
+          config.name!
+        );
+      }
       const dockerignoreTemplate = await fs.readFile(
         path.join(__dirname, 'templates', 'docker', '.dockerignore'),
         'utf-8'
@@ -1292,8 +1332,15 @@ class NextMCPServer {
       let prismaVolumes = '';
       let migrateService = '';
 
-      // Add Prisma migration command if using Prisma
-      if (config.architecture.orm === 'prisma') {
+      // Add Prisma migration command if using Prisma. In monorepo mode the
+      // standalone runtime image is self-contained (Prisma client + engines
+      // are bundled by `turbo build`) and the schema lives at
+      // `packages/db/prisma/` (or `apps/web/.../prisma/` for minimal) — neither
+      // matches the legacy `./prisma:/app/prisma` host paths or the bare
+      // `prisma migrate deploy` cwd assumption. We defer migrations to the
+      // explicit `migrate` service in those modes; the web service runs
+      // `node server.js` directly via the image's CMD.
+      if (config.architecture.orm === 'prisma' && !isMonorepo) {
         prismaCommand = `    command: sh -c "npx prisma migrate deploy && node server.js"`;
         prismaVolumes = `    volumes:
       - ./prisma:/app/prisma
@@ -1414,12 +1461,14 @@ class NextMCPServer {
 
       await fs.writeFile(path.join(projectPath, 'Dockerfile'), dockerfileTemplate);
 
-      // Add Prisma generated folder to .dockerignore if ORM is Prisma
+      // Add Prisma generated folder to .dockerignore if ORM is Prisma. The
+      // exact path varies by monorepo mode — see {@link getPrismaGeneratedIgnorePath}.
       let finalDockerignore = dockerignoreTemplate;
       if (config.architecture.orm === 'prisma') {
-        if (!finalDockerignore.includes(PRISMA_GENERATED_DIR)) {
-          finalDockerignore += `\n# Prisma generated client\n${PRISMA_GENERATED_DIR}\n`;
-          logger.info('Added Prisma generated folder to .dockerignore');
+        const prismaGeneratedDir = getPrismaGeneratedIgnorePath(config);
+        if (!finalDockerignore.includes(prismaGeneratedDir)) {
+          finalDockerignore += `\n# Prisma generated client\n${prismaGeneratedDir}\n`;
+          logger.info('Added Prisma generated folder to .dockerignore', { prismaGeneratedDir });
         }
       }
       await fs.writeFile(path.join(projectPath, '.dockerignore'), finalDockerignore);
