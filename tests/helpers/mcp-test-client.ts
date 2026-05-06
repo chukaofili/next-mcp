@@ -22,11 +22,16 @@ export class MCPTestClient {
 
   /**
    * Connect to the MCP server
+   *
+   * Optional `env` is merged into the spawned server's environment. Tests
+   * use this to flip the `NEXT_MCP_RECORD_COMMANDS` switch so `execCommand`
+   * records calls to a JSONL file instead of spawning real shells.
    */
-  async connect(serverPath: string): Promise<void> {
+  async connect(serverPath: string, env?: Record<string, string>): Promise<void> {
     this.transport = new StdioClientTransport({
       command: 'node',
       args: [serverPath],
+      ...(env ? { env } : {}),
     });
 
     await this.client.connect(this.transport);

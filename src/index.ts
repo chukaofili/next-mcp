@@ -8,7 +8,7 @@
  */
 import { execSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, promises as fs, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, promises as fs, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -189,15 +189,23 @@ export function getPrismaOutputArg(config: ProjectConfig): string {
  * Returns true when better-auth core sources should be routed into
  * `packages/auth`. This mirrors the gate in {@link generateFullModePackages}
  * (D4): the auth package is only emitted when `monorepo: 'full'`,
- * `auth: 'better-auth'`, AND a database is configured (the auth template
- * hard-codes `@<projectName>/db` as a workspace dep). For all other shapes,
- * auth files fall back to the app's `src/lib/`.
+ * `auth: 'better-auth'`, a database is configured, AND a real ORM is in use.
+ *
+ * The `orm !== 'none'` clause is load-bearing: the auth package template
+ * hard-codes `@<projectName>/db` as a workspace dep, but `packages/db` is
+ * only emitted when an ORM is configured (see Group D's gate). Routing into
+ * `packages/auth` without `packages/db` would produce an unresolvable
+ * workspace dep and break `pnpm install`. It would also break the
+ * better-auth CLI's `--config src/server.ts` path resolution from
+ * `apps/web` cwd. For all other shapes (including `full + ba + db +
+ * orm:none`), auth files fall back to the app's `src/lib/`.
  */
 export function shouldRouteToAuthPackage(config: ProjectConfig): boolean {
   return (
     config.architecture.monorepo === 'full' &&
     config.architecture.auth === 'better-auth' &&
-    config.architecture.database !== 'none'
+    config.architecture.database !== 'none' &&
+    config.architecture.orm !== 'none'
   );
 }
 
@@ -648,6 +656,23 @@ class NextMCPServer {
   ): { success: boolean; output?: string } {
     logger.info(`Running ${commandLabel}: ${command}`);
 
+    // Test-only short-circuit: when NEXT_MCP_RECORD_COMMANDS points at a
+    // file, append a JSON record per call instead of spawning a real shell.
+    // This lets integration tests assert what *would* have been executed
+    // (e.g. shadcn-registry add URLs and cwd) without waiting on network or
+    // package-manager I/O. Production code paths never set this var.
+    const recordPath = process.env.NEXT_MCP_RECORD_COMMANDS;
+    if (recordPath) {
+      try {
+        // Synchronous append keeps ordering stable across the pipeline.
+        const record = JSON.stringify({ command, cwd: projectPath, label: commandLabel }) + '\n';
+        appendFileSync(recordPath, record);
+      } catch (err) {
+        logger.warn(`Failed to record command to ${recordPath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return { success: true, output: '' };
+    }
+
     try {
       const output = execSync(command, {
         cwd: projectPath,
@@ -976,7 +1001,11 @@ class NextMCPServer {
     }
 
     // auth (D4)
-    if (auth === 'better-auth' && database !== 'none') {
+    // Gate must match `shouldRouteToAuthPackage`: the auth template hard-codes
+    // `@<projectName>/db: workspace:*` so we only emit `packages/auth` when
+    // `packages/db` will also be emitted (i.e. `orm !== 'none'`). For
+    // `full + ba + db + orm:none` the auth files stay in `apps/web/src/lib`.
+    if (auth === 'better-auth' && database !== 'none' && orm !== 'none') {
       await this.copyPackageTemplate(config, projectPath, 'auth');
     }
 
@@ -2323,13 +2352,16 @@ export const db = drizzle(pool, { schema });`;
       }
     }
 
-    // Rewrite `@/lib/auth` and `@/lib/auth-client` imports.
-    //
-    // Order matters: `@/lib/auth-client` must be matched BEFORE `@/lib/auth`
-    // or the shorter alias would partially consume the longer one and leave
-    // a corrupted specifier. The walker preserves regex-anchor context so
-    // string literals containing `@/lib/auth` (JSDoc, log strings, fixtures)
-    // are left alone.
+    // Rewrite `@/lib/auth` and `@/lib/auth-client` imports. The walker sorts
+    // mappings longest-prefix-first internally, so the deliberately
+    // shorter-prefix-first order below is safe AND doubles as a regression
+    // guard: if `rewriteImportsInTree` ever stops sorting, this callsite
+    // would corrupt `@/lib/auth-client` imports into `<pkg>/server-client`
+    // and the dedicated test in setup-authentication.test.ts ("rewrites
+    // pre-existing apps/web @/lib/auth(-client) imports to workspace
+    // subpaths") would fail. The walker also preserves regex-anchor context
+    // so string literals containing `@/lib/auth` (JSDoc, log strings,
+    // fixtures) are left alone.
     //
     // We also intentionally do NOT preserve a subpath on the auth aliases:
     // `@/lib/auth` is a single-file alias (not a directory), so any
@@ -2339,8 +2371,8 @@ export const db = drizzle(pool, { schema });`;
       const root = path.join(appPath, sub);
       if (existsSync(root)) {
         await this.rewriteImportsInTree(root, [
-          { alias: '@/lib/auth-client', replacement: `${authPkgName}/client`, preserveSubpath: false },
           { alias: '@/lib/auth', replacement: `${authPkgName}/server`, preserveSubpath: false },
+          { alias: '@/lib/auth-client', replacement: `${authPkgName}/client`, preserveSubpath: false },
         ]);
       }
     }
@@ -2353,10 +2385,9 @@ export const db = drizzle(pool, { schema });`;
    * specifiers per the supplied {@link ImportRewriteMapping}s. All matches
    * across all mappings are applied in a single pass per file.
    *
-   * Mappings are applied in array order. Callers MUST pass them
-   * longest-prefix-first when aliases share a prefix (e.g.
-   * `@/lib/auth-client` before `@/lib/auth`) to avoid the shorter regex
-   * partially consuming the longer specifier.
+   * Mappings are sorted internally by descending alias length so when two
+   * aliases share a prefix (e.g. `@/lib/auth-client` and `@/lib/auth`) the
+   * longer one is matched first — callers do not need to pre-order them.
    *
    * Each mapping anchors its regex on import context (`from`, `import`,
    * `require`) so string literals that merely contain the alias are left
@@ -2364,6 +2395,9 @@ export const db = drizzle(pool, { schema });`;
    * load-bearing assertion.
    */
   private async rewriteImportsInTree(root: string, mappings: ImportRewriteMapping[]): Promise<void> {
+    // Sort longest-prefix-first so a shorter alias can never partially
+    // consume a longer one. Callers may pass mappings in any order.
+    const sortedMappings = [...mappings].sort((a, b) => b.alias.length - a.alias.length);
     const skipDirs = new Set(['node_modules', '.next', '.prisma', '.turbo', 'dist', 'public']);
     const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
@@ -2379,7 +2413,7 @@ export const db = drizzle(pool, { schema });`;
       const original = await fs.readFile(fullPath, 'utf-8');
       let updated = original;
 
-      for (const mapping of mappings) {
+      for (const mapping of sortedMappings) {
         // Anchor on import context so we don't accidentally rewrite string
         // literals in JSDoc, console logs, fixtures, etc. We cover four forms:
         //   - static `from '...'` (default/named/side-effect / export-from)
@@ -2538,8 +2572,9 @@ const db = new Database("./dev.db");`,
    * `--config <path>` is interpreted relative to the better-auth CLI's cwd.
    * In `packages/auth` routing, the auth file is `src/server.ts` (relative to
    * `packages/auth`); in legacy mode it is `src/lib/auth.ts` (relative to the
-   * app — flat or `apps/web`). Schema/migration commands are run with the
-   * cwd returned by {@link getAuthCommandCwd} so the relative paths match.
+   * app — flat or `apps/web`). Schema commands run with the cwd returned by
+   * {@link getAuthSchemaCwd} and migration commands with {@link
+   * getAuthMigrationCwd} so the relative paths match.
    */
   private getAuthSchemaCommand(config: ProjectConfig): string {
     const configRelPath = shouldRouteToAuthPackage(config) ? 'src/server.ts' : 'src/lib/auth.ts';
