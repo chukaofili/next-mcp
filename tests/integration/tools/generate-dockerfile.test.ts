@@ -317,6 +317,85 @@ describe('generate_dockerfile tool', () => {
       expect(compose).toContain('./prisma:/app/prisma');
     });
 
+    it('uses monorepo template + mysql:9 image + packages/db .dockerignore for full + mysql + prisma + pnpm (audit 1c)', async () => {
+      // Audit gap-fill 1c: prior tests covered full + postgres + prisma but
+      // not full + mysql + prisma. This pins three orthogonal slices for the
+      // mysql branch: Dockerfile is the monorepo template, docker-compose
+      // picks `mysql:9`, and `.dockerignore` carries the routed prisma path.
+      const dir = await createTempDir('next-mcp-full-mysql-');
+      try {
+        const config = createMockConfig({
+          name: 'mysql-full',
+          architecture: {
+            monorepo: 'full',
+            packageManager: 'pnpm',
+            database: 'mysql',
+            orm: 'prisma',
+          },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        const dockerfile = await readFile(path.join(dir, 'Dockerfile'));
+        expect(dockerfile).toContain('turbo@^2 prune');
+        expect(dockerfile).toContain('PACKAGE="@mysql-full/web"');
+
+        const compose = await readFile(path.join(dir, 'docker-compose.yml'));
+        expect(compose).toContain('mysql:9');
+
+        const dockerignore = await readFile(path.join(dir, '.dockerignore'));
+        expect(dockerignore).toContain('packages/db/src/.prisma');
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+
+    it('uses monorepo template + omits db service + packages/db .dockerignore for full + sqlite + prisma + pnpm (audit 1d)', async () => {
+      // Audit gap-fill 1d: sqlite is file-based, so docker-compose has no
+      // db: service for it. The migrate: service is still expected because
+      // prisma is in play. Dockerfile is the monorepo template; .dockerignore
+      // tracks the routed prisma path. This guards both the sqlite docker
+      // path AND the routed prisma path against silent regressions.
+      const dir = await createTempDir('next-mcp-full-sqlite-');
+      try {
+        const config = createMockConfig({
+          name: 'sqlite-full',
+          architecture: {
+            monorepo: 'full',
+            packageManager: 'pnpm',
+            database: 'sqlite',
+            orm: 'prisma',
+          },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        const dockerfile = await readFile(path.join(dir, 'Dockerfile'));
+        expect(dockerfile).toContain('turbo@^2 prune');
+
+        const compose = await readFile(path.join(dir, 'docker-compose.yml'));
+        // sqlite is file-based — no db: service block should be emitted.
+        // The migrate service's `depends_on:` does include the literal
+        // `db:` key as a child, so the structural check has to look for a
+        // db SERVICE (a `db:` block with an `image:` child), not just any
+        // occurrence of `db:`. None of the four image strings below should
+        // appear because no db service exists for sqlite.
+        expect(compose).not.toContain('image: postgres');
+        expect(compose).not.toContain('image: mysql');
+        expect(compose).not.toContain('image: mongo');
+        // The migrate service IS still expected — prisma drives schema
+        // deploys regardless of whether the db service exists.
+        expect(compose).toContain('migrate:');
+
+        const dockerignore = await readFile(path.join(dir, '.dockerignore'));
+        expect(dockerignore).toContain('packages/db/src/.prisma');
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+
     it('still writes Dockerfile.migrate for prisma+db regardless of monorepo mode', async () => {
       const config = createMockConfig({
         name: 'migrate-full',

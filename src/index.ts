@@ -481,11 +481,83 @@ export type PackageManager = NonNullable<ProjectConfig['architecture']['packageM
  * (used for `@/lib/auth` and `@/lib/auth-client`, which are single-file
  * aliases — any `/<sub>` form would already be invalid in the legacy layout).
  */
-type ImportRewriteMapping = {
+export type ImportRewriteMapping = {
   alias: string;
   replacement: string;
   preserveSubpath: boolean;
 };
+
+/**
+ * Recursively visit `.ts` / `.tsx` files under `root` and rewrite import
+ * specifiers per the supplied {@link ImportRewriteMapping}s. All matches
+ * across all mappings are applied in a single pass per file.
+ *
+ * Mappings are sorted internally by descending alias length so when two
+ * aliases share a prefix (e.g. `@/lib/auth-client` and `@/lib/auth`) the
+ * longer one is matched first — callers do not need to pre-order them.
+ *
+ * Each mapping anchors its regex on import context (`from`, `import`,
+ * `require`) so string literals that merely contain the alias are left
+ * alone.
+ *
+ * Skipped directories: `node_modules`, `.next`, `.prisma`, `.turbo`,
+ * `dist`, `public`.
+ *
+ * Exported standalone (in addition to being used internally) so it can be
+ * unit-tested directly without spinning up the full MCP server.
+ */
+export async function rewriteImportsInTree(
+  root: string,
+  mappings: ImportRewriteMapping[]
+): Promise<void> {
+  // Sort longest-prefix-first so a shorter alias can never partially
+  // consume a longer one. Callers may pass mappings in any order.
+  const sortedMappings = [...mappings].sort((a, b) => b.alias.length - a.alias.length);
+  const skipDirs = new Set(['node_modules', '.next', '.prisma', '.turbo', 'dist', 'public']);
+  const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const fullPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      if (skipDirs.has(entry.name)) continue;
+      await rewriteImportsInTree(fullPath, mappings);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+
+    const original = await fs.readFile(fullPath, 'utf-8');
+    let updated = original;
+
+    for (const mapping of sortedMappings) {
+      // Anchor on import context so we don't accidentally rewrite string
+      // literals in JSDoc, console logs, fixtures, etc. We cover four forms:
+      //   - static `from '...'` (default/named/side-effect / export-from)
+      //   - bare side-effect `import '...'`
+      //   - dynamic `import('...')` (the `(` is captured as part of the prefix)
+      //   - CJS `require('...')`
+      // The alias is escaped for regex, and `preserveSubpath` controls
+      // whether `<alias>/<sub>` is preserved (db case) or treated as the
+      // exact alias only (auth case, where the alias maps to a single file).
+      const escapedAlias = mapping.alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = mapping.preserveSubpath
+        ? new RegExp(
+            `((?:from|import|require)\\s*\\(?\\s*)(['"])${escapedAlias}(\\/[^'"]*)?\\2`,
+            'g'
+          )
+        : new RegExp(`((?:from|import|require)\\s*\\(?\\s*)(['"])${escapedAlias}\\2`, 'g');
+
+      updated = updated.replace(pattern, (_match, prefix: string, quote: string, sub?: string) => {
+        const tail = mapping.preserveSubpath ? (sub ?? '') : '';
+        return `${prefix}${quote}${mapping.replacement}${tail}${quote}`;
+      });
+    }
+
+    if (updated !== original) {
+      await fs.writeFile(fullPath, updated);
+      logger.info(`Rewrote imports in ${path.relative(root, fullPath)}`);
+    }
+  }
+}
 
 const ORM_PACKAGE_SUBDIR: Partial<Record<NonNullable<ProjectConfig['architecture']['orm']>, string>> = {
   prisma: 'db/prisma',
@@ -2430,67 +2502,14 @@ export const db = drizzle(pool, { schema });`;
   }
 
   /**
-   * Recursively visit `.ts` / `.tsx` files under `root` and rewrite import
-   * specifiers per the supplied {@link ImportRewriteMapping}s. All matches
-   * across all mappings are applied in a single pass per file.
-   *
-   * Mappings are sorted internally by descending alias length so when two
-   * aliases share a prefix (e.g. `@/lib/auth-client` and `@/lib/auth`) the
-   * longer one is matched first — callers do not need to pre-order them.
-   *
-   * Each mapping anchors its regex on import context (`from`, `import`,
-   * `require`) so string literals that merely contain the alias are left
-   * alone — see Group F1's `rewrite-anchored` regression test for the
-   * load-bearing assertion.
+   * Thin wrapper that delegates to the exported {@link rewriteImportsInTree}.
+   * Kept as an instance method so the existing call sites
+   * (`this.rewriteImportsInTree(...)`) keep working without churn. The
+   * implementation moved to the top-level export so it can be unit-tested
+   * directly without instantiating the server.
    */
   private async rewriteImportsInTree(root: string, mappings: ImportRewriteMapping[]): Promise<void> {
-    // Sort longest-prefix-first so a shorter alias can never partially
-    // consume a longer one. Callers may pass mappings in any order.
-    const sortedMappings = [...mappings].sort((a, b) => b.alias.length - a.alias.length);
-    const skipDirs = new Set(['node_modules', '.next', '.prisma', '.turbo', 'dist', 'public']);
-    const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      const fullPath = path.join(root, entry.name);
-      if (entry.isDirectory()) {
-        if (skipDirs.has(entry.name)) continue;
-        await this.rewriteImportsInTree(fullPath, mappings);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      if (!/\.(ts|tsx)$/.test(entry.name)) continue;
-
-      const original = await fs.readFile(fullPath, 'utf-8');
-      let updated = original;
-
-      for (const mapping of sortedMappings) {
-        // Anchor on import context so we don't accidentally rewrite string
-        // literals in JSDoc, console logs, fixtures, etc. We cover four forms:
-        //   - static `from '...'` (default/named/side-effect / export-from)
-        //   - bare side-effect `import '...'`
-        //   - dynamic `import('...')` (the `(` is captured as part of the prefix)
-        //   - CJS `require('...')`
-        // The alias is escaped for regex, and `preserveSubpath` controls
-        // whether `<alias>/<sub>` is preserved (db case) or treated as the
-        // exact alias only (auth case, where the alias maps to a single file).
-        const escapedAlias = mapping.alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const pattern = mapping.preserveSubpath
-          ? new RegExp(
-              `((?:from|import|require)\\s*\\(?\\s*)(['"])${escapedAlias}(\\/[^'"]*)?\\2`,
-              'g'
-            )
-          : new RegExp(`((?:from|import|require)\\s*\\(?\\s*)(['"])${escapedAlias}\\2`, 'g');
-
-        updated = updated.replace(pattern, (_match, prefix: string, quote: string, sub?: string) => {
-          const tail = mapping.preserveSubpath ? (sub ?? '') : '';
-          return `${prefix}${quote}${mapping.replacement}${tail}${quote}`;
-        });
-      }
-
-      if (updated !== original) {
-        await fs.writeFile(fullPath, updated);
-        logger.info(`Rewrote imports in ${path.relative(root, fullPath)}`);
-      }
-    }
+    await rewriteImportsInTree(root, mappings);
   }
 
   private generateDatabaseInstructions(config: ProjectConfig, dbPkgName?: string): string {

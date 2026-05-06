@@ -270,4 +270,31 @@ describe('ProjectConfigSchema — monorepo & rpc', () => {
       })
     ).toThrow(/rpc.*orpc.*monorepo.*full/i);
   });
+
+  it('rejects rpc:orpc with monorepo:none too (audit 3a)', () => {
+    // Audit gap-fill 3a: the previous test only covers `monorepo: 'minimal'`.
+    // The schema's refine() rejects ANY non-`full` value. Without this test,
+    // a future change that special-cased `minimal` (e.g. an inverted boolean)
+    // would silently allow `none + orpc`, which generates an unbuildable
+    // packages/orpc dep tree.
+    expect(() =>
+      ProjectConfigSchema.parse({
+        name: 'x',
+        architecture: { monorepo: 'none', rpc: 'orpc' },
+      })
+    ).toThrow(/rpc.*orpc.*monorepo.*full/i);
+  });
+
+  it('rejects rpc:orpc when monorepo defaults to "none" (no monorepo set)', () => {
+    // Defense-in-depth: the default for `monorepo` is `'none'`, so an input
+    // that only sets rpc:orpc (relying on defaults for monorepo) must still
+    // be rejected. This pins the interaction between the default and the
+    // refine() — if either ever drifts, this test catches it.
+    expect(() =>
+      ProjectConfigSchema.parse({
+        name: 'x',
+        architecture: { rpc: 'orpc' },
+      })
+    ).toThrow(/rpc.*orpc.*monorepo.*full/i);
+  });
 });

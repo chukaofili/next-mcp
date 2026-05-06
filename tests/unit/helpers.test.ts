@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { buildShadcnInitCommand, getAppPath, getShadcnRunner, substituteCatalog, substituteDockerfilePlaceholders, substituteProjectName } from '../../src/index.js';
+import { buildShadcnInitCommand, getAppPath, getShadcnRunner, rewriteImportsInTree, substituteCatalog, substituteDockerfilePlaceholders, substituteProjectName } from '../../src/index.js';
 import type { ProjectConfig } from '../../src/index.js';
 import {
   cleanupTempDir,
@@ -323,6 +323,179 @@ const DOCKERFILE_MONOREPO_TEMPLATE = readFileSync(
   path.join(__dirname2, '../../src/templates/docker/Dockerfile.monorepo'),
   'utf-8'
 );
+
+describe('rewriteImportsInTree', () => {
+  // Audit Priority 4: rewriteImportsInTree was only exercised through end-to-end
+  // setup_database / setup_authentication tests. These unit tests cover the
+  // walker mechanics directly: subdirectory traversal, file-extension filter,
+  // skip-list, idempotency, and the longest-prefix-first sort with three
+  // overlapping aliases (broader than the existing two-mapping regression).
+
+  let root: string;
+
+  beforeEach(async () => {
+    root = await createTempDir('next-mcp-rewrite-walk-');
+  });
+
+  afterEach(async () => {
+    await cleanupTempDir(root);
+  });
+
+  /** Helper: write a file with the given relative path under the test root. */
+  async function writeAt(rel: string, contents: string): Promise<string> {
+    const full = path.join(root, rel);
+    await fs.mkdir(path.dirname(full), { recursive: true });
+    await fs.writeFile(full, contents, 'utf-8');
+    return full;
+  }
+
+  it('walks multiple subdirectories and only rewrites .ts and .tsx files', async () => {
+    // dir1/file1.ts and dir2/sub/file2.tsx — both must be rewritten.
+    // dir1/sibling.js, dir2/notes.md — must NOT be rewritten.
+    const ts = await writeAt('dir1/file1.ts', "import { db } from '@/lib/db';\nexport const x = db;\n");
+    const tsx = await writeAt(
+      'dir2/sub/file2.tsx',
+      "import { db } from '@/lib/db';\nexport function C() { return null; }\n"
+    );
+    const js = await writeAt('dir1/sibling.js', "import { db } from '@/lib/db';\nexport const y = db;\n");
+    const md = await writeAt('dir2/notes.md', 'see @/lib/db for details\n');
+
+    await rewriteImportsInTree(root, [
+      { alias: '@/lib/db', replacement: '@acme/db', preserveSubpath: true },
+    ]);
+
+    expect(await fs.readFile(ts, 'utf-8')).toContain("from '@acme/db'");
+    expect(await fs.readFile(tsx, 'utf-8')).toContain("from '@acme/db'");
+    // .js / .md files must be untouched — file-extension filter is `.ts|.tsx` only.
+    expect(await fs.readFile(js, 'utf-8')).toContain("from '@/lib/db'");
+    expect(await fs.readFile(md, 'utf-8')).toBe('see @/lib/db for details\n');
+  });
+
+  it('skips node_modules, .next, .prisma, .turbo, dist, public directories', async () => {
+    // For each skip-listed dir, drop a real .ts file with a real import
+    // statement — if the walker descends, the import WILL be rewritten and
+    // the assertion fails. Note the file extension and import shape match
+    // exactly what the rewriter targets, so the only thing keeping these
+    // files untouched is the skip-list.
+    const skipDirs = ['node_modules', '.next', '.prisma', '.turbo', 'dist', 'public'];
+    const skippedFiles: string[] = [];
+    for (const dir of skipDirs) {
+      skippedFiles.push(
+        await writeAt(
+          `${dir}/leaf.ts`,
+          "import { db } from '@/lib/db';\nexport const v = db;\n"
+        )
+      );
+    }
+    // Add a sibling file in a non-skipped directory so we know the walker
+    // ran at all (positive control).
+    const positive = await writeAt(
+      'src/active.ts',
+      "import { db } from '@/lib/db';\nexport const v = db;\n"
+    );
+
+    await rewriteImportsInTree(root, [
+      { alias: '@/lib/db', replacement: '@acme/db', preserveSubpath: true },
+    ]);
+
+    // The positive control IS rewritten — proves the walker engaged.
+    expect(await fs.readFile(positive, 'utf-8')).toContain("from '@acme/db'");
+
+    // Each skip-listed dir's leaf is byte-for-byte unchanged.
+    for (const file of skippedFiles) {
+      expect(await fs.readFile(file, 'utf-8')).toBe(
+        "import { db } from '@/lib/db';\nexport const v = db;\n"
+      );
+    }
+  });
+
+  it('is idempotent — running twice produces the same output as running once', async () => {
+    const target = await writeAt(
+      'src/idempotent.ts',
+      [
+        "import { db } from '@/lib/db';",
+        "import type { User } from '@/lib/db/types';",
+        "import { auth } from '@/lib/auth';",
+        '',
+        'export const refs = { db, User: null as User | null, auth };',
+        '',
+      ].join('\n')
+    );
+
+    const mappings: Parameters<typeof rewriteImportsInTree>[1] = [
+      { alias: '@/lib/db', replacement: '@acme/db', preserveSubpath: true },
+      { alias: '@/lib/auth', replacement: '@acme/auth/server', preserveSubpath: false },
+    ];
+
+    await rewriteImportsInTree(root, mappings);
+    const afterOne = await fs.readFile(target, 'utf-8');
+
+    await rewriteImportsInTree(root, mappings);
+    const afterTwo = await fs.readFile(target, 'utf-8');
+
+    expect(afterTwo).toBe(afterOne);
+    // And the content matches expectations (sanity check).
+    expect(afterOne).toContain("from '@acme/db'");
+    expect(afterOne).toContain("from '@acme/db/types'");
+    expect(afterOne).toContain("from '@acme/auth/server'");
+    expect(afterOne).not.toContain("from '@/lib/db'");
+    expect(afterOne).not.toContain("from '@/lib/auth'");
+  });
+
+  it('sorts mappings longest-prefix-first regardless of input order (3 overlapping aliases)', async () => {
+    // Three aliases share a prefix. With an alphabetic / shortest-first sort,
+    // `@/lib/auth` would partially consume `@/lib/auth-client` and the
+    // resulting import would point at `@acme/auth/server-client` (broken).
+    // The walker's internal sort guarantees the longest alias matches first
+    // even when the caller passes them in any order.
+    const target = await writeAt(
+      'src/overlapping.ts',
+      [
+        // Source order matters here — the longest alias is FIRST in source,
+        // so a naive scanner that already touched the bytes for it would be
+        // re-touched by the shorter alias if the sort were broken.
+        "import { authClientApi } from '@/lib/auth-client-api';",
+        "import { authClient } from '@/lib/auth-client';",
+        "import { auth } from '@/lib/auth';",
+        '',
+        'export const refs = { auth, authClient, authClientApi };',
+        '',
+      ].join('\n')
+    );
+
+    // Pass mappings in deliberately bad order (shortest first) so a
+    // regression that drops the internal sort would surface immediately.
+    await rewriteImportsInTree(root, [
+      { alias: '@/lib/auth', replacement: '@acme/auth/server', preserveSubpath: false },
+      { alias: '@/lib/auth-client', replacement: '@acme/auth/client', preserveSubpath: false },
+      { alias: '@/lib/auth-client-api', replacement: '@acme/auth/client-api', preserveSubpath: false },
+    ]);
+
+    const rewritten = await fs.readFile(target, 'utf-8');
+    expect(rewritten).toContain("from '@acme/auth/server'");
+    expect(rewritten).toContain("from '@acme/auth/client'");
+    expect(rewritten).toContain("from '@acme/auth/client-api'");
+    // Fail-modes for a broken sort: the shorter alias consuming the longer
+    // one's prefix and producing nonsense replacements.
+    expect(rewritten).not.toContain('@acme/auth/server-client');
+    expect(rewritten).not.toContain('@acme/auth/server-client-api');
+    // And no legacy alias remains anywhere.
+    expect(rewritten).not.toContain("from '@/lib/auth'");
+    expect(rewritten).not.toContain("from '@/lib/auth-client'");
+    expect(rewritten).not.toContain("from '@/lib/auth-client-api'");
+  });
+
+  it('handles empty roots and empty mapping lists without throwing', async () => {
+    // Defensive: walker over an empty dir, and walker with no mappings —
+    // both must be safe no-ops.
+    await expect(rewriteImportsInTree(root, [])).resolves.toBeUndefined();
+
+    const file = await writeAt('src/leaf.ts', "import { db } from '@/lib/db';\n");
+    await rewriteImportsInTree(root, []);
+    // No mappings -> file unchanged.
+    expect(await fs.readFile(file, 'utf-8')).toBe("import { db } from '@/lib/db';\n");
+  });
+});
 
 describe('Dockerfile.monorepo substitution end-to-end', () => {
   it.each(['pnpm', 'npm', 'yarn', 'bun'] as const)(

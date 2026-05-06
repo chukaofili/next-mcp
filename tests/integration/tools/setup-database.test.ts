@@ -364,6 +364,61 @@ describe('setup_database tool — monorepo:full', () => {
     expect(await dirExists(path.join(dbPkgDir, 'src', 'models'))).toBe(true);
   }, 120000);
 
+  it('routes mongoose sources fully into packages/db with workspace dep + content check (audit 1a)', async () => {
+    // Audit gap-fill 1a: F1's tests covered prisma + drizzle in full mode but
+    // skipped mongoose. This test pins the on-disk shape for the third ORM:
+    //  - sources land in packages/db/src (NOT apps/web/src/lib/db),
+    //  - the models dir is created with a .gitkeep marker,
+    //  - apps/web depends on @<n>/db: workspace:*, and
+    //  - connection.ts/index.ts contents match the mongoose templates.
+    const projectName = 'full-db-mongoose-content';
+    const projectPath = path.join(tempDir, projectName);
+    const appPath = path.join(projectPath, 'apps', 'web');
+    const dbPkgDir = path.join(projectPath, 'packages', 'db');
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'mongodb',
+        orm: 'mongoose',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const result = await client.callTool('setup_database', { config, projectPath });
+    expect(client.isSuccess(result)).toBe(true);
+
+    // Connection + barrel land in packages/db/src, NOT at apps/web/src/lib/db.
+    expect(await fileExists(path.join(dbPkgDir, 'src', 'connection.ts'))).toBe(true);
+    expect(await fileExists(path.join(dbPkgDir, 'src', 'index.ts'))).toBe(true);
+    expect(await fileExists(path.join(appPath, 'src', 'lib', 'db', 'connection.ts'))).toBe(false);
+
+    // Models directory is created with the .gitkeep marker so the empty dir
+    // survives `git add`.
+    expect(await fileExists(path.join(dbPkgDir, 'src', 'models', '.gitkeep'))).toBe(true);
+
+    // Connection content reads back as the mongoose template (key signals
+    // that prove the right template was picked, not just any file).
+    const connection = await fs.readFile(path.join(dbPkgDir, 'src', 'connection.ts'), 'utf-8');
+    expect(connection).toContain("import mongoose from 'mongoose'");
+    expect(connection).toContain('const MONGODB_URI = process.env.DATABASE_URL');
+    expect(connection).toContain('export default connectDB');
+
+    // Barrel re-exports the default connection plus leaves a hint for models.
+    const indexContent = await fs.readFile(path.join(dbPkgDir, 'src', 'index.ts'), 'utf-8');
+    expect(indexContent).toContain("export { default as connectDB } from './connection'");
+
+    // apps/web depends on the workspace db package.
+    const appPkg = JSON.parse(await fs.readFile(path.join(appPath, 'package.json'), 'utf-8'));
+    expect(appPkg.dependencies?.[`@${projectName}/db`]).toBe('workspace:*');
+  }, 120000);
+
   it('falls back to apps/web for direct driver (orm:none) since packages/db is not emitted', async () => {
     const projectName = 'full-db-direct-route';
     const projectPath = path.join(tempDir, projectName);
@@ -498,6 +553,70 @@ describe('setup_database tool — monorepo:full', () => {
     // it — that's acceptable; comments don't affect runtime resolution. The
     // load-bearing assertions are the three string-literal checks above.
   }, 120000);
+
+  it('documents observed re-run behavior on the same project (audit 5a)', async () => {
+    // Audit gap-fill 5a: re-run behavior is undocumented today. The point of
+    // this test is NOT to require idempotency — it's to PIN the observed
+    // behavior (success-or-error and which side effects survive) so a future
+    // change that silently flips the policy fails loudly. If today's behavior
+    // changes intentionally, this assertion needs an update with the change.
+    const projectName = 'full-db-prisma-rerun';
+    const projectPath = path.join(tempDir, projectName);
+    const dbPkgDir = path.join(projectPath, 'packages', 'db');
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const first = await client.callTool('setup_database', { config, projectPath });
+    expect(client.isSuccess(first)).toBe(true);
+
+    // Capture key files after the first run.
+    const schemaPath = path.join(dbPkgDir, 'prisma', 'schema.prisma');
+    const clientPath = path.join(dbPkgDir, 'src', 'client.ts');
+    const indexPath = path.join(dbPkgDir, 'src', 'index.ts');
+    const firstSchema = await fs.readFile(schemaPath, 'utf-8');
+    const firstClient = await fs.readFile(clientPath, 'utf-8');
+    const firstIndex = await fs.readFile(indexPath, 'utf-8');
+
+    // Second run on the same project. Document whatever happens — currently
+    // setup_database overwrites cleanly without erroring.
+    const second = await client.callTool('setup_database', { config, projectPath });
+
+    // Observed behavior today: the second run reports success, NOT a failure.
+    // If this changes (e.g. it starts erroring on a non-empty packages/db),
+    // update both the assertion and the next-steps text in
+    // generateDatabaseInstructions to match.
+    expect(client.isSuccess(second)).toBe(true);
+
+    // The files exist and have the same shape after the re-run. Content
+    // equality pins the "overwrites cleanly with the same template" behavior;
+    // if the tool ever starts merging or appending, this assertion catches it.
+    const secondSchema = await fs.readFile(schemaPath, 'utf-8');
+    const secondClient = await fs.readFile(clientPath, 'utf-8');
+    const secondIndex = await fs.readFile(indexPath, 'utf-8');
+    expect(secondSchema).toBe(firstSchema);
+    expect(secondClient).toBe(firstClient);
+    expect(secondIndex).toBe(firstIndex);
+
+    // apps/web/package.json's @<n>/db dep is still pinned to workspace:*
+    // (no duplicate or version drift after the second run).
+    const appPkg = JSON.parse(
+      await fs.readFile(path.join(projectPath, 'apps', 'web', 'package.json'), 'utf-8')
+    );
+    expect(appPkg.dependencies?.[`@${projectName}/db`]).toBe('workspace:*');
+  }, 180000);
 
   it('import-rewrite is a no-op when apps/web has no @/lib/db imports', async () => {
     const projectName = 'full-db-noop-rewrite';

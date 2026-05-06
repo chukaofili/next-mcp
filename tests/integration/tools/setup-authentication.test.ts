@@ -407,6 +407,119 @@ describe('setup_authentication tool — monorepo:full', () => {
     expect(rewritten).not.toContain("from '@/lib/auth-client'");
   }, 120000);
 
+  it('routes drizzle adapter into packages/auth/src/server.ts (audit 1b)', async () => {
+    // Audit gap-fill 1b: G1's tests covered full + prisma and full + orm:none.
+    // The drizzle branch of `getAdapterConfig` is unexercised — if it ever
+    // regresses (wrong adapter import path, wrong `provider:` value, or the
+    // db import string drifts), no test catches it. This test pins:
+    //   - server.ts is at packages/auth/src/server.ts (routed)
+    //   - adapter import string: `better-auth/adapters/drizzle`
+    //   - body: `drizzleAdapter(db, {`
+    //   - `provider: "pg"` for postgres
+    //   - db import resolves to the workspace `@<n>/db`, NOT `@/lib/db`
+    const projectName = 'full-auth-drizzle-route';
+    const projectPath = path.join(tempDir, projectName);
+    const authPkgDir = path.join(projectPath, 'packages', 'auth');
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'postgres',
+        orm: 'drizzle',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    // Run setup_database first so packages/db is on disk before auth wires
+    // its workspace dep — mirrors the realistic tool order.
+    const dbResult = await client.callTool('setup_database', { config, projectPath });
+    expect(client.isSuccess(dbResult)).toBe(true);
+
+    const authResult = await client.callTool('setup_authentication', { config, projectPath });
+    expect(client.isSuccess(authResult)).toBe(true);
+
+    expect(await fileExists(path.join(authPkgDir, 'src', 'server.ts'))).toBe(true);
+
+    const serverContent = await fs.readFile(path.join(authPkgDir, 'src', 'server.ts'), 'utf-8');
+    // Adapter import must be exactly the drizzle subpath.
+    expect(serverContent).toContain('import { drizzleAdapter } from "better-auth/adapters/drizzle"');
+    // Body uses drizzleAdapter (not prismaAdapter) and pins `provider: "pg"`
+    // for postgres (drizzle's enum, distinct from prisma's `postgresql`).
+    expect(serverContent).toContain('drizzleAdapter(db, {');
+    expect(serverContent).toContain('provider: "pg"');
+    // db import is the workspace package, not the legacy alias.
+    expect(serverContent).toContain(`from "@${projectName}/db"`);
+    expect(serverContent).not.toContain('from "@/lib/db"');
+    // No leaked placeholders.
+    expect(serverContent).not.toContain('__ADAPTER_IMPORT__');
+  }, 120000);
+
+  it('documents observed re-run behavior on the same project (audit 5b)', async () => {
+    // Audit gap-fill 5b: mirror of 5a but for setup_authentication. The point
+    // is to PIN today's behavior (success + content stable) so a silent
+    // change in re-run policy fails loudly. The test runs setup_database
+    // first because setup_authentication requires the workspace db package
+    // to exist in full mode.
+    const projectName = 'full-auth-rerun';
+    const projectPath = path.join(tempDir, projectName);
+    const authPkgDir = path.join(projectPath, 'packages', 'auth');
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const dbResult = await client.callTool('setup_database', { config, projectPath });
+    expect(client.isSuccess(dbResult)).toBe(true);
+
+    const first = await client.callTool('setup_authentication', { config, projectPath });
+    expect(client.isSuccess(first)).toBe(true);
+
+    const serverPathFile = path.join(authPkgDir, 'src', 'server.ts');
+    const clientPathFile = path.join(authPkgDir, 'src', 'client.ts');
+    const indexPathFile = path.join(authPkgDir, 'src', 'index.ts');
+    const firstServer = await fs.readFile(serverPathFile, 'utf-8');
+    const firstClient = await fs.readFile(clientPathFile, 'utf-8');
+    const firstIndex = await fs.readFile(indexPathFile, 'utf-8');
+
+    // Second run.
+    const second = await client.callTool('setup_authentication', { config, projectPath });
+
+    // Observed behavior today: re-running succeeds. If this changes
+    // (e.g. the tool starts erroring out on a non-empty packages/auth),
+    // update the assertion together with the policy change.
+    expect(client.isSuccess(second)).toBe(true);
+
+    const secondServer = await fs.readFile(serverPathFile, 'utf-8');
+    const secondClient = await fs.readFile(clientPathFile, 'utf-8');
+    const secondIndex = await fs.readFile(indexPathFile, 'utf-8');
+    expect(secondServer).toBe(firstServer);
+    expect(secondClient).toBe(firstClient);
+    expect(secondIndex).toBe(firstIndex);
+
+    // apps/web/package.json still has the auth workspace dep (no drift).
+    const appPkg = JSON.parse(
+      await fs.readFile(path.join(projectPath, 'apps', 'web', 'package.json'), 'utf-8')
+    );
+    expect(appPkg.dependencies?.[`@${projectName}/auth`]).toBe('workspace:*');
+  }, 180000);
+
   it('full + better-auth + postgres + orm:none falls back to legacy apps/web/src/lib (no packages/auth)', async () => {
     // Important #1 regression. `shouldRouteToAuthPackage` now also requires
     // `orm !== 'none'` because the packages/auth template hard-codes
