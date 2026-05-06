@@ -1612,6 +1612,21 @@ class NextMCPServer {
       };
     }
 
+    // Docker helper scripts live on the workspace root in monorepo modes
+    // because `Dockerfile` + `docker-compose.yml` are emitted there (not
+    // in apps/web). The flat-mode equivalents are added by
+    // {@link updatePackageJson} which writes the project-root package.json
+    // in flat mode — same scripts, different call site. Putting them on
+    // apps/web would point users at a build context where the docker
+    // assets don't exist.
+    parsed.scripts = {
+      ...(parsed.scripts ?? {}),
+      'docker:build': `docker build -t ${projectName} .`,
+      'docker:run': `docker run -p 3000:3000 ${projectName}`,
+      'docker:dev:up': 'docker-compose -f docker-compose.yml up',
+      'docker:dev:down': 'docker-compose -f docker-compose.yml down',
+    };
+
     // Strip test-related scripts when no test runner was configured. The
     // template ships `test`, `test:watch`, and `pipeline` (which invokes
     // turbo's `test` task) for the common case, but turbo 2 errors with
@@ -1902,19 +1917,27 @@ class NextMCPServer {
       const packageJsonPath = path.join(appPath, 'package.json');
       const existingPackageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
 
-      // Add additional scripts
+      // Add additional scripts. `docker:*` scripts are only added in flat
+      // mode here — in monorepo modes the Dockerfile + docker-compose.yml
+      // live at the workspace root, so the scripts belong on the root
+      // package.json (added by {@link scaffoldMonorepoRoot}). Adding them
+      // to apps/web in monorepo mode would point users at the wrong build
+      // context where the docker assets don't exist.
       const additionalScripts: Record<string, string> = {
         'type-check': 'tsc --noEmit',
-        'docker:build': `docker build -t ${config.name} .`,
-        'docker:run': `docker run -p 3000:3000 ${config.name}`,
-        'docker:dev:up': 'docker-compose -f docker-compose.yml up',
-        'docker:dev:down': 'docker-compose -f docker-compose.yml down',
         test: 'echo "No test command specified"',
         'test:watch': 'echo "No test watch command specified"',
         'test:ui': 'echo "No test UI command specified"',
         'test:e2e': 'echo "No e2e test command specified"',
         'test:e2e:ui': 'echo "No e2e test UI command specified"',
       };
+
+      if (config.architecture.monorepo === 'none') {
+        additionalScripts['docker:build'] = `docker build -t ${config.name} .`;
+        additionalScripts['docker:run'] = `docker run -p 3000:3000 ${config.name}`;
+        additionalScripts['docker:dev:up'] = 'docker-compose -f docker-compose.yml up';
+        additionalScripts['docker:dev:down'] = 'docker-compose -f docker-compose.yml down';
+      }
 
       if (config.architecture.testing === 'vitest') {
         additionalScripts.test = 'vitest';
@@ -1928,8 +1951,15 @@ class NextMCPServer {
         additionalScripts['test:e2e:ui'] = 'playwright test --ui';
       }
 
-      // Add prebuild script for Prisma generate
-      if (config.architecture.orm === 'prisma') {
+      // Add prebuild script for Prisma generate. In `monorepo: 'full' +
+      // orm: 'prisma'` (shouldRouteToDbPackage), the prisma CLI and schema
+      // live in `packages/db` — apps/web doesn't declare prisma at all
+      // (see updatePackageJson's db-deps gate above). Running
+      // `prisma generate` from apps/web would fail with a missing binary,
+      // and packages/db's own `build` script (`prisma generate && tsc -b`)
+      // already covers the codegen — turbo's `^build` dependsOn ensures
+      // it runs before apps/web's build.
+      if (config.architecture.orm === 'prisma' && !shouldRouteToDbPackage(config)) {
         additionalScripts.prebuild = 'prisma generate';
       }
 

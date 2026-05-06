@@ -206,6 +206,30 @@ describe('scaffold_project tool — monorepo:full', () => {
     expect(appPkg.dependencies?.pg).toBeUndefined();
     expect(appPkg.dependencies?.dotenv).toBeUndefined();
     expect(appPkg.devDependencies?.prisma).toBeUndefined();
+
+    // The `prebuild: prisma generate` script must NOT be added to apps/web
+    // when prisma is routed to packages/db. apps/web has no prisma binary
+    // (the dep moved to packages/db with the routed-deps fix), and
+    // packages/db's own `build` script (prisma generate && tsc -b) covers
+    // codegen — turbo's `^build` dependsOn ensures it runs before apps/web
+    // builds.
+    expect(appPkg.scripts?.prebuild).toBeUndefined();
+
+    // Docker helper scripts live on the workspace root in monorepo mode
+    // (Dockerfile + docker-compose.yml are emitted there, not in apps/web).
+    // Putting them on apps/web would point users at the wrong build context.
+    expect(appPkg.scripts?.['docker:build']).toBeUndefined();
+    expect(appPkg.scripts?.['docker:run']).toBeUndefined();
+    expect(appPkg.scripts?.['docker:dev:up']).toBeUndefined();
+    expect(appPkg.scripts?.['docker:dev:down']).toBeUndefined();
+
+    // The root package.json has the docker:* scripts so `pnpm docker:build`
+    // from the workspace root works.
+    const rootPkg = JSON.parse(await fs.readFile(path.join(projectPath, 'package.json'), 'utf-8'));
+    expect(rootPkg.scripts['docker:build']).toBe(`docker build -t ${projectName} .`);
+    expect(rootPkg.scripts['docker:run']).toBe(`docker run -p 3000:3000 ${projectName}`);
+    expect(rootPkg.scripts['docker:dev:up']).toBe('docker-compose -f docker-compose.yml up');
+    expect(rootPkg.scripts['docker:dev:down']).toBe('docker-compose -f docker-compose.yml down');
   }, 120000);
 
   it('full mode + postgres/drizzle routes driver deps to packages/db', async () => {
