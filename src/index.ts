@@ -3166,6 +3166,22 @@ export default function Header() {
     try {
       const { architecture } = config;
       const pm = architecture.packageManager;
+      const isMonorepo = architecture.monorepo !== 'none';
+      const isFullMonorepo = architecture.monorepo === 'full';
+      // Mirror generateFullModePackages emission gates so the README only
+      // documents packages that actually land on disk for this config.
+      const hasDbPackage = isFullMonorepo && architecture.database !== 'none' && architecture.orm !== 'none';
+      const hasAuthPackage =
+        isFullMonorepo &&
+        architecture.auth === 'better-auth' &&
+        architecture.database !== 'none' &&
+        architecture.orm !== 'none';
+      const hasUiPackage = isFullMonorepo && architecture.uiLibrary === 'shadcn';
+      const hasOrpcPackage = isFullMonorepo && architecture.rpc === 'orpc';
+      // In monorepo:full + prisma, the schema lives at packages/db/prisma —
+      // prisma commands need to run from that directory (or be passed --schema).
+      const prismaInDbPackage = hasDbPackage && architecture.orm === 'prisma';
+      const prismaExec = pm === 'npm' ? 'npx' : `${pm} exec`;
 
       // Generate features list based on configuration
       const features = [];
@@ -3185,6 +3201,9 @@ export default function Header() {
       let databaseSetup = '';
       if (architecture.database !== 'none') {
         if (architecture.orm === 'prisma') {
+          // In monorepo:full + prisma, prisma CLI must run inside packages/db so
+          // it picks up packages/db/prisma/schema.prisma without --schema flags.
+          const prismaCdPrefix = prismaInDbPackage ? `cd packages/db && ` : '';
           databaseSetup = `
 
 ### Database Setup (Prisma)
@@ -3196,15 +3215,18 @@ export default function Header() {
 
 2. Run database migrations:
    \`\`\`bash
-   ${pm === 'npm' ? 'npx' : `${pm} exec`} prisma migrate dev
+   ${prismaCdPrefix}${prismaExec} prisma migrate dev
    \`\`\`
 
 3. (Optional) Open Prisma Studio to manage your data:
    \`\`\`bash
-   ${pm === 'npm' ? 'npx' : `${pm} exec`} prisma studio
+   ${prismaCdPrefix}${prismaExec} prisma studio
    \`\`\`
 `;
         } else if (architecture.orm === 'drizzle') {
+          // In monorepo:full + drizzle, drizzle-kit reads its config from
+          // packages/db/drizzle.config.ts; run from there so paths resolve.
+          const drizzleCdPrefix = hasDbPackage ? `cd packages/db && ` : '';
           databaseSetup = `
 
 ### Database Setup (Drizzle)
@@ -3216,8 +3238,8 @@ export default function Header() {
 
 2. Generate and run migrations:
    \`\`\`bash
-   ${pm === 'npm' ? 'npx' : `${pm} exec`} drizzle-kit generate
-   ${pm === 'npm' ? 'npx' : `${pm} exec`} drizzle-kit migrate
+   ${drizzleCdPrefix}${prismaExec} drizzle-kit generate
+   ${drizzleCdPrefix}${prismaExec} drizzle-kit migrate
    \`\`\`
 `;
         } else if (architecture.orm === 'mongoose') {
@@ -3270,6 +3292,33 @@ import { UserButton } from "@/components/auth/user-button";
 
 For more information, visit [Better Auth Documentation](https://www.better-auth.com/docs).
 `;
+      }
+
+      // Generate Docker monorepo+prisma migrate caveat. In monorepo mode the
+      // web service no longer auto-applies migrations on boot (Group H made
+      // the inline `prisma migrate deploy` skip web for monorepo), so users
+      // must invoke the dedicated migrate service. In monorepo:full the
+      // schema also lives at packages/db/prisma — Dockerfile.migrate's
+      // default `prisma/schema.prisma` path won't resolve, so we surface a
+      // note about adding `--schema=./packages/db/prisma/schema.prisma`.
+      let monorepoDockerNotes = '';
+      if (isMonorepo && architecture.orm === 'prisma' && architecture.database !== 'none') {
+        monorepoDockerNotes = `
+
+### Applying database migrations (monorepo)
+
+The web service no longer runs Prisma migrations on startup in monorepo mode. After bringing the stack up, apply pending migrations explicitly:
+
+\`\`\`bash
+docker compose run --rm migrate
+\`\`\`
+${
+  isFullMonorepo
+    ? `
+> **Note**: \`Dockerfile.migrate\` ships with a default schema path of \`prisma/schema.prisma\`. In \`monorepo: full\` the schema lives at \`packages/db/prisma/schema.prisma\`, so you may need to update the migrate service to pass \`--schema=./packages/db/prisma/schema.prisma\` (either by editing the Dockerfile's \`CMD\` or by overriding it in \`docker-compose.yml\`).
+`
+    : ''
+}`;
       }
 
       // Generate testing instructions
@@ -3395,11 +3444,66 @@ Or use docker-compose:
 \`\`\`bash
 docker-compose up
 \`\`\`
-${testingInstructions}
+${monorepoDockerNotes}${testingInstructions}
 ## Project Structure
 
 \`\`\`
-${config.name}/
+${
+  isMonorepo
+    ? `${config.name}/
+├── apps/
+│   └── web/                       # Next.js application (apps/web)
+│       ├── src/
+│       │   ├── app/               # Next.js app directory
+│       │   │   ├── api/           # API routes
+${
+  architecture.auth === 'better-auth'
+    ? `│       │   │   │   └── auth/      # Authentication API
+│       │   │   ├── auth/          # Auth pages (sign-in, sign-up)
+│       │   │   ├── account/       # Account management pages
+`
+    : ''
+}│       │   │   ├── layout.tsx     # Root layout
+│       │   │   └── page.tsx       # Home page
+│       │   ├── components/        # React components
+│       │   │   ├── ui/            # UI components${architecture.uiLibrary === 'shadcn' ? ' (shadcn/ui)' : ''}
+${
+  architecture.auth === 'better-auth'
+    ? `│       │   │   └── auth/         # Auth components
+`
+    : ''
+}│       │   ├── lib/               # Utility functions${
+        architecture.database !== 'none' && !hasDbPackage
+          ? `
+│       │   │   └── db/            # Database client and schema`
+          : ''
+      }
+${
+  architecture.auth === 'better-auth'
+    ? `│       │   ├── providers/         # React providers
+`
+    : ''
+}│       │   └── hooks/             # Custom React hooks
+│       ├── next.config.ts         # Next.js configuration (apps/web)
+│       └── tsconfig.json          # apps/web TypeScript config
+${
+  isFullMonorepo
+    ? `├── packages/
+${hasDbPackage ? `│   ├── packages/db/               # Database client + ${architecture.orm === 'prisma' ? 'Prisma schema' : 'Drizzle schema'} (workspace package)
+` : ''}${hasAuthPackage ? `│   ├── packages/auth/             # Better Auth core (workspace package)
+` : ''}${hasUiPackage ? `│   ├── packages/ui/               # Shared shadcn/ui components (workspace package)
+` : ''}${hasOrpcPackage ? `│   ├── packages/orpc/             # oRPC contracts/handlers (workspace package)
+` : ''}│   ├── packages/eslint-config/    # Shared ESLint config
+│   └── packages/typescript-config/ # Shared TypeScript config
+`
+    : ''
+}├── pnpm-workspace.yaml            # Workspace definition
+├── turbo.json                     # Turborepo task pipeline
+├── docker-compose.yml             # Docker Compose configuration
+├── Dockerfile                     # Docker configuration
+├── package.json                   # Workspace root scripts (Turbo runners)
+└── tsconfig.json                  # Workspace TypeScript config (base)`
+    : `${config.name}/
 ├── src/
 │   ├── app/                    # Next.js app directory
 │   │   ├── api/               # API routes
@@ -3435,11 +3539,35 @@ ${architecture.orm === 'prisma' ? '├── prisma/                 # Prisma sc
 ├── Dockerfile               # Docker configuration
 ├── next.config.ts          # Next.js configuration
 ├── tailwind.config.ts      # Tailwind CSS configuration
-└── tsconfig.json           # TypeScript configuration
+└── tsconfig.json           # TypeScript configuration`
+}
 \`\`\`
 
 ## Available Scripts
+${
+  isMonorepo
+    ? `
+Run from the workspace root — these delegate to Turborepo, which fans out to every workspace:
 
+- \`${pm} dev\` - Start the dev server for every workspace (Turbo \`dev\`)
+- \`${pm} build\` - Build every workspace (Turbo \`build\`)
+- \`${pm} lint\` - Run ESLint across all workspaces
+- \`${pm} run typecheck\` - Run TypeScript type checking across all workspaces
+${architecture.testing !== 'none' ? `- \`${pm} test\` - Run tests across all workspaces\n` : ''}- \`${pm} run pipeline\` - Run \`build\`, \`lint\`, and \`test\` together (Turbo)
+
+To target a single workspace, use ${pm === 'pnpm' ? `pnpm's \`--filter\`` : 'a workspace filter'} flag, for example:
+
+- \`${pm} --filter @${config.name}/web dev\` - Start dev for apps/web only
+- \`${pm} --filter @${config.name}/web build\` - Build apps/web only
+${
+  architecture.database !== 'none'
+    ? `- \`${pm} run docker:dev:up\` - Start database with Docker Compose (workspace root)
+- \`${pm} run docker:dev:down\` - Stop database
+`
+    : ''
+}- \`${pm} run docker:build\` - Build Docker image
+- \`${pm} run docker:run\` - Run Docker container`
+    : `
 - \`${pm} dev\` - Start development server (with Turbopack)
 - \`${pm} build\` - Build for production
 - \`${pm} start\` - Start production server
@@ -3452,7 +3580,8 @@ ${architecture.testing !== 'none' ? `- \`${pm} test\` - Run tests\n` : ''}${
 `
           : ''
       }- \`${pm} run docker:build\` - Build Docker image
-- \`${pm} run docker:run\` - Run Docker container
+- \`${pm} run docker:run\` - Run Docker container`
+}
 
 ## Environment Variables
 
