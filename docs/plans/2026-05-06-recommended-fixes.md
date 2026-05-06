@@ -5,10 +5,11 @@
 > **How to use:** Each tier below is independently triageable. File individual issues from the items inside; pull from Tier 1+2 when scoping pre-merge work, Tier 3+4 for the next planning cycle.
 >
 > **Progress:**
-> - Tier 1 — pending (gated on smoke run; the smoke driver lands as Tier 5a).
+> - Tier 1 — pending (gated on smoke run; Tier 5a's `pnpm smoke` now runs the generation half on every PR).
 > - Tier 2 — ✅ done (commits `4f8f5cf`, `7c95c0e`, `6d061ed`, `7bee294`, plus the post-2c audit follow-ups `f3170a1` and `a60d9b3`).
 > - Tier 3 — ✅ done (commits `2e16c93`, `487a417`).
 > - Tier 4a — ✅ done (commits `bf2248f`, `9042359`). Tier 4b deferred per the plan note (extract when a 3rd workspace dep is added).
+> - Tier 5a — ✅ done (commits `5a692da`, `6ae790e`). `--full` flag (real `<pm> install` + build per preset) still deferred. Tier 5b (yarn variant) deferred per the plan note (add when there's a yarn user to validate against).
 
 ---
 
