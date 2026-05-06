@@ -13,9 +13,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { adjectives, colors, Config, names, uniqueNamesGenerator } from 'unique-names-generator';
 import winston from 'winston';
 import { z } from 'zod';
@@ -886,123 +886,56 @@ const ORM_PACKAGE_SUBDIR: Partial<Record<NonNullable<ProjectConfig['architecture
   mongoose: 'db/mongoose',
 };
 
-const inputSchemaJson = z.toJSONSchema(
-  z.object({
-    config: ProjectConfigSchema,
-    projectPath: z.string().describe('Path to the project directory'),
-  })
-);
+// Shared raw shapes for tool inputs. McpServer.registerTool accepts a
+// ZodRawShapeCompat (Record<string, AnySchema>) and serializes it to JSON
+// Schema for tools/list internally — no manual z.toJSONSchema() needed.
+const commonInputShape = {
+  config: ProjectConfigSchema,
+  projectPath: z.string().describe('Path to the project directory'),
+} as const;
+
+const scaffoldInputShape = {
+  config: ProjectConfigSchema,
+  targetPath: z.string().describe('Target directory path, usually the current working directory'),
+} as const;
 
 class NextMCPServer {
-  private server: Server;
+  private server: McpServer;
 
   constructor() {
-    this.server = new Server(
-      {
-        name: details.name,
-        version: details.version,
-      },
-      {
-        capabilities: {
-          tools: {},
-        },
-      }
-    );
+    this.server = new McpServer({
+      name: details.name,
+      version: details.version,
+    });
 
     this.setupToolHandlers();
   }
 
-  private setupToolHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
-        {
-          name: 'scaffold_project',
-          description: 'Create a new Next.js project with specified configuration',
-          inputSchema: z.toJSONSchema(
-            z.object({
-              config: ProjectConfigSchema,
-              targetPath: z.string().describe('Target directory path, usually the current working directory'),
-            })
-          ),
-        },
-        {
-          name: 'generate_dockerfile',
-          description: 'Generate Dockerfile and docker-compose.yml',
-          inputSchema: inputSchemaJson,
-        },
-        {
-          name: 'setup_shadcn',
-          description: 'Initialize shadcn/ui with defaults and install all components',
-          inputSchema: inputSchemaJson,
-        },
-        {
-          name: 'generate_base_components',
-          description: 'Generate base React components and layouts',
-          inputSchema: inputSchemaJson,
-        },
-        {
-          name: 'setup_database',
-          description: 'Generate database configuration and migrations',
-          inputSchema: inputSchemaJson,
-        },
-        {
-          name: 'setup_authentication',
-          description: 'Configure authentication system',
-          inputSchema: inputSchemaJson,
-        },
-        {
-          name: 'validate_project',
-          description: 'Run validation checks on the generated project',
-          inputSchema: inputSchemaJson,
-        },
-        {
-          name: 'generate_readme',
-          description: 'Generate comprehensive README.md',
-          inputSchema: inputSchemaJson,
-        },
-      ],
-    }));
-
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: args } = request.params;
-
-      if (!args) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `No arguments provided for tool: ${name}`,
-            },
-          ],
-        };
-      }
-
+  /**
+   * Wraps a per-tool implementation in shared `validateAndApplyDefaults` +
+   * uniform error handling so each `registerTool` call site stays
+   * declarative. The caller-visible response shape (text-content with `❌`
+   * / `Error executing` markers on failure) is preserved bit-for-bit so
+   * the test client's `isFailure` heuristic and the smoke driver's parser
+   * keep working without modification.
+   */
+  private withValidation<TPathKey extends 'projectPath' | 'targetPath'>(
+    name: string,
+    pathKey: TPathKey,
+    impl: (config: ProjectConfig, projectPath: string) => Promise<{ content: Array<{ type: string; text: string }> }>
+  ): (args: { config: ProjectConfig } & Record<TPathKey, string>) => Promise<CallToolResult> {
+    return async (args) => {
       try {
         const validatedConfig = this.validateAndApplyDefaults(args.config);
         if (!validatedConfig) {
           throw new Error('Config validation failed');
         }
-
-        switch (name) {
-          case 'scaffold_project':
-            return await this.scaffoldProject(validatedConfig, args.targetPath as string);
-          case 'generate_base_components':
-            return await this.generateBaseComponents(validatedConfig, args.projectPath as string);
-          case 'generate_dockerfile':
-            return await this.generateDockerfile(validatedConfig, args.projectPath as string);
-          case 'setup_shadcn':
-            return await this.setupShadcn(validatedConfig, args.projectPath as string);
-          case 'setup_database':
-            return await this.setupDatabase(validatedConfig, args.projectPath as string);
-          case 'setup_authentication':
-            return await this.setupAuthentication(validatedConfig, args.projectPath as string);
-          case 'validate_project':
-            return await this.validateProject(validatedConfig, args.projectPath as string);
-          case 'generate_readme':
-            return await this.generateReadme(validatedConfig, args.projectPath as string);
-          default:
-            throw new Error(`Unknown tool: ${name}`);
-        }
+        // The per-tool methods predate the McpServer migration and were
+        // typed before strict CallToolResult inference. Their content arrays
+        // use string-literal `type: 'text'` at every call site, so the
+        // runtime values are correct — we widen via cast rather than
+        // annotating eight helper-method signatures.
+        return (await impl(validatedConfig, args[pathKey])) as CallToolResult;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         return {
@@ -1014,7 +947,97 @@ class NextMCPServer {
           ],
         };
       }
-    });
+    };
+  }
+
+  private setupToolHandlers() {
+    this.server.registerTool(
+      'scaffold_project',
+      {
+        description: 'Create a new Next.js project with specified configuration',
+        inputSchema: scaffoldInputShape,
+      },
+      this.withValidation('scaffold_project', 'targetPath', (config, targetPath) =>
+        this.scaffoldProject(config, targetPath)
+      )
+    );
+
+    this.server.registerTool(
+      'generate_dockerfile',
+      {
+        description: 'Generate Dockerfile and docker-compose.yml',
+        inputSchema: commonInputShape,
+      },
+      this.withValidation('generate_dockerfile', 'projectPath', (config, projectPath) =>
+        this.generateDockerfile(config, projectPath)
+      )
+    );
+
+    this.server.registerTool(
+      'setup_shadcn',
+      {
+        description: 'Initialize shadcn/ui with defaults and install all components',
+        inputSchema: commonInputShape,
+      },
+      this.withValidation('setup_shadcn', 'projectPath', (config, projectPath) =>
+        this.setupShadcn(config, projectPath)
+      )
+    );
+
+    this.server.registerTool(
+      'generate_base_components',
+      {
+        description: 'Generate base React components and layouts',
+        inputSchema: commonInputShape,
+      },
+      this.withValidation('generate_base_components', 'projectPath', (config, projectPath) =>
+        this.generateBaseComponents(config, projectPath)
+      )
+    );
+
+    this.server.registerTool(
+      'setup_database',
+      {
+        description: 'Generate database configuration and migrations',
+        inputSchema: commonInputShape,
+      },
+      this.withValidation('setup_database', 'projectPath', (config, projectPath) =>
+        this.setupDatabase(config, projectPath)
+      )
+    );
+
+    this.server.registerTool(
+      'setup_authentication',
+      {
+        description: 'Configure authentication system',
+        inputSchema: commonInputShape,
+      },
+      this.withValidation('setup_authentication', 'projectPath', (config, projectPath) =>
+        this.setupAuthentication(config, projectPath)
+      )
+    );
+
+    this.server.registerTool(
+      'validate_project',
+      {
+        description: 'Run validation checks on the generated project',
+        inputSchema: commonInputShape,
+      },
+      this.withValidation('validate_project', 'projectPath', (config, projectPath) =>
+        this.validateProject(config, projectPath)
+      )
+    );
+
+    this.server.registerTool(
+      'generate_readme',
+      {
+        description: 'Generate comprehensive README.md',
+        inputSchema: commonInputShape,
+      },
+      this.withValidation('generate_readme', 'projectPath', (config, projectPath) =>
+        this.generateReadme(config, projectPath)
+      )
+    );
   }
 
   /**

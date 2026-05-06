@@ -195,5 +195,5 @@ All flagged during F/G/H/I/K reviews and explicitly deferred. None blocking. Gro
 
 ## Out of scope for this list
 
-- Pre-existing `Server` deprecation warnings in `src/index.ts:3-9` (MCP SDK migration to `McpServer`) — orthogonal to monorepo work, but called out in CLAUDE.md and the original handoff doc as a future migration. File separately if/when prioritized.
+- ~~Pre-existing `Server` deprecation warnings in `src/index.ts:3-9` (MCP SDK migration to `McpServer`) — orthogonal to monorepo work, but called out in CLAUDE.md and the original handoff doc as a future migration. File separately if/when prioritized.~~ **Shipped (OoS-1):** migrated to `McpServer.registerTool` API — see commit `refactor(mcp): migrate from Server to McpServer registerTool API`.
 - `Dockerfile.migrate`'s reliance on `prisma migrate deploy` — works for prisma but the file isn't useful for drizzle/mongoose. The current gate (`orm === 'prisma' && database !== 'none'`) only emits it in the prisma case, which is correct, but a future Drizzle-equivalent would need its own template.
