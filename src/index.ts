@@ -196,6 +196,13 @@ export function shouldRouteToDbPackage(config: ProjectConfig): boolean {
  * load-bearing constraint that the auth package template hard-codes
  * `@<projectName>/db: workspace:*`, so `packages/auth` requires `packages/db`
  * to also exist (see {@link shouldRouteToAuthPackage}).
+ *
+ * On a schema-validated config `hasDbPackageEmitted` is equivalent to
+ * {@link shouldRouteToDbPackage} — both are kept because the names answer
+ * different questions (where do db sources land vs. is `packages/db` on
+ * disk). The redundant `database !== 'none'` clause is defense-in-depth
+ * against an unvalidated caller; it also makes the gate readable on its
+ * own.
  */
 export function hasDbPackageEmitted(config: ProjectConfig): boolean {
   return (

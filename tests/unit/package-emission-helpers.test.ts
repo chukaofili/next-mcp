@@ -68,6 +68,18 @@ describe('Package-emission gate helpers', () => {
       expect(hasAuthPackageEmitted(config)).toBe(false);
     });
 
+    // Locks the load-bearing composition: hasAuthPackageEmitted = hasDbPackageEmitted && better-auth.
+    // If a future edit drops the db-gate composition and re-inlines as
+    // `monorepo === 'full' && auth === 'better-auth'`, the auth gate alone
+    // would let this case through (true), but the auth template hard-codes
+    // `@<projectName>/db: workspace:*` and packages/db is not emitted here.
+    it('returns false for monorepo:full + postgres + orm:none + better-auth (composition guards against missing packages/db)', () => {
+      const config = createMockConfig({
+        architecture: { monorepo: 'full', database: 'postgres', orm: 'none', auth: 'better-auth' },
+      });
+      expect(hasAuthPackageEmitted(config)).toBe(false);
+    });
+
     it('returns false for monorepo:minimal + postgres + prisma + better-auth', () => {
       const config = createMockConfig({
         architecture: { monorepo: 'minimal', database: 'postgres', orm: 'prisma', auth: 'better-auth' },
