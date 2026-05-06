@@ -118,6 +118,32 @@ export const CATALOG_VERSIONS: Record<string, string> = {
   '@better-auth/api-key': '^1',
 };
 
+/**
+ * Source of truth for which databases each ORM supports. Used in BOTH the
+ * schema-parse refine on {@link ProjectConfigSchema} (rejects illegal combos
+ * at the MCP boundary) AND the runtime gate in `setupDatabase` (defense-in-
+ * depth for any internal caller that bypasses parse). Keep them sharing this
+ * one constant so the two views can't drift.
+ *
+ * The implicit `database: 'none'` rule falls out of this table: `'none'` is
+ * not in any non-`none` ORM's compat list, so `prisma + none`, `drizzle +
+ * none`, and `mongoose + none` all reject. `orm: 'none'` accepts every db
+ * value (including `'none'`), so direct-driver setups are unconstrained.
+ *
+ * The literal types here are intentionally inlined (not derived from
+ * `ProjectConfig`) — `ProjectConfigSchema`'s refines reference this constant,
+ * so deriving back from the schema would create a circular type.
+ */
+export type OrmName = 'none' | 'prisma' | 'drizzle' | 'mongoose';
+export type DatabaseName = 'none' | 'postgres' | 'mysql' | 'mongodb' | 'sqlite';
+
+export const ORM_DATABASE_COMPATIBILITY: Record<OrmName, ReadonlyArray<DatabaseName>> = {
+  prisma: ['postgres', 'mysql', 'sqlite', 'mongodb'],
+  drizzle: ['postgres', 'mysql', 'sqlite'],
+  mongoose: ['mongodb'],
+  none: ['none', 'postgres', 'mysql', 'sqlite', 'mongodb'],
+};
+
 export function getAppPath(config: ProjectConfig, projectPath: string): string {
   return config.architecture.monorepo === 'none'
     ? projectPath
@@ -577,7 +603,30 @@ export const ProjectConfigSchema = z
   .refine(
     (cfg) => !(cfg.architecture.rpc === 'orpc' && cfg.architecture.monorepo !== 'full'),
     { message: 'rpc: "orpc" requires monorepo: "full"' }
-  );
+  )
+  .refine(
+    (cfg) => !(cfg.architecture.auth === 'better-auth' && cfg.architecture.database === 'none'),
+    {
+      message:
+        'Better Auth requires a database. Set architecture.database to one of: postgres, mysql, sqlite, mongodb.',
+    }
+  )
+  .superRefine((cfg, ctx) => {
+    const { orm, database } = cfg.architecture;
+    if (orm === 'none') return;
+    if (ORM_DATABASE_COMPATIBILITY[orm]?.includes(database)) return;
+    const validDbs =
+      ORM_DATABASE_COMPATIBILITY[orm]
+        ?.filter((db) => db !== 'none')
+        .join(', ') ?? 'none';
+    ctx.addIssue({
+      code: 'custom',
+      message:
+        `Invalid combination: orm "${orm}" does not support database "${database}". ` +
+        `Valid databases for ${orm}: ${validDbs}`,
+      path: ['architecture'],
+    });
+  });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
@@ -2195,22 +2244,20 @@ export const db = drizzle(pool, { schema });`;
 
     const { orm, database } = config.architecture;
 
-    // Validate ORM/Database compatibility
-    const validCombinations: Record<string, string[]> = {
-      prisma: ['postgres', 'mysql', 'sqlite', 'mongodb'],
-      drizzle: ['postgres', 'mysql', 'sqlite'],
-      mongoose: ['mongodb'],
-      none: ['postgres', 'mysql', 'sqlite', 'mongodb'],
-    };
-
-    if (orm !== 'none' && !validCombinations[orm]?.includes(database)) {
+    // Defense-in-depth: ProjectConfigSchema's refines already reject this combo
+    // at the MCP boundary (see ORM_DATABASE_COMPATIBILITY usage in
+    // ProjectConfigSchema). We re-check here using the same shared constant in
+    // case an internal caller bypasses validation.
+    if (orm !== 'none' && !ORM_DATABASE_COMPATIBILITY[orm]?.includes(database)) {
+      const validDbs =
+        ORM_DATABASE_COMPATIBILITY[orm]?.filter((db) => db !== 'none').join(', ') ?? 'none';
       return {
         content: [
           {
             type: 'text',
             text:
               `Invalid combination: ${orm} does not support ${database}. ` +
-              `Valid databases for ${orm}: ${validCombinations[orm].join(', ')}`,
+              `Valid databases for ${orm}: ${validDbs}`,
           },
         ],
       };
@@ -2829,7 +2876,9 @@ const db = new Database("./dev.db");`,
     }
 
     try {
-      // Verify database is configured
+      // Defense-in-depth: ProjectConfigSchema's refine already rejects
+      // better-auth + database:'none' at the MCP boundary. We re-check here
+      // in case an internal caller bypasses validation.
       if (config.architecture.database === 'none') {
         throw new Error('Better Auth requires a database. Please select a database option.');
       }

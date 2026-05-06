@@ -30,6 +30,7 @@ describe('generate_readme tool', () => {
       name: 'test-readme-app',
       architecture: {
         database: 'none',
+        orm: 'none',
         auth: 'none',
         testing: 'none',
       },

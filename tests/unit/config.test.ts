@@ -42,22 +42,44 @@ describe('ProjectConfig', () => {
   });
 
   it('should support all database options', () => {
-    const databases = ['none', 'postgres', 'mysql', 'mongodb', 'sqlite'] as const;
+    // For each database, pair with an ORM that supports it (and disable auth
+    // so the better-auth refine doesn't bite on database:'none').
+    const cases: Array<{
+      database: 'none' | 'postgres' | 'mysql' | 'mongodb' | 'sqlite';
+      orm: 'none' | 'prisma' | 'drizzle' | 'mongoose';
+    }> = [
+      { database: 'none', orm: 'none' },
+      { database: 'postgres', orm: 'prisma' },
+      { database: 'mysql', orm: 'prisma' },
+      { database: 'mongodb', orm: 'mongoose' },
+      { database: 'sqlite', orm: 'drizzle' },
+    ];
 
-    databases.forEach((db) => {
+    cases.forEach(({ database, orm }) => {
       const config = createMockConfig({
-        architecture: { database: db },
+        architecture: { database, orm, auth: database === 'none' ? 'none' : 'better-auth' },
       });
-      expect(config.architecture.database).toBe(db);
+      expect(config.architecture.database).toBe(database);
     });
   });
 
   it('should support all ORM options', () => {
-    const orms = ['none', 'prisma', 'drizzle', 'mongoose'] as const;
+    // Pair each ORM with a compatible database. `none` ORM is compatible with
+    // any database; the others need a specific one (and a non-`none` database
+    // also satisfies the better-auth refine without disabling auth).
+    const cases: Array<{
+      orm: 'none' | 'prisma' | 'drizzle' | 'mongoose';
+      database: 'none' | 'postgres' | 'mysql' | 'mongodb' | 'sqlite';
+    }> = [
+      { orm: 'none', database: 'postgres' },
+      { orm: 'prisma', database: 'postgres' },
+      { orm: 'drizzle', database: 'postgres' },
+      { orm: 'mongoose', database: 'mongodb' },
+    ];
 
-    orms.forEach((orm) => {
+    cases.forEach(({ orm, database }) => {
       const config = createMockConfig({
-        architecture: { orm },
+        architecture: { orm, database },
       });
       expect(config.architecture.orm).toBe(orm);
     });

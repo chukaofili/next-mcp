@@ -37,6 +37,7 @@ describe('setup_database tool', () => {
       architecture: {
         database: 'none',
         orm: 'none',
+        auth: 'none',
       },
     });
 

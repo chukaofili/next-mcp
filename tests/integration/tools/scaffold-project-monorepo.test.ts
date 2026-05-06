@@ -3,7 +3,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ZodError } from 'zod';
 
+import { ProjectConfigSchema } from '../../../src/index.js';
 import { MCPTestClient } from '../../helpers/mcp-test-client.js';
 import { cleanupTempDir, createMockConfig, createTempDir, fileExists } from '../../helpers/test-utils.js';
 
@@ -443,31 +445,24 @@ describe('scaffold_project tool — monorepo:full', () => {
     );
   }, 120000);
 
-  it('full mode + auth:better-auth + database:none does NOT emit packages/auth', async () => {
-    const projectName = 'full-auth-no-db';
-    const config = createMockConfig({
-      name: projectName,
-      architecture: {
-        monorepo: 'full',
-        database: 'none',
-        orm: 'none',
-        auth: 'better-auth',
-        uiLibrary: 'none',
-        testing: 'none',
-        skipInstall: true,
-      },
-    });
-
-    const result = await client.callTool('scaffold_project', {
-      config,
-      targetPath: tempDir,
-    });
-
-    expect(client.isSuccess(result)).toBe(true);
-
-    const projectPath = path.join(tempDir, projectName);
-    const authDir = path.join(projectPath, 'packages', 'auth');
-
-    expect(await fileExists(authDir)).toBe(false);
-  }, 120000);
+  it('rejects monorepo:full + auth:better-auth + database:none at schema-parse time', () => {
+    // Previously: scaffold_project tolerated this combo and the test asserted
+    // it did NOT emit packages/auth. Tier 3 promotes the underlying rule
+    // (better-auth requires a database) to a Zod refine on
+    // ProjectConfigSchema, so the combo can no longer reach scaffold dispatch.
+    expect(() =>
+      ProjectConfigSchema.parse({
+        name: 'full-auth-no-db',
+        architecture: {
+          monorepo: 'full',
+          database: 'none',
+          orm: 'none',
+          auth: 'better-auth',
+          uiLibrary: 'none',
+          testing: 'none',
+          skipInstall: true,
+        },
+      })
+    ).toThrow(ZodError);
+  });
 });

@@ -3,7 +3,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ZodError } from 'zod';
 
+import { ProjectConfigSchema } from '../../../src/index.js';
 import { MCPTestClient } from '../../helpers/mcp-test-client.js';
 import {
   cleanupTempDir,
@@ -73,25 +75,34 @@ describe('setup_authentication tool', () => {
     expect(text).toContain('Better Auth + Better Auth UI has been configured successfully');
   });
 
-  it('should handle better-auth without database', async () => {
-    const config = createMockConfig({
-      architecture: {
-        database: 'none',
-        orm: 'none',
-        auth: 'better-auth',
-      },
-    });
+  it('rejects better-auth + database:none at schema-parse time', () => {
+    // Tier 3 promoted this combo from a runtime error in setup_authentication
+    // ('Better Auth requires a database. Please select a database option.')
+    // to a Zod refine on ProjectConfigSchema, so it now fails at the MCP
+    // boundary before any tool dispatches. The runtime guard is kept as
+    // defense-in-depth.
+    expect(() =>
+      ProjectConfigSchema.parse({
+        architecture: {
+          database: 'none',
+          orm: 'none',
+          auth: 'better-auth',
+        },
+      })
+    ).toThrow(ZodError);
 
-    const result = await client.callTool('setup_authentication', {
-      config,
-      projectPath: tempDir,
-    });
-
-    expect(client.isSuccess(result)).toBe(false);
-
-    const text = client.getTextContent(result);
-    expect(text).toBeDefined();
-    expect(text).toContain('Better Auth requires a database');
+    try {
+      ProjectConfigSchema.parse({
+        architecture: {
+          database: 'none',
+          orm: 'none',
+          auth: 'better-auth',
+        },
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(ZodError);
+      expect((error as ZodError).message).toContain('Better Auth requires a database');
+    }
   });
 
   it('does not modify globals.css and does not add @daveyplate/better-auth-ui as a dep (G1)', async () => {

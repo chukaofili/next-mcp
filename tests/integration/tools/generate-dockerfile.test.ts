@@ -83,6 +83,7 @@ describe('generate_dockerfile tool', () => {
       architecture: {
         database: 'none',
         orm: 'none',
+        auth: 'none',
       },
     });
 
@@ -140,7 +141,7 @@ describe('generate_dockerfile tool', () => {
     it('uses the monorepo Dockerfile template with pnpm install when monorepo:full + pnpm', async () => {
       const config = createMockConfig({
         name: 'acme',
-        architecture: { monorepo: 'full', packageManager: 'pnpm', database: 'none', orm: 'none' },
+        architecture: { monorepo: 'full', packageManager: 'pnpm', database: 'none', orm: 'none', auth: 'none' },
       });
 
       const result = await client.callTool('generate_dockerfile', { config, projectPath: monorepoDir });
@@ -160,7 +161,7 @@ describe('generate_dockerfile tool', () => {
     it('substitutes the bun base image and bun install command in monorepo:full + bun', async () => {
       const config = createMockConfig({
         name: 'bunny',
-        architecture: { monorepo: 'full', packageManager: 'bun', database: 'none', orm: 'none' },
+        architecture: { monorepo: 'full', packageManager: 'bun', database: 'none', orm: 'none', auth: 'none' },
       });
 
       const result = await client.callTool('generate_dockerfile', { config, projectPath: monorepoDir });
@@ -178,7 +179,7 @@ describe('generate_dockerfile tool', () => {
     it('substitutes the npm install command in monorepo:full + npm', async () => {
       const config = createMockConfig({
         name: 'npm-app',
-        architecture: { monorepo: 'full', packageManager: 'npm', database: 'none', orm: 'none' },
+        architecture: { monorepo: 'full', packageManager: 'npm', database: 'none', orm: 'none', auth: 'none' },
       });
 
       const result = await client.callTool('generate_dockerfile', { config, projectPath: monorepoDir });
@@ -196,7 +197,7 @@ describe('generate_dockerfile tool', () => {
     it('substitutes the yarn install command in monorepo:full + yarn', async () => {
       const config = createMockConfig({
         name: 'yarn-app',
-        architecture: { monorepo: 'full', packageManager: 'yarn', database: 'none', orm: 'none' },
+        architecture: { monorepo: 'full', packageManager: 'yarn', database: 'none', orm: 'none', auth: 'none' },
       });
 
       const result = await client.callTool('generate_dockerfile', { config, projectPath: monorepoDir });
@@ -212,7 +213,7 @@ describe('generate_dockerfile tool', () => {
     it('uses the monorepo Dockerfile template in monorepo:minimal mode', async () => {
       const config = createMockConfig({
         name: 'mini',
-        architecture: { monorepo: 'minimal', packageManager: 'pnpm', database: 'none', orm: 'none' },
+        architecture: { monorepo: 'minimal', packageManager: 'pnpm', database: 'none', orm: 'none', auth: 'none' },
       });
 
       const result = await client.callTool('generate_dockerfile', { config, projectPath: monorepoDir });
@@ -227,7 +228,7 @@ describe('generate_dockerfile tool', () => {
     it('writes the flat Dockerfile (no turbo prune) when monorepo:none', async () => {
       const config = createMockConfig({
         name: 'flat-app',
-        architecture: { monorepo: 'none', packageManager: 'pnpm', database: 'none', orm: 'none' },
+        architecture: { monorepo: 'none', packageManager: 'pnpm', database: 'none', orm: 'none', auth: 'none' },
       });
 
       const result = await client.callTool('generate_dockerfile', { config, projectPath: monorepoDir });
@@ -554,9 +555,14 @@ describe('generate_dockerfile tool', () => {
     it('database:none: no Dockerfile.migrate is generated (db gate holds)', async () => {
       const dir = await createTempDir('next-mcp-migrate-db-none-');
       try {
+        // Note: orm: 'none' here (not 'prisma') because the schema refine now
+        // rejects orm: 'prisma' + database: 'none' at parse time. The gate
+        // we're exercising is the migrate-file gate, which keys on
+        // `database === 'none'` regardless of orm — orm: 'none' still
+        // exercises the same code path.
         const config = createMockConfig({
           name: 'no-db',
-          architecture: { monorepo: 'none', packageManager: 'pnpm', database: 'none', orm: 'prisma' },
+          architecture: { monorepo: 'none', packageManager: 'pnpm', database: 'none', orm: 'none', auth: 'none' },
         });
 
         const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });

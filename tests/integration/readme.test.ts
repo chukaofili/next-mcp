@@ -211,6 +211,7 @@ describe('README Generation', () => {
       architecture: {
         database: 'none',
         orm: 'none',
+        auth: 'none',
       },
     });
 
