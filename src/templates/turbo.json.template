@@ -30,6 +30,5 @@
     "clean": {
       "cache": false
     }
-  },
-  "globalPassThroughEnv": ["NODE_ENV", "DATABASE_URL", "BETTER_AUTH_SECRET", "BETTER_AUTH_URL", "NEXT_PUBLIC_BETTER_AUTH_URL"]
+  }
 }

@@ -1092,7 +1092,8 @@ class NextMCPServer {
     const tsTpl = await fs.readFile(path.join(templatesDir, 'tsconfig.json.template'), 'utf-8');
     await fs.writeFile(path.join(projectPath, 'tsconfig.json'), tsTpl);
 
-    // 3. turbo.json
+    // 3. turbo.json — globalPassThroughEnv is added programmatically (config-gated),
+    // not in the template. See `buildGlobalPassThroughEnv`.
     const turboTpl = await fs.readFile(path.join(templatesDir, 'turbo.json.template'), 'utf-8');
     const turbo = JSON.parse(turboTpl);
     turbo.globalPassThroughEnv = buildGlobalPassThroughEnv(config);
