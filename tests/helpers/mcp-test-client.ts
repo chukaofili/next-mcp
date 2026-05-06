@@ -98,7 +98,10 @@ export class MCPTestClient {
   }
 
   /**
-   * Check if tool call failed
+   * Check if tool call failed.
+   * NOTE: tools/smoke.ts:isToolFailure duplicates this logic. Update both in
+   * lockstep — the smoke driver does not import this helper (it cannot, it's
+   * a standalone tsx script outside the test bundle).
    */
   isFailure(result: unknown): boolean {
     const text = this.getTextContent(result);

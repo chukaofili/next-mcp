@@ -23,7 +23,7 @@
     "test:coverage": "vitest run --coverage",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
-    "smoke": "pnpm run build && tsx tools/smoke.ts",
+    "smoke": "tsx tools/smoke.ts",
     "lint": "eslint src/**/*.ts tests/**/*.ts tools/**/*.ts",
     "format": "prettier --write src/**/*.ts tests/**/*.ts tools/**/*.ts",
     "prebuild": "pnpm run lint && pnpm clean",

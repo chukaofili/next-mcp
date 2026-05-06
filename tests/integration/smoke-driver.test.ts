@@ -19,8 +19,15 @@ interface SpawnResult {
 /**
  * Spawn the smoke driver via tsx (the same way `pnpm run smoke` invokes it).
  * Buffers stdout / stderr and resolves with the exit code.
+ *
+ * NOTE: this file used to also include a green-path test that ran the full
+ * 5-preset matrix as a subprocess. That was removed because the dedicated
+ * `Run smoke driver (skipInstall)` step in .github/workflows/test.yml runs
+ * the same matrix via `pnpm run smoke` — running it twice per CI job was
+ * pure duplication. The single CLI-shape check below stays here because it
+ * exercises the argument-parsing path without spinning up the MCP server.
  */
-function runSmoke(args: string[] = [], timeoutMs = 120_000): Promise<SpawnResult> {
+function runSmoke(args: string[] = [], timeoutMs = 60_000): Promise<SpawnResult> {
   return new Promise((resolve, reject) => {
     const child = spawn('pnpm', ['exec', 'tsx', SMOKE_SCRIPT, ...args], {
       cwd: REPO_ROOT,
@@ -54,23 +61,6 @@ function runSmoke(args: string[] = [], timeoutMs = 120_000): Promise<SpawnResult
 }
 
 describe('tools/smoke.ts headless driver', () => {
-  it(
-    'runs all five presets in skipInstall mode and exits 0',
-    async () => {
-      const result = await runSmoke([], 180_000);
-      // Easier to debug failures by attaching the output to the assertion
-      // message — vitest's diff on multi-line strings is not always helpful.
-      const ctx = `\nexit=${result.exitCode}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
-      expect(result.exitCode, ctx).toBe(0);
-      expect(result.stdout, ctx).toContain('PASS full-everything-on');
-      expect(result.stdout, ctx).toContain('PASS variant-a-full-npm');
-      expect(result.stdout, ctx).toContain('PASS variant-b-full-bun-sqlite-drizzle');
-      expect(result.stdout, ctx).toContain('PASS variant-c-minimal-pnpm');
-      expect(result.stdout, ctx).toContain('PASS variant-d-flat-regression');
-    },
-    240_000
-  );
-
   it('exits 2 with a clear message when given an unknown preset name', async () => {
     const result = await runSmoke(['not-a-real-preset'], 30_000);
     expect(result.exitCode).toBe(2);

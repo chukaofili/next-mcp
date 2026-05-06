@@ -335,7 +335,15 @@ async function runPreset(
     if (process.env.NEXT_MCP_SMOKE_KEEP_TMP === '1') {
       console.error(`[smoke] keeping temp dir for inspection: ${tempDir}`);
     } else {
-      await rm(tempDir, { recursive: true, force: true });
+      try {
+        await rm(tempDir, { recursive: true, force: true });
+      } catch (err) {
+        // Swallow cleanup errors so a transient ENOTEMPTY (Windows-style FS,
+        // antivirus race on a CI runner) doesn't replace the original error
+        // surfaced from the try block. Same discipline as client.close() above.
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[smoke] failed to clean up temp dir ${tempDir}: ${msg}`);
+      }
     }
   }
 }
