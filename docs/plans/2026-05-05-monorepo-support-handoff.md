@@ -10,8 +10,8 @@
 |-------|-------|
 | Branch | `feat/upgrade-packages` |
 | Base commit (before any monorepo work) | `d40f4fb` |
-| HEAD as of this handoff | `2af0526` |
-| Tests passing | 161 / 161 (13 files) |
+| HEAD as of this handoff | `0f97cc5` |
+| Tests passing | 176 / 176 (14 files) |
 | Tooling | TypeScript, Zod 4, MCP SDK, Vitest 4, pnpm |
 
 ## Status by group
@@ -28,6 +28,7 @@
 | H — `generate_dockerfile` monorepo selection (H1) | ✅ done + reviewed (combined review) | 1 (`e82637b`) |
 | I — README + validate + AGENTS.md/CLAUDE.md (I1, I2, +extension) | ✅ done + reviewed (combined review) | 3 (`d387336`, `e88ff88`, `1897a03`) |
 | J — End-to-end smoke procedure (doc) | ✅ done | 1 (`2af0526`) |
+| Coverage-gap fill (post-J audit) | ✅ done + reviewed | 1 (`0f97cc5`) |
 | **All groups complete — ready for smoke run + merge** | — | — |
 
 `git log --oneline d40f4fb..HEAD` shows the full commit list.
@@ -187,7 +188,8 @@ Based on Groups A–E:
 - **Group H deferred two issues to Group I**: (a) `Dockerfile.migrate` wasn't monorepo-adapted (the schema path inside the migrate container won't resolve in full mode); (b) the success message doesn't currently flag this. I should surface both to the user via README documentation.
 - **Group I shipped as 3 commits** (`d387336`, `e88ff88`, `1897a03`) — the AGENTS.md/CLAUDE.md emission was added mid-implementation as a user-requested extension. All three reviewed in one combined pass and approved without a fix-loop. The `1897a03` extension brought the test count from 158 → 161 (+3 new tests). Resulting test suite: 161/161 across 13 files.
 - **Group J shipped as 1 commit** (`2af0526`), pure documentation. No code change, no test impact. The plan called J "manual" — the deliverable is a runnable procedure doc, not an automated test.
-- **Final shape — all 10 groups (A through J) complete**. 27 commits total since `d40f4fb`. Test count: 117 → 161 (+44 tests). Branch is ready for the actual smoke run + merge to main.
+- **Final shape — all 10 groups (A through J) complete**. 27 commits total since `d40f4fb`. Test count: 117 → 161 (+44 tests). Branch was ready for the actual smoke run + merge to main.
+- **Post-J coverage audit pass** (`0f97cc5`): identified 6 critical + 4 important gaps. Filled the prioritized ones with +15 tests across 5 priority blocks: missing permutations (mongoose × full, drizzle adapter × full, Dockerfile mysql/sqlite × full), cross-tool e2e workflows (full + minimal mode chains), schema rejection (`rpc:orpc` requires `monorepo:full`), `rewriteImportsInTree` unit coverage, and re-run/idempotency observation tests. Test count: 161 → 176 (+15). Required one production change: extracted `rewriteImportsInTree` from a private class method to a top-level exported function so it could be unit-tested without instantiating the server. The class method became a 1-line delegating wrapper. Behavior verified byte-identical by code reviewer. **`ImportRewriteMapping` is now an exported type** — if you change its shape, audit downstream callers.
 
 ## Outstanding cleanup (low priority)
 
