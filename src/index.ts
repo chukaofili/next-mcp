@@ -3120,28 +3120,73 @@ export default function Header() {
     const validationResults = [];
 
     try {
-      // Check if package.json exists
+      // package.json and tsconfig.json live at the workspace root in every
+      // mode (Group C emits a workspace tsconfig in monorepo modes too), so
+      // these checks stay anchored at projectPath.
       await fs.access(path.join(projectPath, 'package.json'));
       validationResults.push('✅ package.json exists');
 
-      // Check if Next.js config exists
-      await fs.access(path.join(projectPath, 'next.config.ts'));
-      validationResults.push('✅ next.config.ts exists');
+      // next.config.ts is owned by the Next.js app — flat at projectPath in
+      // `monorepo: 'none'`, but at apps/web in monorepo modes. Use
+      // getAppPath so the existence check resolves to the right location.
+      const appPath = getAppPath(config, projectPath);
+      const nextConfigPath = path.join(appPath, 'next.config.ts');
+      await fs.access(nextConfigPath);
+      const nextConfigDisplay = path.relative(projectPath, nextConfigPath) || 'next.config.ts';
+      validationResults.push(`✅ next.config.ts exists (${nextConfigDisplay})`);
 
-      // Check if TypeScript config exists
+      // Workspace TypeScript config (the workspace base in monorepo modes).
       await fs.access(path.join(projectPath, 'tsconfig.json'));
       validationResults.push('✅ tsconfig.json exists');
 
-      // Attempt to build the project unless skipped
+      // Attempt to build (and best-effort lint/typecheck) unless skipped.
+      // We always invoke the package manager from projectPath: in monorepo
+      // modes the workspace root scripts (`build`, `lint`, `typecheck`) are
+      // themselves Turbo runners, so this fans out across workspaces
+      // without us having to know about `pnpm -r`/`-F` flags. In flat mode
+      // these are plain Next.js scripts.
       if (!config.architecture.skipInstall) {
-        const runBuildCommand = `${config.architecture.packageManager} run build`;
-        const result = this.execCommand(runBuildCommand, projectPath, 'validate build');
-
-        if (!result.success) {
+        const pm = config.architecture.packageManager;
+        const buildResult = this.execCommand(`${pm} run build`, projectPath, 'validate build');
+        if (!buildResult.success) {
           throw new Error('[validate build failed]: Check logs for details');
         }
-
         validationResults.push('✅ Project builds successfully');
+
+        // Best-effort: run lint/typecheck if a corresponding root script
+        // exists. We don't require these — older flat-mode projects might
+        // not define `typecheck` (the flat scaffold uses `type-check`),
+        // and we shouldn't make validation fail when a script is simply
+        // absent. Read package.json once and probe.
+        try {
+          const pkgRaw = await fs.readFile(path.join(projectPath, 'package.json'), 'utf-8');
+          const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
+          const scripts = pkg.scripts ?? {};
+
+          const optionalScripts: Array<{ key: string; label: string }> = [
+            { key: 'lint', label: 'lint' },
+            // Prefer `typecheck` (monorepo root convention, matches turbo
+            // pipeline). Fall back to `type-check` (flat-mode convention).
+            { key: scripts.typecheck ? 'typecheck' : 'type-check', label: 'typecheck' },
+          ];
+
+          for (const { key, label } of optionalScripts) {
+            if (!scripts[key]) {
+              validationResults.push(`⚠️ Skipped ${label} validation (no \`${key}\` script in package.json)`);
+              continue;
+            }
+            const result = this.execCommand(`${pm} run ${key}`, projectPath, `validate ${label}`);
+            if (!result.success) {
+              throw new Error(`[validate ${label} failed]: Check logs for details`);
+            }
+            validationResults.push(`✅ ${label} passes`);
+          }
+        } catch (error) {
+          // If the package.json read or parse fails, we can't probe
+          // scripts — surface the issue and bail to the outer catch.
+          if (error instanceof Error && error.message.startsWith('[validate ')) throw error;
+          throw error;
+        }
       } else {
         validationResults.push(`⚠️ Build validation skipped (skipInstall is true)`);
       }
