@@ -4,15 +4,23 @@
 > (see `2026-05-05-monorepo-support-implementation.md`). Run this by
 > hand before merging `feat/upgrade-packages` into `main`. CI does not
 > execute this — it requires a Docker daemon, network access for
-> `create-next-app` plus the `@better-auth-ui` shadcn registry, and
+> `create-next-app` plus the `better-auth-ui` shadcn registry, and
 > several minutes of `pnpm install` + `docker build` time.
+>
+> **Up-to-date as of HEAD `fbe32e5`** — covers Groups A–J, the post-J
+> coverage audit (`0f97cc5`), and Group K (`259eb0b`, Dockerfile.migrate
+> templated for all 4 PMs × 3 monorepo modes). The companion punch list
+> for everything **outside** this smoke lives at
+> `docs/plans/2026-05-06-recommended-fixes.md` — Tier 1 there
+> enumerates exactly what this smoke is meant to prove out at runtime.
 
 ## 1. Purpose
 
 This smoke test exercises the full `next-mcp` tool surface against a
 real filesystem and a real Docker daemon. The integration suite
-(`tests/integration/tools/*`) covers each tool in isolation with
-`skipInstall: true` and stubbed shells, so it cannot prove that:
+(`tests/integration/tools/*` — currently 14 files / 185 tests) covers
+each tool in isolation with `skipInstall: true` and stubbed shells,
+so it cannot prove that:
 
 - the generated `pnpm-workspace.yaml` + catalog substitution actually
   resolves on `pnpm install`,
@@ -22,12 +30,18 @@ real filesystem and a real Docker daemon. The integration suite
   --pointer` succeeds against the live registry,
 - `Dockerfile.monorepo` builds end-to-end (turbo prune → pruned
   install → turbo build → standalone runtime),
-- the better-auth-ui shadcn registry components (`@better-auth-ui/r/auth.json`
-  etc.) install cleanly in `monorepo: full` mode.
+- the better-auth-ui shadcn registry components
+  (`https://better-auth-ui.com/r/auth.json` etc.) install cleanly in
+  `monorepo: full` mode,
+- the templated `Dockerfile.migrate` (Group K, `259eb0b`) actually
+  builds and `docker compose run --rm migrate` succeeds for each
+  monorepo mode × package manager combination.
 
-Run this **after Groups F–I have landed** and before opening the
-merge PR. If anything fails, capture it in the "Findings" section
-at the bottom and file follow-up tickets.
+Run this **after all groups (A–J) and Group K (Dockerfile.migrate)
+have landed** and before opening the merge PR. If anything fails,
+capture it in the "Findings" section at the bottom and file follow-up
+tickets — see `2026-05-06-recommended-fixes.md` for the canonical
+follow-up list.
 
 ## 2. Prerequisites
 
@@ -36,8 +50,9 @@ at the bottom and file follow-up tickets.
 - Docker daemon running (Colima, Docker Desktop, OrbStack — any will
   do) — needed for the `docker build .` step.
 - Network access to the npm registry, GitHub (for `create-next-app`),
-  and `https://better-auth-ui.daveyplate.com` for the shadcn
-  registry pulls.
+  and `https://better-auth-ui.com/r/*.json` for the shadcn
+  registry pulls (the URLs hit by `setup_authentication`'s G2
+  install step are `auth.json`, `settings.json`, `user-button.json`).
 - Roughly 5–10 minutes per smoke variant (most of it is
   `create-next-app` + `pnpm install` + `docker build`).
 
@@ -186,7 +201,23 @@ A failure here is a blocker — stop, capture it, and file a follow-up.
   in monorepo mode).
 - `docker-compose.yml` has a `migrate:` service that builds from
   `Dockerfile.migrate` and depends on `db` healthy.
-- `Dockerfile.migrate` was copied to the workspace root.
+- `Dockerfile.migrate` was emitted at the workspace root and ran
+  through `substituteMigrateDockerfilePlaceholders`. **Group K
+  invariants — verify against `cat Dockerfile.migrate`:**
+  - Uses `node:24-alpine` base image (pnpm/npm/yarn) or
+    `oven/bun:1-alpine` (bun).
+  - Includes `RUN __COREPACK_SETUP__`-substituted text (corepack
+    enable + prepare for pnpm/npm/yarn; no-op for bun).
+  - The `COPY` block uses `COPY . .` (monorepo mode), not the
+    flat-mode targeted COPYs of `prisma/` etc.
+  - `RUN` line installs the workspace via the PM's frozen-lockfile
+    install (e.g. `pnpm install --frozen-lockfile`).
+  - The final `CMD` reads:
+    `["sh", "-c", "<pm-dlx> prisma migrate deploy --schema=./packages/db/prisma/schema.prisma"]`
+    — note the `--schema` flag now points into `packages/db/`, not
+    the legacy `prisma/schema.prisma`.
+  - **No `__SOMETHING__` placeholders remain unsubstituted** — grep
+    `Dockerfile.migrate` for `__[A-Z_]+__` and confirm zero matches.
 
 ### `generate_readme`
 
@@ -195,11 +226,14 @@ A failure here is a blocker — stop, capture it, and file a follow-up.
   `packages/eslint-config/`, and `packages/typescript-config/`.
 - `README.md` Docker section mentions `docker compose run --rm
   migrate` for migrations.
-- `README.md` includes the `Dockerfile.migrate` schema-path note for
-  monorepo: full (see section 7).
+- `README.md` does NOT contain the legacy "you may need to pass
+  `--schema=./packages/db/prisma/schema.prisma`" workaround note
+  (Group K removed it because the migrate Dockerfile now does this
+  by default). If you see that text, K's README cleanup didn't land.
 - `AGENTS.md` exists at the workspace root and contains the
   `@smoke-full/db` and `@smoke-full/auth/server` import strings
-  agents should use.
+  agents should use. AGENTS.md also does NOT contain the legacy
+  `--schema=` workaround paragraph (same K cleanup).
 - `CLAUDE.md` exists and is a one-line pointer at `AGENTS.md`.
 
 ### `validate_project`
@@ -238,6 +272,24 @@ first failure — later steps will compound the diagnosis.
   - Prisma client generation failure → `packages/db/src/.prisma`
     path is mis-emitted, or `prisma generate` runs in the wrong cwd.
   - Layer caching surprises → not necessarily a bug, just note them.
+
+- **`docker compose run --rm migrate`** (Group K — first end-to-end
+  test of the templated `Dockerfile.migrate`) — should connect to
+  the postgres `db` service and apply migrations. Watch for:
+  - **Schema-not-found** → the substituted `--schema=...` path
+    inside the CMD doesn't match what `COPY . .` actually landed in
+    the migrate image. Capture the literal CMD line from
+    `Dockerfile.migrate` and the full error.
+  - **Workspace dep resolution failure during `__PM_INSTALL__`** →
+    `packages/db` or its transitive deps not findable. Means
+    `pnpm-workspace.yaml` or the lockfile is incomplete in the
+    smoke project.
+  - **Slow build** → expected. `COPY . .` plus a full workspace
+    install isn't optimised; build performance is documented in the
+    recommended-fixes Tier 6 (K's known rough edge).
+  - For the bun + sqlite + drizzle variant: `Dockerfile.migrate`
+    must NOT exist (gating: `orm === 'prisma' && database !==
+    'none'`). Also no `migrate:` service in `docker-compose.yml`.
 
 ## 6. Companion smokes (light variants)
 
@@ -282,7 +334,11 @@ Catches **bun's different base image** in the Dockerfile and the
 ```
 
 Skip `setup_authentication` and `setup_shadcn`. Confirm
-`docker-compose.yml` has no `migrate:` service (drizzle).
+`docker-compose.yml` has no `migrate:` service (gated on prisma) and
+that `Dockerfile.migrate` is **not** emitted at the project root
+(same gate; Group K preserved this behaviour). Also: bun's base
+image in `Dockerfile.monorepo` should be `oven/bun:1-alpine`, not
+`node:24-alpine`.
 
 ### Variant C — Minimal + pnpm (no db, no auth, no shadcn)
 
@@ -327,33 +383,38 @@ differently from `main`, that's a bug.
 
 ## 7. Known limitations / where to capture findings
 
-- **`Dockerfile.migrate` is not monorepo-adapted (Group H deferred).**
-  In `monorepo: full` mode the Prisma schema lives at
-  `packages/db/prisma/schema.prisma`, but `Dockerfile.migrate`'s
-  default working directory and `prisma migrate deploy` invocation
-  assume `prisma/schema.prisma` at the workspace root. The migrate
-  service will fail unless the user passes
-  `--schema=./packages/db/prisma/schema.prisma`. The README and
-  AGENTS.md both call this out, but **the smoke is the first time
-  this actually runs end-to-end** — confirm whether the call-out is
-  enough or whether we should template the schema path into
-  `Dockerfile.migrate` directly. File a follow-up ticket if so.
+- **`Dockerfile.migrate` was templated in Group K (`259eb0b`).** It
+  no longer needs the `--schema=...` workaround — the substituter
+  bakes the right schema path into the CMD per monorepo mode. The
+  smoke is the first end-to-end test of this templated output;
+  expect the migrate service to "just work", but file a follow-up
+  if it doesn't (the K commit's known rough edges are listed in
+  `2026-05-06-recommended-fixes.md` Tier 6 → "From K").
 
 - **better-auth CLI integration is untested in CI.** Every existing
   test run uses `skipInstall: true`, so the better-auth CLI never
   actually ran against the new `packages/auth` schema cwd or
   `packages/db` migration cwd. This smoke is the first end-to-end
   run; capture exact CLI errors (if any) verbatim — they are
-  hard to reproduce later from log fragments.
+  hard to reproduce later from log fragments. Tier 1 of the
+  recommended-fixes doc lists this as a known smoke target.
 
 - **shadcn `--preset b0 --template next --monorepo --pointer` is a
   newish invocation format.** If the registry / CLI changes its
   contract, this is where it'll surface first.
 
-- **No `pnpm start` for the MCP server.** Driving the server from
-  the inspector requires a full path to `dist/index.js`. Consider
-  adding `"start": "node dist/index.js"` to the root `package.json`
-  as a follow-up — small DX win for repeat smoke runs.
+- **No headless driver / `pnpm start` for the MCP server.** Driving
+  the server from the inspector requires a full path to
+  `dist/index.js`. Recommended-fixes Tier 5a proposes adding
+  `pnpm start` + `tools/smoke-call.ts` so this smoke can be
+  reproduced from CI on every PR. Out of scope for the immediate
+  smoke run.
+
+- **Out-of-scope follow-ups.** For everything else not directly
+  testable by this smoke (Tier 2 tool audits like
+  `generate_base_components` × monorepo, Tier 3 schema refines,
+  Tier 4 helper extractions), see
+  `docs/plans/2026-05-06-recommended-fixes.md`.
 
 ## 8. Acceptance criteria
 
@@ -362,11 +423,14 @@ The smoke is "green" when:
 - All five smoke configs (everything-on full + variants A–D)
   scaffold cleanly without errors from any tool.
 - The everything-on full smoke gets all the way through
-  `docker build .` with no manual fixes.
+  `docker build .` AND `docker compose run --rm migrate` with no
+  manual fixes (the migrate step is the first runtime test of
+  Group K's templated `Dockerfile.migrate`).
 - All four package managers' lockfiles install (variants A and B
   exercise npm and bun; the everything-on smoke covers pnpm; yarn
   is not in the smoke matrix because we have no current yarn user
-  to validate against — add it if/when we do).
+  to validate against — add it if/when we do; tracked in
+  `2026-05-06-recommended-fixes.md` Tier 5b).
 - Findings (if any) are recorded below and filed as separate
   follow-up tickets / issues.
 
