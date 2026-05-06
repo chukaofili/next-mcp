@@ -1861,6 +1861,7 @@ class NextMCPServer {
       // Note: If uiLibrary is 'shadcn', call the 'setup_shadcn' tool separately
       // to initialize shadcn/ui and install all components
 
+      const appPath = getAppPath(config, projectPath);
       const useShadcn = config.architecture.uiLibrary === 'shadcn';
 
       // Update the existing page.tsx with our custom content using Tailwind CSS
@@ -2016,14 +2017,15 @@ Button.displayName = 'Button';
 export { Button };
 `;
 
-      // Write the files
-      await fs.mkdir(path.join(projectPath, 'src/app/api/health'), { recursive: true });
-      await fs.writeFile(path.join(projectPath, 'src/app/page.tsx'), pageTsx);
-      await fs.writeFile(path.join(projectPath, 'src/app/api/health/route.ts'), healthApiRoute);
+      // Write the files (route through getAppPath so monorepo modes write
+      // into apps/web/src/... instead of a stray top-level src/ tree).
+      await fs.mkdir(path.join(appPath, 'src/app/api/health'), { recursive: true });
+      await fs.writeFile(path.join(appPath, 'src/app/page.tsx'), pageTsx);
+      await fs.writeFile(path.join(appPath, 'src/app/api/health/route.ts'), healthApiRoute);
 
       // Only create custom button component if not using shadcn
       if (!useShadcn) {
-        await fs.writeFile(path.join(projectPath, 'src/components/ui/button.tsx'), buttonComponent);
+        await fs.writeFile(path.join(appPath, 'src/components/ui/button.tsx'), buttonComponent);
       }
 
       const components = ['- Enhanced home page with feature showcase', '- Added health check API route'];
