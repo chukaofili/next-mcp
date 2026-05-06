@@ -172,7 +172,8 @@ describe('minimal-mode end-to-end workflow', () => {
         monorepo: 'minimal',
         packageManager: 'npm',
         database: 'sqlite',
-        orm: 'prisma',
+        // Prisma is postgres-only; sqlite must use drizzle.
+        orm: 'drizzle',
         auth: 'better-auth',
         uiLibrary: 'shadcn',
         testing: 'none',

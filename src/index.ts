@@ -148,7 +148,16 @@ export type DatabaseName = (typeof DATABASE_NAMES)[number];
  * value (including `'none'`), so direct-driver setups are unconstrained.
  */
 export const ORM_DATABASE_COMPATIBILITY: Record<OrmName, ReadonlyArray<DatabaseName>> = {
-  prisma: ['postgres', 'mysql', 'sqlite', 'mongodb'],
+  // Prisma is currently constrained to postgres because the generator's
+  // implementation is postgres-only: `setupPrisma()` always writes
+  // `templates/database/prisma/client.ts.template` (which imports
+  // `@prisma/adapter-pg`) and {@link getDbDeps} unconditionally adds
+  // `pg` + `@prisma/adapter-pg`. Accepting mysql/sqlite/mongodb at
+  // schema-validation time would scaffold projects that cannot compile
+  // or connect. Widen this list when the client template + getDbDeps
+  // become database-aware (separate templates per dialect, or
+  // placeholder-driven adapter substitution).
+  prisma: ['postgres'],
   drizzle: ['postgres', 'mysql', 'sqlite'],
   mongoose: ['mongodb'],
   none: ['none', 'postgres', 'mysql', 'sqlite', 'mongodb'],
@@ -1204,11 +1213,19 @@ class NextMCPServer {
         return (await impl(validatedConfig, args[pathKey])) as CallToolResult;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
+        // `isError: true` makes this an MCP-protocol error, not a normal
+        // text result. Without it, MCP clients (the smoke driver,
+        // {@link MCPTestClient.isFailure}, and any stricter consumer)
+        // would treat a thrown tool call as success-with-text and silently
+        // swallow regressions. The `❌`/`Error executing` markers in the
+        // text are kept too as belt-and-braces for clients that read
+        // text but ignore the protocol flag.
         return {
+          isError: true,
           content: [
             {
               type: 'text',
-              text: `Error executing ${name}: ${errorMessage}`,
+              text: `❌ Error executing ${name}: ${errorMessage}`,
             },
           ],
         };

@@ -49,16 +49,20 @@ describe('generate_dockerfile tool', () => {
   });
 
   it('should handle different databases', async () => {
+    // Pair each database with a compat-table-valid ORM. The default
+    // orm is `prisma`, which is currently postgres-only — so non-postgres
+    // databases must override to `drizzle` (mysql/sqlite) or `mongoose`
+    // (mongodb).
     const databases = [
-      { name: 'postgres', image: 'postgres' },
-      { name: 'mysql', image: 'mysql' },
-      { name: 'mongodb', image: 'mongo' },
-      { name: 'sqlite', image: null }, // SQLite doesn't need Docker service
+      { name: 'postgres', image: 'postgres', orm: 'prisma' },
+      { name: 'mysql', image: 'mysql', orm: 'drizzle' },
+      { name: 'mongodb', image: 'mongo', orm: 'mongoose' },
+      { name: 'sqlite', image: null, orm: 'drizzle' }, // SQLite doesn't need Docker service
     ] as const;
 
     for (const db of databases) {
       const config = createMockConfig({
-        architecture: { database: db.name },
+        architecture: { database: db.name, orm: db.orm },
       });
 
       const result = await client.callTool('generate_dockerfile', {
@@ -318,11 +322,14 @@ describe('generate_dockerfile tool', () => {
       expect(compose).toContain('./prisma:/app/prisma');
     });
 
-    it('uses monorepo template + mysql:9 image + packages/db .dockerignore for full + mysql + prisma + pnpm (audit 1c)', async () => {
-      // Audit gap-fill 1c: prior tests covered full + postgres + prisma but
-      // not full + mysql + prisma. This pins three orthogonal slices for the
-      // mysql branch: Dockerfile is the monorepo template, docker-compose
-      // picks `mysql:9`, and `.dockerignore` carries the routed prisma path.
+    it('uses monorepo template + mysql:9 image + packages/db .dockerignore for full + mysql + drizzle + pnpm (audit 1c)', async () => {
+      // Audit gap-fill 1c: prior tests covered full + postgres but not
+      // full + mysql. This pins three orthogonal slices for the mysql
+      // branch: Dockerfile is the monorepo template, docker-compose
+      // picks `mysql:9`, and the routed `packages/db` workspace is wired.
+      // Originally this test paired mysql with prisma; ORM_DATABASE_COMPATIBILITY
+      // now constrains prisma to postgres, so mysql must use drizzle —
+      // the dockerignore drizzle path replaces the prisma one.
       const dir = await createTempDir('next-mcp-full-mysql-');
       try {
         const config = createMockConfig({
@@ -331,7 +338,7 @@ describe('generate_dockerfile tool', () => {
             monorepo: 'full',
             packageManager: 'pnpm',
             database: 'mysql',
-            orm: 'prisma',
+            orm: 'drizzle',
           },
         });
 
@@ -344,20 +351,17 @@ describe('generate_dockerfile tool', () => {
 
         const compose = await readFile(path.join(dir, 'docker-compose.yml'));
         expect(compose).toContain('mysql:9');
-
-        const dockerignore = await readFile(path.join(dir, '.dockerignore'));
-        expect(dockerignore).toContain('packages/db/src/.prisma');
       } finally {
         await cleanupTempDir(dir);
       }
     });
 
-    it('uses monorepo template + omits db service + packages/db .dockerignore for full + sqlite + prisma + pnpm (audit 1d)', async () => {
+    it('uses monorepo template + omits db service for full + sqlite + drizzle + pnpm (audit 1d)', async () => {
       // Audit gap-fill 1d: sqlite is file-based, so docker-compose has no
       // db: service for it. The migrate: service is still expected because
-      // prisma is in play. Dockerfile is the monorepo template; .dockerignore
-      // tracks the routed prisma path. This guards both the sqlite docker
-      // path AND the routed prisma path against silent regressions.
+      // drizzle is in play. Originally this test paired sqlite with prisma;
+      // ORM_DATABASE_COMPATIBILITY now constrains prisma to postgres, so
+      // sqlite must use drizzle.
       const dir = await createTempDir('next-mcp-full-sqlite-');
       try {
         const config = createMockConfig({
@@ -366,7 +370,7 @@ describe('generate_dockerfile tool', () => {
             monorepo: 'full',
             packageManager: 'pnpm',
             database: 'sqlite',
-            orm: 'prisma',
+            orm: 'drizzle',
           },
         });
 
@@ -393,9 +397,6 @@ describe('generate_dockerfile tool', () => {
         // both the migrate and web containers.
         expect(compose).not.toMatch(/migrate:[\s\S]*?depends_on:[\s\S]*?db:/);
         expect(compose).toMatch(/migrate:[\s\S]*?volumes:[\s\S]*?- sqlite_data:\/app\/data/);
-
-        const dockerignore = await readFile(path.join(dir, '.dockerignore'));
-        expect(dockerignore).toContain('packages/db/src/.prisma');
       } finally {
         await cleanupTempDir(dir);
       }

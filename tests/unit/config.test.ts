@@ -15,11 +15,15 @@ describe('ProjectConfig', () => {
   });
 
   it('should allow overriding config values', () => {
+    // Pair `database: 'mysql'` with `orm: 'drizzle'` because the default
+    // orm (`prisma`) is postgres-only — ORM_DATABASE_COMPATIBILITY would
+    // otherwise reject this combo at schema-parse time.
     const config = createMockConfig({
       name: 'custom-app',
       architecture: {
         packageManager: 'npm',
         database: 'mysql',
+        orm: 'drizzle',
       },
     });
 
@@ -50,7 +54,9 @@ describe('ProjectConfig', () => {
     }> = [
       { database: 'none', orm: 'none' },
       { database: 'postgres', orm: 'prisma' },
-      { database: 'mysql', orm: 'prisma' },
+      // Prisma is currently postgres-only (see ORM_DATABASE_COMPATIBILITY)
+      // — the mysql/sqlite/mongodb cases pair with their compat-table ORM.
+      { database: 'mysql', orm: 'drizzle' },
       { database: 'mongodb', orm: 'mongoose' },
       { database: 'sqlite', orm: 'drizzle' },
     ];

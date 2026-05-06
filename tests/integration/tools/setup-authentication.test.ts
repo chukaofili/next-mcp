@@ -346,10 +346,14 @@ describe('setup_authentication tool — monorepo:full', () => {
     const authPkgJson = JSON.parse(
       await fs.readFile(path.join(authPkgDir, 'package.json'), 'utf-8')
     );
+    // Subpath exports point at compiled JS (./dist/...) so Next.js can
+    // resolve them via `exports` without `transpilePackages`. The build
+    // script (`tsc -b`) emits the dist files.
     expect(authPkgJson.exports['./exports']).toMatchObject({
-      types: './src/re-exports.ts',
-      default: './src/re-exports.ts',
+      types: './dist/re-exports.d.ts',
+      default: './dist/re-exports.js',
     });
+    expect(authPkgJson.scripts.build).toContain('tsc -b');
     expect(authPkgJson.scripts['db:generate']).toBeUndefined();
     expect(authPkgJson.scripts['db:migrate']).toBeUndefined();
 

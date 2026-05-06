@@ -93,4 +93,33 @@ describe('MCP Server Initialization', () => {
     expect(scaffoldTool).toBeDefined();
     expect(scaffoldTool!.description).toBeDefined();
   });
+
+  it('surfaces validation failures with isError:true so test/smoke clients detect them', async () => {
+    // Codex flagged that any tool failure that fell through to
+    // withValidation's catch returned a normal text result, so
+    // MCPTestClient.isFailure() and the smoke driver would silently
+    // treat a no-op as success. The fix added `isError: true` to that
+    // arm; the SDK already set `isError: true` for input-shape rejections
+    // like `MCP error -32602`. This test pins the cross-path contract:
+    // EVERY tool-call failure must surface `isError: true` on the
+    // response so the helper / smoke driver classify it as a failure.
+    const result = (await client.callTool('scaffold_project', {
+      // `auth: 'better-auth'` + `database: 'none'` is rejected by the
+      // ProjectConfigSchema refine; the MCP SDK rejects input-shape
+      // mismatches with `isError: true` before withValidation runs.
+      config: {
+        name: 'invalid-config',
+        architecture: {
+          database: 'none',
+          orm: 'none',
+          auth: 'better-auth',
+        },
+      },
+      targetPath: '/tmp',
+    })) as { isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(client.isFailure(result)).toBe(true);
+    expect(client.isSuccess(result)).toBe(false);
+  });
 });

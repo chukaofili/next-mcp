@@ -102,8 +102,15 @@ export class MCPTestClient {
    * NOTE: tools/smoke.ts:isToolFailure duplicates this logic. Update both in
    * lockstep — the smoke driver does not import this helper (it cannot, it's
    * a standalone tsx script outside the test bundle).
+   *
+   * The protocol-level `isError` flag is checked first (set by withValidation
+   * for impl-level throws and by the SDK for input-shape rejections like
+   * `MCP error -32602`). Text markers (❌, "Failed") cover legacy text-only
+   * error responses from per-tool catch arms that pre-date the isError fix.
    */
   isFailure(result: unknown): boolean {
+    const res = result as { isError?: boolean };
+    if (res.isError === true) return true;
     const text = this.getTextContent(result);
     return text.includes('❌') || text.includes('Failed');
   }

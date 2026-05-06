@@ -170,6 +170,21 @@ describe('scaffold_project tool — monorepo:full', () => {
     expect(dbPkg.name).toBe(`@${projectName}/db`);
     expect(dbPkg.scripts['db:migrate']).toBe('prisma migrate dev');
 
+    // Workspace exports point at compiled JS (./dist/...) so apps/web
+    // resolves through Next.js's `exports` reader without needing
+    // `transpilePackages`. The build script must produce those dist
+    // files (prisma generate first, then tsc -b).
+    expect(dbPkg.main).toBe('./dist/index.js');
+    expect(dbPkg.types).toBe('./dist/index.d.ts');
+    expect(dbPkg.exports['.']).toMatchObject({
+      types: './dist/index.d.ts',
+      import: './dist/index.js',
+    });
+    expect(dbPkg.scripts.build).toContain('prisma generate');
+    expect(dbPkg.scripts.build).toContain('tsc -b');
+    // Cleaning includes the dist output so re-builds start fresh.
+    expect(dbPkg.scripts.clean).toContain('dist');
+
     // Runtime deps that the generated client.ts + prisma.config.ts actually
     // import must be declared on packages/db, not apps/web. Under strict pnpm
     // a workspace package cannot resolve a dep declared only on a sibling.
