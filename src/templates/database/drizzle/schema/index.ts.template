@@ -1,0 +1,8 @@
+// Drizzle schema barrel — re-exports every schema module so drizzle-kit
+// (configured with `schema: './src/schema/index.ts'`) sees one entrypoint.
+//
+// Add your own table modules alongside `auth.ts` and re-export them here:
+//   export * from './users.js';
+//   export * from './products.js';
+
+export * from './auth.js';

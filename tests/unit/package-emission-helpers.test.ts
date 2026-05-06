@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  getDbDeps,
   hasAuthPackageEmitted,
   hasDbPackageEmitted,
   hasOrpcPackageEmitted,
@@ -124,6 +125,82 @@ describe('Package-emission gate helpers', () => {
         architecture: { monorepo: 'full', rpc: 'none', auth: 'none', database: 'none', orm: 'none' },
       });
       expect(hasOrpcPackageEmitted(config)).toBe(false);
+    });
+  });
+
+  describe('getDbDeps', () => {
+    it('returns prisma client + adapter + driver + dotenv for orm:prisma', () => {
+      const config = createMockConfig({
+        architecture: { monorepo: 'full', database: 'postgres', orm: 'prisma', auth: 'none' },
+      });
+      const { dependencies, devDependencies } = getDbDeps(config);
+      expect(dependencies).toMatchObject({
+        '@prisma/client': expect.any(String),
+        '@prisma/adapter-pg': expect.any(String),
+        pg: expect.any(String),
+        dotenv: expect.any(String),
+      });
+      expect(devDependencies).toMatchObject({ prisma: expect.any(String) });
+    });
+
+    it('returns drizzle-orm + pg + dotenv for orm:drizzle + postgres', () => {
+      const config = createMockConfig({
+        architecture: { monorepo: 'full', database: 'postgres', orm: 'drizzle', auth: 'none' },
+      });
+      const { dependencies, devDependencies } = getDbDeps(config);
+      expect(dependencies).toMatchObject({
+        'drizzle-orm': expect.any(String),
+        pg: expect.any(String),
+        dotenv: expect.any(String),
+      });
+      expect(devDependencies).toMatchObject({ 'drizzle-kit': expect.any(String) });
+      expect(dependencies.mysql2).toBeUndefined();
+      expect(dependencies['better-sqlite3']).toBeUndefined();
+    });
+
+    it('returns drizzle-orm + mysql2 for orm:drizzle + mysql', () => {
+      const config = createMockConfig({
+        architecture: { monorepo: 'full', database: 'mysql', orm: 'drizzle', auth: 'none' },
+      });
+      const { dependencies, devDependencies } = getDbDeps(config);
+      expect(dependencies).toMatchObject({
+        'drizzle-orm': expect.any(String),
+        mysql2: expect.any(String),
+      });
+      expect(devDependencies).toMatchObject({ 'drizzle-kit': expect.any(String) });
+      expect(dependencies.pg).toBeUndefined();
+      expect(dependencies.dotenv).toBeUndefined();
+    });
+
+    it('returns drizzle-orm + better-sqlite3 + types for orm:drizzle + sqlite', () => {
+      const config = createMockConfig({
+        architecture: { monorepo: 'full', database: 'sqlite', orm: 'drizzle', auth: 'none' },
+      });
+      const { dependencies, devDependencies } = getDbDeps(config);
+      expect(dependencies).toMatchObject({
+        'drizzle-orm': expect.any(String),
+        'better-sqlite3': expect.any(String),
+      });
+      expect(devDependencies).toMatchObject({
+        'drizzle-kit': expect.any(String),
+        '@types/better-sqlite3': expect.any(String),
+      });
+      expect(dependencies.pg).toBeUndefined();
+      expect(dependencies.mysql2).toBeUndefined();
+    });
+
+    it('returns empty for orm:none', () => {
+      const config = createMockConfig({
+        architecture: { monorepo: 'full', database: 'postgres', orm: 'none', auth: 'none' },
+      });
+      expect(getDbDeps(config)).toEqual({ dependencies: {}, devDependencies: {} });
+    });
+
+    it('returns empty for orm:mongoose (deps live in the mongoose package template)', () => {
+      const config = createMockConfig({
+        architecture: { monorepo: 'full', database: 'mongodb', orm: 'mongoose', auth: 'none' },
+      });
+      expect(getDbDeps(config)).toEqual({ dependencies: {}, devDependencies: {} });
     });
   });
 });

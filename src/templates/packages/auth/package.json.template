@@ -17,15 +17,17 @@
     "./server": {
       "types": "./src/server.ts",
       "default": "./src/server.ts"
+    },
+    "./exports": {
+      "types": "./src/re-exports.ts",
+      "default": "./src/re-exports.ts"
     }
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --cache",
     "lint:fix": "eslint . --cache --fix",
-    "clean": "rm -rf *.tsbuildinfo",
-    "db:generate": "better-auth generate",
-    "db:migrate": "better-auth migrate"
+    "clean": "rm -rf *.tsbuildinfo"
   },
   "dependencies": {
     "@<projectName>/db": "workspace:*",

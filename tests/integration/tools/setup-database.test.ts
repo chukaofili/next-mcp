@@ -226,9 +226,16 @@ describe('setup_database tool — monorepo:minimal', () => {
       path.join(appPath, 'drizzle.config.ts'),
       'utf-8'
     );
-    expect(drizzleConfig).toContain("schema: './src/lib/db/schema.ts'");
+    expect(drizzleConfig).toContain("schema: './src/lib/db/schema/index.ts'");
     // The placeholder must be substituted, not leaked through.
     expect(drizzleConfig).not.toContain('__SCHEMA_PATH__');
+
+    // The schema/ directory holds a barrel + an auth placeholder file. The
+    // barrel re-exports the auth module so drizzle-kit (configured with the
+    // single index.ts entrypoint) sees both user tables and any auth tables
+    // populated later by `pnpm auth:generate`.
+    expect(await fileExists(path.join(appPath, 'src/lib/db/schema/index.ts'))).toBe(true);
+    expect(await fileExists(path.join(appPath, 'src/lib/db/schema/auth.ts'))).toBe(true);
   }, 120000);
 });
 
@@ -319,21 +326,22 @@ describe('setup_database tool — monorepo:full', () => {
     expect(client.isSuccess(result)).toBe(true);
 
     expect(await fileExists(path.join(dbPkgDir, 'drizzle.config.ts'))).toBe(true);
-    expect(await fileExists(path.join(dbPkgDir, 'src', 'schema.ts'))).toBe(true);
+    expect(await fileExists(path.join(dbPkgDir, 'src', 'schema', 'index.ts'))).toBe(true);
+    expect(await fileExists(path.join(dbPkgDir, 'src', 'schema', 'auth.ts'))).toBe(true);
     expect(await fileExists(path.join(dbPkgDir, 'src', 'client.ts'))).toBe(true);
     expect(await fileExists(path.join(dbPkgDir, 'src', 'index.ts'))).toBe(true);
     expect(await dirExists(path.join(dbPkgDir, 'drizzle', 'migrations'))).toBe(true);
 
     // The `schema:` field in drizzle.config.ts must resolve from the config's
-    // own location (`packages/db/drizzle.config.ts`) to the schema file
-    // (`packages/db/src/schema.ts`). With the legacy hardcoded value of
+    // own location (`packages/db/drizzle.config.ts`) to the schema barrel
+    // (`packages/db/src/schema/index.ts`). With the legacy hardcoded value of
     // `./src/lib/db/schema.ts`, drizzle-kit would fail at runtime — so this
     // assertion guards the regression.
     const drizzleConfig = await fs.readFile(
       path.join(dbPkgDir, 'drizzle.config.ts'),
       'utf-8'
     );
-    expect(drizzleConfig).toContain("schema: './src/schema.ts'");
+    expect(drizzleConfig).toContain("schema: './src/schema/index.ts'");
     expect(drizzleConfig).not.toContain("schema: './src/lib/db/schema.ts'");
   }, 120000);
 

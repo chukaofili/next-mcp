@@ -169,6 +169,137 @@ describe('scaffold_project tool — monorepo:full', () => {
     const dbPkg = JSON.parse(await fs.readFile(path.join(dbDir, 'package.json'), 'utf-8'));
     expect(dbPkg.name).toBe(`@${projectName}/db`);
     expect(dbPkg.scripts['db:migrate']).toBe('prisma migrate dev');
+
+    // Runtime deps that the generated client.ts + prisma.config.ts actually
+    // import must be declared on packages/db, not apps/web. Under strict pnpm
+    // a workspace package cannot resolve a dep declared only on a sibling.
+    expect(dbPkg.dependencies['@prisma/client']).toBeDefined();
+    expect(dbPkg.dependencies['@prisma/adapter-pg']).toBeDefined();
+    expect(dbPkg.dependencies.pg).toBeDefined();
+    expect(dbPkg.dependencies.dotenv).toBeDefined();
+    expect(dbPkg.devDependencies.prisma).toBeDefined();
+
+    // The runtime db deps must not duplicate onto apps/web — apps/web
+    // consumes db only via the workspace `@<project>/db: workspace:*` dep
+    // (added later by setup_database via wireAppsWebToDbPackage; not yet
+    // present after scaffold_project alone).
+    const appPkg = JSON.parse(
+      await fs.readFile(path.join(projectPath, 'apps', 'web', 'package.json'), 'utf-8')
+    );
+    expect(appPkg.dependencies?.['@prisma/adapter-pg']).toBeUndefined();
+    expect(appPkg.dependencies?.['@prisma/client']).toBeUndefined();
+    expect(appPkg.dependencies?.pg).toBeUndefined();
+    expect(appPkg.dependencies?.dotenv).toBeUndefined();
+    expect(appPkg.devDependencies?.prisma).toBeUndefined();
+  }, 120000);
+
+  it('full mode + postgres/drizzle routes driver deps to packages/db', async () => {
+    const projectName = 'full-db-drizzle-pg';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'postgres',
+        orm: 'drizzle',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const projectPath = path.join(tempDir, projectName);
+    const dbPkg = JSON.parse(
+      await fs.readFile(path.join(projectPath, 'packages', 'db', 'package.json'), 'utf-8')
+    );
+    expect(dbPkg.dependencies['drizzle-orm']).toBeDefined();
+    expect(dbPkg.dependencies.pg).toBeDefined();
+    expect(dbPkg.dependencies.dotenv).toBeDefined();
+    expect(dbPkg.devDependencies['drizzle-kit']).toBeDefined();
+
+    const appPkg = JSON.parse(
+      await fs.readFile(path.join(projectPath, 'apps', 'web', 'package.json'), 'utf-8')
+    );
+    expect(appPkg.dependencies?.['drizzle-orm']).toBeUndefined();
+    expect(appPkg.dependencies?.pg).toBeUndefined();
+    expect(appPkg.devDependencies?.['drizzle-kit']).toBeUndefined();
+  }, 120000);
+
+  it('full mode + mysql/drizzle routes mysql2 to packages/db', async () => {
+    const projectName = 'full-db-drizzle-mysql';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'mysql',
+        orm: 'drizzle',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const projectPath = path.join(tempDir, projectName);
+    const dbPkg = JSON.parse(
+      await fs.readFile(path.join(projectPath, 'packages', 'db', 'package.json'), 'utf-8')
+    );
+    expect(dbPkg.dependencies.mysql2).toBeDefined();
+
+    const appPkg = JSON.parse(
+      await fs.readFile(path.join(projectPath, 'apps', 'web', 'package.json'), 'utf-8')
+    );
+    expect(appPkg.dependencies?.mysql2).toBeUndefined();
+  }, 120000);
+
+  it('full mode + sqlite/drizzle routes better-sqlite3 to packages/db', async () => {
+    const projectName = 'full-db-drizzle-sqlite';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'sqlite',
+        orm: 'drizzle',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const projectPath = path.join(tempDir, projectName);
+    const dbPkg = JSON.parse(
+      await fs.readFile(path.join(projectPath, 'packages', 'db', 'package.json'), 'utf-8')
+    );
+    expect(dbPkg.dependencies['better-sqlite3']).toBeDefined();
+    expect(dbPkg.devDependencies['@types/better-sqlite3']).toBeDefined();
+
+    const appPkg = JSON.parse(
+      await fs.readFile(path.join(projectPath, 'apps', 'web', 'package.json'), 'utf-8')
+    );
+    expect(appPkg.dependencies?.['better-sqlite3']).toBeUndefined();
+    expect(appPkg.devDependencies?.['@types/better-sqlite3']).toBeUndefined();
   }, 120000);
 
   it('full mode + better-auth generates packages/auth', async () => {

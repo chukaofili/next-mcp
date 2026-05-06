@@ -4,10 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { buildShadcnInitCommand, getAppPath, getShadcnRunner, rewriteImportsInTree, substituteCatalog, substituteDockerfilePlaceholders, substituteProjectName } from '../../src/index.js';
+import { buildShadcnInitCommand, getAppPath, getAuthConfigRelPath, getAuthGenerateScript, getAuthSchemaOutputRelPath, getShadcnRunner, packageRunnerDlx, rewriteImportsInTree, substituteCatalog, substituteDockerfilePlaceholders, substituteProjectName } from '../../src/index.js';
 import type { ProjectConfig } from '../../src/index.js';
 import {
   cleanupTempDir,
+  createMockConfig,
   createPackageJson,
   createTempDir,
   dirExists,
@@ -523,5 +524,131 @@ describe('Dockerfile.monorepo substitution end-to-end', () => {
     expect(out).not.toContain('corepack');
     expect(out).toContain('bun install --frozen-lockfile');
     expect(out).toContain('bun.lockb');
+  });
+});
+
+describe('packageRunnerDlx', () => {
+  it('returns the dlx command per package manager', () => {
+    expect(packageRunnerDlx('pnpm')).toBe('pnpm dlx');
+    expect(packageRunnerDlx('yarn')).toBe('yarn dlx');
+    expect(packageRunnerDlx('bun')).toBe('bunx --bun');
+    expect(packageRunnerDlx('npm')).toBe('npx');
+  });
+});
+
+describe('getAuthConfigRelPath', () => {
+  it('returns packages/auth path when auth is routed', () => {
+    const cfg = createMockConfig({
+      architecture: { monorepo: 'full', database: 'postgres', orm: 'prisma', auth: 'better-auth' },
+    });
+    expect(getAuthConfigRelPath(cfg)).toBe('packages/auth/src/server.ts');
+  });
+
+  it('returns apps/web path in minimal mode', () => {
+    const cfg = createMockConfig({
+      architecture: { monorepo: 'minimal', database: 'postgres', orm: 'prisma', auth: 'better-auth' },
+    });
+    expect(getAuthConfigRelPath(cfg)).toBe('apps/web/src/lib/auth.ts');
+  });
+
+  it('returns flat path in monorepo:none mode', () => {
+    const cfg = createMockConfig({
+      architecture: { monorepo: 'none', database: 'postgres', orm: 'prisma', auth: 'better-auth' },
+    });
+    expect(getAuthConfigRelPath(cfg)).toBe('src/lib/auth.ts');
+  });
+
+  it('returns apps/web path in full mode when auth is NOT routed (orm:none)', () => {
+    const cfg = createMockConfig({
+      architecture: { monorepo: 'full', database: 'postgres', orm: 'none', auth: 'better-auth' },
+    });
+    expect(getAuthConfigRelPath(cfg)).toBe('apps/web/src/lib/auth.ts');
+  });
+});
+
+describe('getAuthSchemaOutputRelPath', () => {
+  it('returns packages/db schema path when db routed + drizzle', () => {
+    const cfg = createMockConfig({
+      architecture: { monorepo: 'full', database: 'postgres', orm: 'drizzle', auth: 'better-auth' },
+    });
+    expect(getAuthSchemaOutputRelPath(cfg)).toBe('packages/db/src/schema/auth.ts');
+  });
+
+  it('returns apps/web schema path in minimal + drizzle', () => {
+    const cfg = createMockConfig({
+      architecture: { monorepo: 'minimal', database: 'postgres', orm: 'drizzle', auth: 'better-auth' },
+    });
+    expect(getAuthSchemaOutputRelPath(cfg)).toBe('apps/web/src/lib/db/schema/auth.ts');
+  });
+
+  it('returns flat schema path in monorepo:none + drizzle', () => {
+    const cfg = createMockConfig({
+      architecture: { monorepo: 'none', database: 'postgres', orm: 'drizzle', auth: 'better-auth' },
+    });
+    expect(getAuthSchemaOutputRelPath(cfg)).toBe('src/lib/db/schema/auth.ts');
+  });
+
+  it('returns null for non-drizzle ORMs', () => {
+    expect(
+      getAuthSchemaOutputRelPath(
+        createMockConfig({ architecture: { orm: 'prisma', auth: 'better-auth' } })
+      )
+    ).toBeNull();
+    expect(
+      getAuthSchemaOutputRelPath(
+        createMockConfig({ architecture: { orm: 'mongoose', database: 'mongodb', auth: 'better-auth' } })
+      )
+    ).toBeNull();
+    expect(
+      getAuthSchemaOutputRelPath(
+        createMockConfig({ architecture: { orm: 'none', auth: 'none' } })
+      )
+    ).toBeNull();
+  });
+});
+
+describe('getAuthGenerateScript', () => {
+  it('emits dotenv + auth@latest command for drizzle + better-auth (full mode)', () => {
+    const cfg = createMockConfig({
+      architecture: {
+        monorepo: 'full',
+        database: 'postgres',
+        orm: 'drizzle',
+        auth: 'better-auth',
+        packageManager: 'pnpm',
+      },
+    });
+    expect(getAuthGenerateScript(cfg)).toBe(
+      'dotenv -e .env -- pnpm dlx auth@latest generate -y --config packages/auth/src/server.ts --output packages/db/src/schema/auth.ts'
+    );
+  });
+
+  it('uses npx for npm-based projects', () => {
+    const cfg = createMockConfig({
+      architecture: {
+        monorepo: 'none',
+        database: 'postgres',
+        orm: 'drizzle',
+        auth: 'better-auth',
+        packageManager: 'npm',
+      },
+    });
+    expect(getAuthGenerateScript(cfg)).toBe(
+      'dotenv -e .env -- npx auth@latest generate -y --config src/lib/auth.ts --output src/lib/db/schema/auth.ts'
+    );
+  });
+
+  it('returns null for prisma (better-auth modifies schema.prisma in-place via setup_authentication)', () => {
+    const cfg = createMockConfig({
+      architecture: { orm: 'prisma', auth: 'better-auth' },
+    });
+    expect(getAuthGenerateScript(cfg)).toBeNull();
+  });
+
+  it('returns null for auth:none', () => {
+    const cfg = createMockConfig({
+      architecture: { orm: 'drizzle', auth: 'none', database: 'postgres' },
+    });
+    expect(getAuthGenerateScript(cfg)).toBeNull();
   });
 });

@@ -105,6 +105,7 @@ const PACKAGE_VERSIONS = {
 
   // Utilities
   dotenv: '^17',
+  'dotenv-cli': '^9',
   '@types/node': '^25',
 } as const;
 
@@ -222,6 +223,57 @@ export function hasUiPackageEmitted(config: ProjectConfig): boolean {
 
 export function hasOrpcPackageEmitted(config: ProjectConfig): boolean {
   return config.architecture.monorepo === 'full' && config.architecture.rpc === 'orpc';
+}
+
+/**
+ * Single source of truth for the db-layer runtime/dev deps that the generated
+ * Prisma/Drizzle client + config files actually import.
+ *
+ * Two callers consume this:
+ *   1. {@link NextMCPServer#updatePackageJson} — adds these to `apps/web/package.json`
+ *      in flat/minimal mode (and skips them in `full + orm` mode where they
+ *      belong on the workspace package instead).
+ *   2. {@link NextMCPServer#patchDbWorkspacePackageJson} — merges them into
+ *      `packages/db/package.json` in `full + orm` mode so the workspace can
+ *      resolve `@prisma/adapter-pg`, `pg`, `mysql2`, `dotenv`, etc.
+ *
+ * Returns empty objects for `orm: 'none'` and `orm: 'mongoose'` (mongoose's
+ * single dep is already declared in the mongoose package template; direct-driver
+ * deps are handled inline below for the flat layout).
+ */
+export function getDbDeps(config: ProjectConfig): {
+  dependencies: Record<string, string>;
+  devDependencies: Record<string, string>;
+} {
+  const deps: Record<string, string> = {};
+  const devDeps: Record<string, string> = {};
+  const { orm, database } = config.architecture;
+
+  if (orm === 'prisma') {
+    // client.ts.template imports @prisma/adapter-pg + @prisma/client; pg is the
+    // adapter's transitive driver and must be declared explicitly.
+    // prisma.config.ts (post-init) imports dotenv. prisma CLI is a devDep.
+    deps.pg = PACKAGE_VERSIONS.pg;
+    deps['@prisma/adapter-pg'] = PACKAGE_VERSIONS['@prisma/adapter-pg'];
+    deps['@prisma/client'] = PACKAGE_VERSIONS['@prisma/client'];
+    deps.dotenv = PACKAGE_VERSIONS.dotenv;
+    devDeps.prisma = PACKAGE_VERSIONS.prisma;
+  } else if (orm === 'drizzle') {
+    deps['drizzle-orm'] = PACKAGE_VERSIONS['drizzle-orm'];
+    devDeps['drizzle-kit'] = PACKAGE_VERSIONS['drizzle-kit'];
+
+    if (database === 'postgres') {
+      deps.pg = PACKAGE_VERSIONS.pg;
+      deps.dotenv = PACKAGE_VERSIONS.dotenv;
+    } else if (database === 'mysql') {
+      deps.mysql2 = PACKAGE_VERSIONS.mysql2;
+    } else if (database === 'sqlite') {
+      deps['better-sqlite3'] = PACKAGE_VERSIONS['better-sqlite3'];
+      devDeps['@types/better-sqlite3'] = PACKAGE_VERSIONS['@types/better-sqlite3'];
+    }
+  }
+
+  return { dependencies: deps, devDependencies: devDeps };
 }
 
 /**
@@ -377,6 +429,79 @@ export function getAuthFilePaths(
     clientPath: path.join(appPath, 'src/lib/auth-client.ts'),
     indexPath: null,
   };
+}
+
+/**
+ * Project-root-relative path to the better-auth config file. This is the
+ * `--config` argument passed to `auth@latest generate`. Run from the project
+ * root, so the path is the same shape across all monorepo modes (and matches
+ * the `auth:generate` script wired into the root package.json).
+ */
+export function getAuthConfigRelPath(config: ProjectConfig): string {
+  if (shouldRouteToAuthPackage(config)) {
+    return 'packages/auth/src/server.ts';
+  }
+  if (config.architecture.monorepo === 'none') {
+    return 'src/lib/auth.ts';
+  }
+  return 'apps/web/src/lib/auth.ts';
+}
+
+/**
+ * Project-root-relative path to the better-auth-generated schema file. Only
+ * meaningful for `orm: 'drizzle'` — the auth CLI rewrites this file from the
+ * auth config. Returns `null` for other ORMs (Prisma works in-place via its
+ * own schema; Mongoose is schemaless).
+ */
+export function getAuthSchemaOutputRelPath(config: ProjectConfig): string | null {
+  if (config.architecture.orm !== 'drizzle') return null;
+  if (shouldRouteToDbPackage(config)) {
+    return 'packages/db/src/schema/auth.ts';
+  }
+  if (config.architecture.monorepo === 'none') {
+    return 'src/lib/db/schema/auth.ts';
+  }
+  return 'apps/web/src/lib/db/schema/auth.ts';
+}
+
+/**
+ * The full `auth:generate` script string for the project root package.json,
+ * or `null` when the config doesn't warrant one (no auth, or non-drizzle ORM
+ * — Prisma users rely on `setup_authentication`'s migrate flow which mutates
+ * `schema.prisma` in-place).
+ *
+ * Always runs from the project root via `dotenv -e .env --` so the `.env`
+ * (which lives at the workspace root in monorepo modes and at the project
+ * root in flat mode — same place for both) is loaded before the CLI reads
+ * `process.env.DATABASE_URL`.
+ */
+export function getAuthGenerateScript(config: ProjectConfig): string | null {
+  if (config.architecture.auth !== 'better-auth') return null;
+  const outputRel = getAuthSchemaOutputRelPath(config);
+  if (!outputRel) return null;
+  const dlx = packageRunnerDlx(config.architecture.packageManager);
+  const configRel = getAuthConfigRelPath(config);
+  return `dotenv -e .env -- ${dlx} auth@latest generate -y --config ${configRel} --output ${outputRel}`;
+}
+
+/**
+ * Top-level export of the package-runner-dlx command for a given package
+ * manager. Mirrors {@link NextMCPServer#getPackageRunnerDlx} (instance
+ * method) so non-class call sites (helpers like {@link getAuthGenerateScript})
+ * can derive the same string without instantiating the server.
+ */
+export function packageRunnerDlx(pm: PackageManager): string {
+  switch (pm) {
+    case 'pnpm':
+      return 'pnpm dlx';
+    case 'yarn':
+      return 'yarn dlx';
+    case 'bun':
+      return 'bunx --bun';
+    case 'npm':
+    default:
+      return 'npx';
+  }
 }
 
 export function getShadcnRunner(packageManager: PackageManager): string {
@@ -1444,12 +1569,10 @@ class NextMCPServer {
     // For non-pnpm, substitute catalog: references (pnpm uses pnpm-workspace.yaml catalog).
     rootPkgRaw = substituteCatalog(rootPkgRaw, pm, CATALOG_VERSIONS);
 
+    const parsed = JSON.parse(rootPkgRaw);
     if (pm !== 'pnpm') {
-      const parsed = JSON.parse(rootPkgRaw);
       parsed.workspaces = ['apps/*', 'packages/*'];
-      rootPkgRaw = JSON.stringify(parsed, null, 2) + '\n';
     } else {
-      const parsed = JSON.parse(rootPkgRaw);
       // The `packageManager` field requires a fully pinned semver — Corepack
       // rejects shorthand like `pnpm@10` ("Invalid package manager
       // specification ... expected a semver version"). Pin to a known-good
@@ -1458,8 +1581,21 @@ class NextMCPServer {
       // 10.x release.
       parsed.packageManager = 'pnpm@10.18.0';
       parsed.engines = { ...(parsed.engines || { node: '>=24' }), pnpm: '>=10' };
-      rootPkgRaw = JSON.stringify(parsed, null, 2) + '\n';
     }
+
+    // Wire the root-level `auth:generate` script when applicable
+    // (better-auth + drizzle). Always run from project root with
+    // `dotenv -e .env --` so the new auth CLI reads DATABASE_URL.
+    const authGenerateScript = getAuthGenerateScript(config);
+    if (authGenerateScript) {
+      parsed.scripts = { ...(parsed.scripts ?? {}), 'auth:generate': authGenerateScript };
+      parsed.devDependencies = {
+        ...(parsed.devDependencies ?? {}),
+        'dotenv-cli': PACKAGE_VERSIONS['dotenv-cli'],
+      };
+    }
+
+    rootPkgRaw = JSON.stringify(parsed, null, 2) + '\n';
 
     await fs.writeFile(path.join(projectPath, 'package.json'), rootPkgRaw);
 
@@ -1562,6 +1698,36 @@ class NextMCPServer {
   }
 
   /**
+   * Merge the runtime/dev deps the generated db client + config files actually
+   * import (driver, adapter, dotenv, etc.) into `packages/db/package.json`.
+   *
+   * The ORM-specific package.json templates only declare the ORM core
+   * (`@prisma/client` + `prisma`, or `drizzle-orm` + `drizzle-kit`); the per-
+   * config deps live in {@link getDbDeps}. This patcher reconciles both so
+   * `packages/db` can resolve its own imports under strict pnpm without the
+   * template having to enumerate every db × orm combination.
+   *
+   * Symmetric with the skip in {@link NextMCPServer#updatePackageJson}: the
+   * same dep set is added here and removed from `apps/web/package.json` when
+   * `shouldRouteToDbPackage(config)` is true.
+   */
+  private async patchDbWorkspacePackageJson(
+    config: ProjectConfig,
+    projectPath: string
+  ): Promise<void> {
+    const { dependencies, devDependencies } = getDbDeps(config);
+    if (Object.keys(dependencies).length === 0 && Object.keys(devDependencies).length === 0) {
+      return;
+    }
+
+    const pkgPath = path.join(projectPath, 'packages/db/package.json');
+    const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
+    pkg.dependencies = { ...(pkg.dependencies ?? {}), ...dependencies };
+    pkg.devDependencies = { ...(pkg.devDependencies ?? {}), ...devDependencies };
+    await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+  }
+
+  /**
    * Generate all packages/* for monorepo:'full' mode.
    * Always emits eslint-config + typescript-config.
    * Conditionally emits db/auth/ui/orpc based on other config fields.
@@ -1583,6 +1749,7 @@ class NextMCPServer {
       const subdir = ORM_PACKAGE_SUBDIR[orm];
       if (!subdir) throw new Error(`No packages/db template subdir for orm: ${orm}`);
       await this.copyPackageTemplate(config, projectPath, 'db', subdir);
+      await this.patchDbWorkspacePackageJson(config, projectPath);
     }
 
     // auth (D4)
@@ -1725,6 +1892,18 @@ class NextMCPServer {
         additionalScripts.prebuild = 'prisma generate';
       }
 
+      // Wire `auth:generate` (better-auth + drizzle only). In flat mode the
+      // project root and the app share one `package.json`, so this is the
+      // matching call site to `scaffoldMonorepoRoot`'s root-level injection.
+      // In monorepo modes `updatePackageJson` writes `apps/web/package.json`,
+      // not the workspace root, so the script does not belong here.
+      if (config.architecture.monorepo === 'none') {
+        const authGenerateScript = getAuthGenerateScript(config);
+        if (authGenerateScript) {
+          additionalScripts['auth:generate'] = authGenerateScript;
+        }
+      }
+
       existingPackageJson.scripts = {
         ...existingPackageJson.scripts,
         ...additionalScripts,
@@ -1743,31 +1922,23 @@ class NextMCPServer {
       }
 
       // Database + ORM
-      if (config.architecture.orm === 'prisma') {
-        additionalDeps.pg = PACKAGE_VERSIONS.pg;
-        additionalDeps['@prisma/adapter-pg'] = PACKAGE_VERSIONS['@prisma/adapter-pg'];
-        additionalDeps['@prisma/client'] = PACKAGE_VERSIONS['@prisma/client'];
-        additionalDeps.dotenv = PACKAGE_VERSIONS.dotenv;
-        additionalDevDeps.prisma = PACKAGE_VERSIONS.prisma;
-      } else if (config.architecture.orm === 'drizzle') {
-        additionalDeps['drizzle-orm'] = PACKAGE_VERSIONS['drizzle-orm'];
-        additionalDevDeps['drizzle-kit'] = PACKAGE_VERSIONS['drizzle-kit'];
+      // In `full + orm` (shouldRouteToDbPackage), runtime db deps belong on
+      // the `packages/db` workspace package — `apps/web` consumes the db
+      // surface via the `@<project>/db: workspace:*` dep that
+      // wireAppsWebToDbPackage adds. Adding pg/@prisma/adapter-pg/dotenv/
+      // drivers here would put them in the wrong workspace and leave
+      // packages/db unable to resolve its own imports under strict pnpm.
+      // {@link patchDbWorkspacePackageJson} merges these onto packages/db
+      // for the routed path; mongoose's single dep is already declared in
+      // the mongoose package template.
+      if (!shouldRouteToDbPackage(config)) {
+        const dbDeps = getDbDeps(config);
+        Object.assign(additionalDeps, dbDeps.dependencies);
+        Object.assign(additionalDevDeps, dbDeps.devDependencies);
 
-        if (config.architecture.database === 'postgres') {
-          additionalDeps.pg = PACKAGE_VERSIONS.pg;
-          additionalDeps.dotenv = PACKAGE_VERSIONS.dotenv;
+        if (config.architecture.orm === 'mongoose') {
+          additionalDeps.mongoose = PACKAGE_VERSIONS.mongoose;
         }
-
-        if (config.architecture.database === 'mysql') {
-          additionalDeps.mysql2 = PACKAGE_VERSIONS.mysql2;
-        }
-
-        if (config.architecture.database === 'sqlite') {
-          additionalDeps['better-sqlite3'] = PACKAGE_VERSIONS['better-sqlite3'];
-          additionalDevDeps['@types/better-sqlite3'] = PACKAGE_VERSIONS['@types/better-sqlite3'];
-        }
-      } else if (config.architecture.orm === 'mongoose') {
-        additionalDeps.mongoose = PACKAGE_VERSIONS.mongoose;
       }
 
       if (config.architecture.orm === 'none') {
@@ -1788,8 +1959,27 @@ class NextMCPServer {
       }
 
       // Authentication
-      if (config.architecture.auth === 'better-auth') {
+      // In `full + better-auth + db + orm` (shouldRouteToAuthPackage),
+      // `apps/web` reaches better-auth helpers through
+      // `@<project>/auth/exports` (curated re-exports in
+      // packages/auth/src/re-exports.ts) so the only better-auth dep needed
+      // there is the workspace dep wired by wireAppsWebToAuthPackage.
+      // The `packages/auth` template declares `better-auth: catalog:`.
+      if (
+        config.architecture.auth === 'better-auth' &&
+        !shouldRouteToAuthPackage(config)
+      ) {
         additionalDeps['better-auth'] = PACKAGE_VERSIONS['better-auth'];
+      }
+
+      // `auth:generate` script (flat mode only — monorepo handles this in
+      // scaffoldMonorepoRoot) shells `dotenv-cli`. Add it as a devDep so the
+      // `dotenv` binary is available in node_modules/.bin.
+      if (
+        config.architecture.monorepo === 'none' &&
+        getAuthGenerateScript(config) !== null
+      ) {
+        additionalDevDeps['dotenv-cli'] = PACKAGE_VERSIONS['dotenv-cli'];
       }
 
       // Testing
@@ -2468,26 +2658,6 @@ export { Button };
     }
   }
 
-  private generateDrizzleSchemaImports(database: string, template: string): string {
-    const importMap: Record<string, { dialectCore: string; imports: string }> = {
-      postgres: {
-        dialectCore: 'pg-core',
-        imports: 'pgTable, uuid, text, timestamp',
-      },
-      mysql: {
-        dialectCore: 'mysql-core',
-        imports: 'mysqlTable, varchar, text, timestamp',
-      },
-      sqlite: {
-        dialectCore: 'sqlite-core',
-        imports: 'sqliteTable, text, integer',
-      },
-    };
-
-    const config = importMap[database] || importMap.postgres;
-
-    return template.replaceAll('__IMPORTS__', config.imports).replaceAll('__DIALECT_CORE__', config.dialectCore);
-  }
 
   private generateDrizzleClient(database: string, template: string): string {
     let driverImport = '';
@@ -2747,13 +2917,13 @@ export const db = drizzle(pool, { schema });`;
     let configTemplate = await fs.readFile(configTemplatePath, 'utf-8');
 
     // Schema path is interpreted relative to drizzle.config.ts. In `full + orm`
-    // routing, the config sits at `packages/db/drizzle.config.ts` and the schema
-    // at `packages/db/src/schema.ts`. In other modes, both live under
-    // `<app>/src/lib/db/`. Compute the right path so drizzle-kit can find the
-    // schema at runtime.
+    // routing, the config sits at `packages/db/drizzle.config.ts` and the
+    // schema barrel at `packages/db/src/schema/index.ts`. In other modes, both
+    // live under `<app>/src/lib/db/`. Compute the right path so drizzle-kit
+    // can find the schema barrel at runtime.
     const drizzleSchemaPath = shouldRouteToDbPackage(config)
-      ? './src/schema.ts'
-      : './src/lib/db/schema.ts';
+      ? './src/schema/index.ts'
+      : './src/lib/db/schema/index.ts';
 
     configTemplate = configTemplate
       .replace(/__DIALECT__/g, this.getDrizzleDialect(database))
@@ -2763,14 +2933,25 @@ export const db = drizzle(pool, { schema });`;
     const configPath = path.join(dbBaseDir, 'drizzle.config.ts');
     await fs.writeFile(configPath, configTemplate);
 
-    // Read and process schema template
-    const schemaTemplatePath = path.join(__dirname, 'templates/database/drizzle/schema.ts.template');
-    let schemaTemplate = await fs.readFile(schemaTemplatePath, 'utf-8');
+    // Schema is a directory: `schema/index.ts` is a barrel that re-exports
+    // every schema module, and `schema/auth.ts` is the better-auth-generated
+    // file (populated by `pnpm auth:generate`; empty placeholder until then).
+    // Users can drop more table modules alongside `auth.ts` and re-export
+    // them from the barrel.
+    const schemaDir = path.join(dbSrcDir, 'schema');
+    await fs.mkdir(schemaDir, { recursive: true });
 
-    schemaTemplate = this.generateDrizzleSchemaImports(database, schemaTemplate);
+    const schemaIndexTemplate = await fs.readFile(
+      path.join(__dirname, 'templates/database/drizzle/schema/index.ts.template'),
+      'utf-8'
+    );
+    await fs.writeFile(path.join(schemaDir, 'index.ts'), schemaIndexTemplate);
 
-    const schemaPath = path.join(dbSrcDir, 'schema.ts');
-    await fs.writeFile(schemaPath, schemaTemplate);
+    const schemaAuthTemplate = await fs.readFile(
+      path.join(__dirname, 'templates/database/drizzle/schema/auth.ts.template'),
+      'utf-8'
+    );
+    await fs.writeFile(path.join(schemaDir, 'auth.ts'), schemaAuthTemplate);
 
     // Read and process client template
     const clientTemplatePath = path.join(__dirname, 'templates/database/drizzle/client.ts.template');
@@ -3073,21 +3254,30 @@ const db = new Database("./dev.db");`,
   }
 
   /**
-   * `--config <path>` is interpreted relative to the better-auth CLI's cwd.
-   * In `packages/auth` routing, the auth file is `src/server.ts` (relative to
-   * `packages/auth`); in legacy mode it is `src/lib/auth.ts` (relative to the
-   * app — flat or `apps/web`). Schema commands run with the cwd returned by
-   * {@link getAuthSchemaCwd} and migration commands with {@link
-   * getAuthMigrationCwd} so the relative paths match.
+   * Schema-gen command for the new better-auth CLI (`auth@latest`). Always
+   * runs from the project root (see {@link getAuthSchemaCwd}) so paths are
+   * project-relative — the same shape works for flat, minimal, and full
+   * modes, and matches the persistent `auth:generate` script wired into the
+   * project root `package.json` (see {@link getAuthGenerateScript}).
+   *
+   * For drizzle, `--output` points at the dedicated `schema/auth.ts` file
+   * (the auth tables are isolated from user-defined tables; the drizzle
+   * schema barrel re-exports both). For prisma, the auth CLI rewrites
+   * `schema.prisma` in-place via the prisma datasource it finds in the
+   * config, so no `--output` is passed.
    */
   private getAuthSchemaCommand(config: ProjectConfig): string {
-    const configRelPath = shouldRouteToAuthPackage(config) ? 'src/server.ts' : 'src/lib/auth.ts';
-    return `npx @better-auth/cli@latest generate -y --config ${configRelPath}`;
+    const dlx = this.getPackageRunnerDlx(config.architecture.packageManager);
+    const configRelPath = getAuthConfigRelPath(config);
+    const outputRel = getAuthSchemaOutputRelPath(config);
+    const outputArg = outputRel ? ` --output ${outputRel}` : '';
+    return `dotenv -e .env -- ${dlx} auth@latest generate -y --config ${configRelPath}${outputArg}`;
   }
 
   private getAuthMigrationCommand(config: ProjectConfig): string {
     const { orm, packageManager } = config.architecture;
     const packageRunner = this.getPackageRunner(packageManager);
+    const dlx = this.getPackageRunnerDlx(packageManager);
 
     if (orm === 'prisma') {
       return `${packageRunner} prisma migrate dev -n setup_authentication`;
@@ -3097,29 +3287,18 @@ const db = new Database("./dev.db");`,
       return `${packageRunner} drizzle-kit generate && ${packageRunner} drizzle-kit migrate`;
     }
 
-    const configRelPath = shouldRouteToAuthPackage(config) ? 'src/server.ts' : 'src/lib/auth.ts';
-    return `npx @better-auth/cli@latest migrate -y --config ${configRelPath}`;
+    const configRelPath = getAuthConfigRelPath(config);
+    return `dotenv -e .env -- ${dlx} auth@latest migrate -y --config ${configRelPath}`;
   }
 
   /**
-   * cwd for the better-auth schema/migration commands. The auth CLI's
-   * `--config <path>` is relative to this cwd, and the ORM CLIs (prisma,
-   * drizzle-kit) need to be invoked wherever their own artifacts live:
-   *   - `full + orm`: `packages/db` so `prisma migrate` finds the schema
-   *     emitted by Group F1 at `packages/db/prisma/schema.prisma`. The
-   *     auth schema generation runs from the same cwd; `--config
-   *     ../auth/src/server.ts` is unwieldy, so we run schema-gen from
-   *     `packages/auth` (which has its own `--config src/server.ts`) and
-   *     run migrations from `packages/db`.
-   *   - other modes: cwd = appPath (which is projectPath in `none` mode
-   *     and `apps/web` in `minimal` mode). Same shape for both auth-cli
-   *     and ORM CLIs because everything lives in the app dir.
+   * cwd for better-auth schema-gen. With `auth@latest`, paths are
+   * project-root-relative across all monorepo modes, so cwd is always the
+   * project root (matching the persistent `auth:generate` script). Migration
+   * cwd still varies — see {@link getAuthMigrationCwd}.
    */
-  private getAuthSchemaCwd(config: ProjectConfig, projectPath: string): string {
-    if (shouldRouteToAuthPackage(config)) {
-      return path.join(projectPath, 'packages/auth');
-    }
-    return getAppPath(config, projectPath);
+  private getAuthSchemaCwd(_config: ProjectConfig, projectPath: string): string {
+    return projectPath;
   }
 
   private getAuthMigrationCwd(config: ProjectConfig, projectPath: string): string {
@@ -3253,10 +3432,22 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       const authServerImport = authPkgName ? `${authPkgName}/server` : '@/lib/auth';
       const authClientImport = authPkgName ? `${authPkgName}/client` : '@/lib/auth-client';
 
+      // Resolve where `route.ts` and `proxy.ts` should reach for the
+      // better-auth helpers. In routed mode they resolve through
+      // `@<project>/auth/exports` (curated re-exports of
+      // `better-auth/cookies`, `better-auth/next-js`, `better-auth/node`)
+      // so `apps/web` doesn't need a direct `better-auth` dep. In legacy
+      // mode `packages/auth` doesn't exist, so we keep the upstream
+      // subpaths.
+      const betterAuthCookiesImport = authPkgName ? `${authPkgName}/exports` : 'better-auth/cookies';
+      const betterAuthNextJsImport = authPkgName ? `${authPkgName}/exports` : 'better-auth/next-js';
+
       // Step 4: Generate API route. Substitutes the auth-server import so
       // `route.ts` reaches the workspace package in routed mode.
       const routeTemplate = await fs.readFile(path.join(__dirname, 'templates/auth/auth-route.ts.template'), 'utf-8');
-      const routeContent = routeTemplate.replaceAll('__AUTH_SERVER_IMPORT__', authServerImport);
+      const routeContent = routeTemplate
+        .replaceAll('__AUTH_SERVER_IMPORT__', authServerImport)
+        .replaceAll('__BETTER_AUTH_NEXTJS_IMPORT__', betterAuthNextJsImport);
       await fs.writeFile(path.join(appPath, 'src/app/api/auth/[...all]/route.ts'), routeContent);
 
       // Step 5: Generate AuthUIProvider. Substitutes the auth-client import.
@@ -3270,6 +3461,18 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       // Step 6: Generate dynamic auth pages & layout
       // Step 7: Generate dynamic account pages
       // Step 8: Generate UserButton component
+      // Step 8.5: Generate proxy.ts (uses better-auth/cookies, routed via
+      // `@<project>/auth/exports` in routed mode).
+      const proxyTemplate = await fs.readFile(
+        path.join(__dirname, 'templates/auth/proxy.ts.template'),
+        'utf-8'
+      );
+      const proxyContent = proxyTemplate.replaceAll(
+        '__BETTER_AUTH_COOKIES_IMPORT__',
+        betterAuthCookiesImport
+      );
+      await fs.writeFile(path.join(appPath, 'src/proxy.ts'), proxyContent);
+
       const templateMappings = [
         {
           template: path.join('auth', 'auth-page.tsx.template'),
@@ -3282,10 +3485,6 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
         {
           template: path.join('auth', 'user-button.tsx.template'),
           destination: path.join('src', 'components', 'auth', 'user-button.tsx'),
-        },
-        {
-          template: path.join('auth', 'proxy.ts.template'),
-          destination: path.join('src', 'proxy.ts'),
         },
       ];
 

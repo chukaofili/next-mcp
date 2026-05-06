@@ -1,4 +1,4 @@
-import { toNextJsHandler } from 'better-auth/next-js';
+import { toNextJsHandler } from '__BETTER_AUTH_NEXTJS_IMPORT__';
 
 import { auth } from '__AUTH_SERVER_IMPORT__';
 

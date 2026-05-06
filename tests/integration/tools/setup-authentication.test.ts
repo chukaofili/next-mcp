@@ -201,6 +201,16 @@ describe('setup_authentication tool — monorepo:minimal', () => {
     expect(routeContent).toContain("from '@/lib/auth'");
     expect(routeContent).not.toContain('__AUTH_SERVER_IMPORT__');
 
+    // Without `packages/auth` (no routing), better-auth helpers come from the
+    // upstream subpaths — and apps/web declares `better-auth` directly.
+    expect(routeContent).toContain("from 'better-auth/next-js'");
+    expect(routeContent).not.toContain('__BETTER_AUTH_NEXTJS_IMPORT__');
+    const proxyContent = await fs.readFile(path.join(appPath, 'src', 'proxy.ts'), 'utf-8');
+    expect(proxyContent).toContain('from "better-auth/cookies"');
+    expect(proxyContent).not.toContain('__BETTER_AUTH_COOKIES_IMPORT__');
+    const appPkg = JSON.parse(await fs.readFile(path.join(appPath, 'package.json'), 'utf-8'));
+    expect(appPkg.dependencies?.['better-auth']).toBeDefined();
+
     // Adapter import in auth.ts uses the legacy `@/lib/db` alias because db
     // is NOT routed to packages/db in minimal mode.
     const authContent = await fs.readFile(path.join(appPath, 'src', 'lib', 'auth.ts'), 'utf-8');
@@ -292,6 +302,45 @@ describe('setup_authentication tool — monorepo:full', () => {
     );
     expect(providerContent).toContain(`from '@${projectName}/auth/client'`);
     expect(providerContent).not.toContain("from '@/lib/auth-client'");
+
+    // route.ts and proxy.ts route their better-auth helper imports through
+    // `@<name>/auth/exports` so apps/web doesn't have to declare a direct
+    // `better-auth` dep — the curated re-exports module owns that.
+    expect(routeContent).toContain(`from '@${projectName}/auth/exports'`);
+    expect(routeContent).not.toContain("from 'better-auth/next-js'");
+    const proxyContent = await fs.readFile(path.join(appPath, 'src', 'proxy.ts'), 'utf-8');
+    expect(proxyContent).toContain(`from "@${projectName}/auth/exports"`);
+    expect(proxyContent).not.toContain('from "better-auth/cookies"');
+
+    // packages/auth/src/re-exports.ts exists and exports the shape we promise
+    // through the `./exports` subpath.
+    const reExportsContent = await fs.readFile(
+      path.join(authPkgDir, 'src', 're-exports.ts'),
+      'utf-8'
+    );
+    expect(reExportsContent).toContain("from 'better-auth/cookies'");
+    expect(reExportsContent).toContain("from 'better-auth/next-js'");
+    expect(reExportsContent).toContain("from 'better-auth/node'");
+
+    // packages/auth/package.json declares the `./exports` subpath (so consumers
+    // can resolve `@<name>/auth/exports`) and drops the now-redundant
+    // db:generate / db:migrate scripts (auth:generate at the project root
+    // covers schema gen; the previous scripts pointed at a non-existent
+    // `better-auth` CLI binary).
+    const authPkgJson = JSON.parse(
+      await fs.readFile(path.join(authPkgDir, 'package.json'), 'utf-8')
+    );
+    expect(authPkgJson.exports['./exports']).toMatchObject({
+      types: './src/re-exports.ts',
+      default: './src/re-exports.ts',
+    });
+    expect(authPkgJson.scripts['db:generate']).toBeUndefined();
+    expect(authPkgJson.scripts['db:migrate']).toBeUndefined();
+
+    // apps/web does NOT declare `better-auth` directly — the workspace dep on
+    // `@<name>/auth` is the only auth-related entry it needs.
+    expect(appPkg.dependencies?.['better-auth']).toBeUndefined();
+    expect(appPkg.devDependencies?.['better-auth']).toBeUndefined();
 
     // The success message reflects the routed layout — it mentions
     // `packages/auth/src/server.ts` and the workspace import specifier.
@@ -703,4 +752,155 @@ describe('setup_authentication tool — shadcn-registry install', () => {
     const text = recorder.getTextContent(result) ?? '';
     expect(text).not.toContain('Skipped better-auth-ui shadcn-registry installation');
   }, 180000);
+});
+
+describe('auth:generate root script', () => {
+  let client: MCPTestClient;
+  let tempDir: string;
+  const serverPath = path.join(__dirname, '../../../dist/index.js');
+
+  beforeAll(async () => {
+    client = new MCPTestClient();
+    await client.connect(serverPath);
+    tempDir = await createTempDir();
+  }, 30000);
+
+  afterAll(async () => {
+    await client.disconnect();
+    await cleanupTempDir(tempDir);
+  });
+
+  it('flat mode + better-auth + drizzle: root package.json has auth:generate + dotenv-cli devDep', async () => {
+    const projectName = 'auth-gen-flat';
+    const projectPath = path.join(tempDir, projectName);
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'none',
+        database: 'postgres',
+        orm: 'drizzle',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const pkg = JSON.parse(await fs.readFile(path.join(projectPath, 'package.json'), 'utf-8'));
+    expect(pkg.scripts['auth:generate']).toBe(
+      'dotenv -e .env -- pnpm dlx auth@latest generate -y --config src/lib/auth.ts --output src/lib/db/schema/auth.ts'
+    );
+    expect(pkg.devDependencies['dotenv-cli']).toBeDefined();
+  }, 120000);
+
+  it('minimal mode does NOT inject auth:generate into apps/web (only into root)', async () => {
+    const projectName = 'auth-gen-minimal';
+    const projectPath = path.join(tempDir, projectName);
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'minimal',
+        database: 'postgres',
+        orm: 'drizzle',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    // Root package.json carries the script with paths under apps/web.
+    const rootPkg = JSON.parse(await fs.readFile(path.join(projectPath, 'package.json'), 'utf-8'));
+    expect(rootPkg.scripts['auth:generate']).toBe(
+      'dotenv -e .env -- pnpm dlx auth@latest generate -y --config apps/web/src/lib/auth.ts --output apps/web/src/lib/db/schema/auth.ts'
+    );
+    expect(rootPkg.devDependencies['dotenv-cli']).toBeDefined();
+
+    // apps/web/package.json must not have it — the script is workspace-root only.
+    const appPkg = JSON.parse(
+      await fs.readFile(path.join(projectPath, 'apps', 'web', 'package.json'), 'utf-8')
+    );
+    expect(appPkg.scripts?.['auth:generate']).toBeUndefined();
+    expect(appPkg.devDependencies?.['dotenv-cli']).toBeUndefined();
+  }, 120000);
+
+  it('full mode + drizzle: root script targets packages/auth + packages/db schema', async () => {
+    const projectName = 'auth-gen-full';
+    const projectPath = path.join(tempDir, projectName);
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'postgres',
+        orm: 'drizzle',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const rootPkg = JSON.parse(await fs.readFile(path.join(projectPath, 'package.json'), 'utf-8'));
+    expect(rootPkg.scripts['auth:generate']).toBe(
+      'dotenv -e .env -- pnpm dlx auth@latest generate -y --config packages/auth/src/server.ts --output packages/db/src/schema/auth.ts'
+    );
+    expect(rootPkg.devDependencies['dotenv-cli']).toBeDefined();
+  }, 120000);
+
+  it('non-drizzle ORMs do not get auth:generate (Prisma uses its own migrate flow)', async () => {
+    const projectName = 'auth-gen-prisma-skip';
+    const projectPath = path.join(tempDir, projectName);
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'none',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const pkg = JSON.parse(await fs.readFile(path.join(projectPath, 'package.json'), 'utf-8'));
+    expect(pkg.scripts['auth:generate']).toBeUndefined();
+    expect(pkg.devDependencies?.['dotenv-cli']).toBeUndefined();
+  }, 120000);
+
+  it('auth:none does not get auth:generate', async () => {
+    const projectName = 'auth-gen-no-auth';
+    const projectPath = path.join(tempDir, projectName);
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'none',
+        database: 'postgres',
+        orm: 'drizzle',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const pkg = JSON.parse(await fs.readFile(path.join(projectPath, 'package.json'), 'utf-8'));
+    expect(pkg.scripts?.['auth:generate']).toBeUndefined();
+    expect(pkg.devDependencies?.['dotenv-cli']).toBeUndefined();
+  }, 120000);
 });
