@@ -179,6 +179,45 @@ export function shouldRouteToDbPackage(config: ProjectConfig): boolean {
 }
 
 /**
+ * Package-emission gate helpers.
+ *
+ * The four functions below are the single source of truth for "does this
+ * config emit `packages/db`, `packages/auth`, `packages/ui`, or
+ * `packages/orpc` on disk?" They mirror the gates inside
+ * {@link generateFullModePackages} and are also called from
+ * {@link generateReadme} and {@link generateAgentsMd} so the documentation
+ * package list can't silently drift from disk reality.
+ *
+ * Any change to a gate (e.g. a future `database: 'planetscale'` that doesn't
+ * get its own packages/db) must be made here once — every call site picks it
+ * up automatically.
+ *
+ * `hasAuthPackageEmitted` composes on `hasDbPackageEmitted` to capture the
+ * load-bearing constraint that the auth package template hard-codes
+ * `@<projectName>/db: workspace:*`, so `packages/auth` requires `packages/db`
+ * to also exist (see {@link shouldRouteToAuthPackage}).
+ */
+export function hasDbPackageEmitted(config: ProjectConfig): boolean {
+  return (
+    config.architecture.monorepo === 'full' &&
+    config.architecture.database !== 'none' &&
+    config.architecture.orm !== 'none'
+  );
+}
+
+export function hasAuthPackageEmitted(config: ProjectConfig): boolean {
+  return hasDbPackageEmitted(config) && config.architecture.auth === 'better-auth';
+}
+
+export function hasUiPackageEmitted(config: ProjectConfig): boolean {
+  return config.architecture.monorepo === 'full' && config.architecture.uiLibrary === 'shadcn';
+}
+
+export function hasOrpcPackageEmitted(config: ProjectConfig): boolean {
+  return config.architecture.monorepo === 'full' && config.architecture.rpc === 'orpc';
+}
+
+/**
  * Resolves the base directory for database sources.
  * - `full + orm`:           `<projectPath>/packages/db`
  * - `minimal` / `none` / `full + orm:none`: app directory (via {@link getAppPath})
@@ -1264,10 +1303,10 @@ class NextMCPServer {
     await this.copyPackageTemplate(config, projectPath, 'eslint-config');
     await this.copyPackageTemplate(config, projectPath, 'typescript-config');
 
-    const { database, orm, auth, uiLibrary, rpc } = config.architecture;
+    const { orm } = config.architecture;
 
     // db (D3)
-    if (database !== 'none' && orm !== 'none') {
+    if (hasDbPackageEmitted(config)) {
       const subdir = ORM_PACKAGE_SUBDIR[orm];
       if (!subdir) throw new Error(`No packages/db template subdir for orm: ${orm}`);
       await this.copyPackageTemplate(config, projectPath, 'db', subdir);
@@ -1278,17 +1317,17 @@ class NextMCPServer {
     // `@<projectName>/db: workspace:*` so we only emit `packages/auth` when
     // `packages/db` will also be emitted (i.e. `orm !== 'none'`). For
     // `full + ba + db + orm:none` the auth files stay in `apps/web/src/lib`.
-    if (auth === 'better-auth' && database !== 'none' && orm !== 'none') {
+    if (hasAuthPackageEmitted(config)) {
       await this.copyPackageTemplate(config, projectPath, 'auth');
     }
 
     // ui (D5)
-    if (uiLibrary === 'shadcn') {
+    if (hasUiPackageEmitted(config)) {
       await this.copyPackageTemplate(config, projectPath, 'ui');
     }
 
     // orpc (D6)
-    if (rpc === 'orpc') {
+    if (hasOrpcPackageEmitted(config)) {
       await this.copyPackageTemplate(config, projectPath, 'orpc');
     }
   }
@@ -3413,16 +3452,10 @@ export default function Header() {
       const pm = architecture.packageManager;
       const isMonorepo = architecture.monorepo !== 'none';
       const isFullMonorepo = architecture.monorepo === 'full';
-      // Mirror generateFullModePackages emission gates so the README only
-      // documents packages that actually land on disk for this config.
-      const hasDbPackage = isFullMonorepo && architecture.database !== 'none' && architecture.orm !== 'none';
-      const hasAuthPackage =
-        isFullMonorepo &&
-        architecture.auth === 'better-auth' &&
-        architecture.database !== 'none' &&
-        architecture.orm !== 'none';
-      const hasUiPackage = isFullMonorepo && architecture.uiLibrary === 'shadcn';
-      const hasOrpcPackage = isFullMonorepo && architecture.rpc === 'orpc';
+      const hasDbPackage = hasDbPackageEmitted(config);
+      const hasAuthPackage = hasAuthPackageEmitted(config);
+      const hasUiPackage = hasUiPackageEmitted(config);
+      const hasOrpcPackage = hasOrpcPackageEmitted(config);
       // In monorepo:full + prisma, the schema lives at packages/db/prisma —
       // prisma commands need to run from that directory (or be passed --schema).
       const prismaInDbPackage = hasDbPackage && architecture.orm === 'prisma';
@@ -3942,17 +3975,10 @@ Generated with [Next.js MCP Server](https://github.com/anthropics/next-mcp)
     const isMonorepo = architecture.monorepo !== 'none';
     const isFullMonorepo = architecture.monorepo === 'full';
 
-    // Mirror generateFullModePackages emission gates (same shape as
-    // generateReadme above) so package mentions match disk reality.
-    const hasDbPackage =
-      isFullMonorepo && architecture.database !== 'none' && architecture.orm !== 'none';
-    const hasAuthPackage =
-      isFullMonorepo &&
-      architecture.auth === 'better-auth' &&
-      architecture.database !== 'none' &&
-      architecture.orm !== 'none';
-    const hasUiPackage = isFullMonorepo && architecture.uiLibrary === 'shadcn';
-    const hasOrpcPackage = isFullMonorepo && architecture.rpc === 'orpc';
+    const hasDbPackage = hasDbPackageEmitted(config);
+    const hasAuthPackage = hasAuthPackageEmitted(config);
+    const hasUiPackage = hasUiPackageEmitted(config);
+    const hasOrpcPackage = hasOrpcPackageEmitted(config);
 
     // Compute import strings once. These have to track F1/G1's wiring exactly:
     // - `shouldRouteToDbPackage` -> `@<projectName>/db` (workspace dep), else `@/lib/db`
