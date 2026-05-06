@@ -650,3 +650,182 @@ describe('setup_database tool — monorepo:full', () => {
     expect(client.isSuccess(result)).toBe(true);
   }, 120000);
 });
+
+describe('setup_database tool — next-steps text by mode', () => {
+  // Codex flagged that the next-steps message used to hard-code the flat
+  // layout: in `monorepo: 'full'`, Prisma and Drizzle live under
+  // `packages/db`, but the success text still told users to edit
+  // `prisma/schema.prisma` (a non-existent path in routed mode) and to
+  // run `prisma`/`drizzle-kit` from the repo root (where the configs
+  // can't be found). These tests pin the per-mode shape of the message
+  // so the regression cannot return.
+  let client: MCPTestClient;
+  let tempDir: string;
+  const serverPath = path.join(__dirname, '../../../dist/index.js');
+
+  beforeAll(async () => {
+    client = new MCPTestClient();
+    await client.connect(serverPath);
+    tempDir = await createTempDir();
+  }, 30000);
+
+  afterAll(async () => {
+    await client.disconnect();
+    await cleanupTempDir(tempDir);
+  });
+
+  it('full mode + prisma: next-steps point at packages/db schema + db:* scripts', async () => {
+    const projectName = 'next-steps-full-prisma';
+    const projectPath = path.join(tempDir, projectName);
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const result = await client.callTool('setup_database', { config, projectPath });
+    expect(client.isSuccess(result)).toBe(true);
+
+    const text = client.getTextContent(result) ?? '';
+    // Schema lives under packages/db/prisma — NOT at the repo-root prisma/.
+    expect(text).toContain('packages/db/prisma/schema.prisma');
+    expect(text).not.toMatch(/Update your schema in prisma\/schema\.prisma/);
+
+    // Commands run from packages/db using the workspace's db:* scripts.
+    expect(text).toContain('cd packages/db && pnpm db:push');
+    expect(text).toContain('cd packages/db && pnpm db:generate');
+    // Don't tell users to run the raw prisma CLI from the repo root —
+    // prisma.config.ts only exists inside packages/db.
+    expect(text).not.toMatch(/\bpnpm prisma db push\b/);
+    expect(text).not.toMatch(/\bpnpm prisma generate\b/);
+
+    // Import path uses the workspace dep, not the @/lib/db alias.
+    expect(text).toContain(`import { db } from '@${projectName}/db'`);
+    expect(text).not.toContain("import { db } from '@/lib/db'");
+  }, 120000);
+
+  it('full mode + drizzle: next-steps point at packages/db schema barrel + db:* scripts', async () => {
+    const projectName = 'next-steps-full-drizzle';
+    const projectPath = path.join(tempDir, projectName);
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'postgres',
+        orm: 'drizzle',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const result = await client.callTool('setup_database', { config, projectPath });
+    expect(client.isSuccess(result)).toBe(true);
+
+    const text = client.getTextContent(result) ?? '';
+    // Schema is a directory barrel, not a single file.
+    expect(text).toContain('packages/db/src/schema/');
+    expect(text).toContain('schema/auth.ts');
+    expect(text).toContain('schema/index.ts');
+
+    // Commands run from packages/db.
+    expect(text).toContain('cd packages/db && pnpm db:generate');
+    expect(text).toContain('cd packages/db && pnpm db:push');
+    // Don't tell users to run drizzle-kit from repo root — drizzle.config.ts
+    // sits inside packages/db.
+    expect(text).not.toMatch(/^\s*Run: pnpm drizzle-kit/m);
+
+    expect(text).toContain(`import { db } from '@${projectName}/db'`);
+  }, 120000);
+
+  it('flat mode + prisma: next-steps run from project root', async () => {
+    const projectName = 'next-steps-flat-prisma';
+    const projectPath = path.join(tempDir, projectName);
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'none',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const result = await client.callTool('setup_database', { config, projectPath });
+    expect(client.isSuccess(result)).toBe(true);
+
+    const text = client.getTextContent(result) ?? '';
+    // Schema at the repo-root prisma/ (which IS the app dir in flat mode).
+    expect(text).toContain('Update your schema in prisma/schema.prisma');
+    expect(text).not.toContain('packages/db/prisma/schema.prisma');
+    expect(text).not.toContain('apps/web/prisma/schema.prisma');
+
+    // No `cd <dir>` prefix — flat mode runs commands from project root.
+    // Non-routed prisma uses the binary runner (`pnpm exec`) to invoke
+    // the prisma CLI directly.
+    expect(text).toContain('Run: pnpm exec prisma db push');
+    expect(text).toContain('run: pnpm exec prisma generate');
+    expect(text).not.toContain('cd packages/db');
+    expect(text).not.toContain('cd apps/web');
+
+    // Import via the @/lib/db alias.
+    expect(text).toContain("import { db } from '@/lib/db'");
+  }, 120000);
+
+  it('minimal mode + drizzle: next-steps cd into apps/web', async () => {
+    const projectName = 'next-steps-minimal-drizzle';
+    const projectPath = path.join(tempDir, projectName);
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'minimal',
+        database: 'postgres',
+        orm: 'drizzle',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const result = await client.callTool('setup_database', { config, projectPath });
+    expect(client.isSuccess(result)).toBe(true);
+
+    const text = client.getTextContent(result) ?? '';
+    // Schema barrel under apps/web (NOT packages/db — minimal mode doesn't
+    // emit the workspace package).
+    expect(text).toContain('apps/web/src/lib/db/schema/');
+    expect(text).not.toContain('packages/db/src/schema/');
+
+    // Commands cd into apps/web (drizzle.config.ts lives there in minimal).
+    // Non-routed drizzle invokes drizzle-kit via the binary runner.
+    expect(text).toContain('cd apps/web && pnpm exec drizzle-kit generate');
+    expect(text).toContain('cd apps/web && pnpm exec drizzle-kit push');
+
+    // @/lib/db import is correct because db is NOT routed in minimal mode.
+    expect(text).toContain("import { db } from '@/lib/db'");
+  }, 120000);
+});

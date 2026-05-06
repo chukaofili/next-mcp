@@ -3132,7 +3132,16 @@ export const db = drizzle(pool, { schema });`;
   private generateDatabaseInstructions(config: ProjectConfig, dbPkgName?: string): string {
     const orm = config.architecture.orm || 'none';
     const database = config.architecture.database;
-    const packageRunner = this.getPackageRunner(config.architecture.packageManager);
+    const pm = config.architecture.packageManager;
+    const packageRunner = this.getPackageRunner(pm);
+    // npm-script invocation form. `getPackageRunner` returns the
+    // BINARY runner (e.g. `pnpm exec`, `npx`) which can't execute
+    // package.json scripts. For the routed-mode `db:push` /
+    // `db:generate` etc. scripts on `packages/db`, we need the
+    // script runner instead. pnpm/yarn allow bare-name shorthand
+    // (`pnpm db:push`); npm/bun require `run`.
+    const runScript = (script: string): string =>
+      pm === 'npm' || pm === 'bun' ? `${pm} run ${script}` : `${pm} ${script}`;
 
     // Surface the actual on-disk routing in the success message. In `full + orm`,
     // sources land in `packages/db/src` and consumers import them via the
@@ -3141,10 +3150,28 @@ export const db = drizzle(pool, { schema });`;
     // the legacy `src/lib/db/` layout applies and the path-alias `@/lib/db`
     // resolves to it.
     const routedToDbPkg = shouldRouteToDbPackage(config);
+    const isMonorepo = config.architecture.monorepo !== 'none';
     const importSpecifier = routedToDbPkg ? (dbPkgName ?? `@${config.name}/db`) : '@/lib/db';
-    const filesCreatedIn = routedToDbPkg ? 'packages/db/src/' : 'src/lib/db/';
-    const schemaLocationDrizzle = routedToDbPkg ? 'packages/db/src/schema.ts' : 'src/lib/db/schema.ts';
-    const modelsLocationMongoose = routedToDbPkg ? 'packages/db/src/models/' : 'src/lib/db/models/';
+
+    // Project-root-relative paths for the user-facing text. The three
+    // layouts diverge here:
+    //   - flat (`monorepo: 'none'`):   project root === app, db under src/lib/db
+    //   - minimal (`monorepo: 'minimal'`): app at apps/web, db under apps/web/src/lib/db
+    //   - routed (`full + orm`):       db under packages/db (its own workspace)
+    // Codex flagged that this function previously hard-coded the flat
+    // layout, so users following the next-steps after a full-mode scaffold
+    // pointed at non-existent files or ran CLIs from the wrong cwd.
+    const dbBaseRel = routedToDbPkg ? 'packages/db' : isMonorepo ? 'apps/web' : '.';
+    const dbSrcRel = routedToDbPkg ? 'packages/db/src' : isMonorepo ? 'apps/web/src/lib/db' : 'src/lib/db';
+    const filesCreatedIn = `${dbSrcRel}/`;
+    const schemaDirDrizzle = `${dbSrcRel}/schema/`;
+    const modelsLocationMongoose = `${dbSrcRel}/models/`;
+    const prismaSchemaPath = `${dbBaseRel === '.' ? '' : `${dbBaseRel}/`}prisma/schema.prisma`;
+
+    // Command-cwd hint. `cd <path> && ` prefix tells users where to invoke
+    // the ORM CLI / db:* script. For flat we omit it (project root is the
+    // working dir).
+    const cdHint = dbBaseRel === '.' ? '' : `cd ${dbBaseRel} && `;
 
     let instructions = `Database setup completed successfully!\n\n`;
     instructions += `Configuration:\n`;
@@ -3155,15 +3182,37 @@ export const db = drizzle(pool, { schema });`;
     instructions += `Next steps:\n`;
 
     if (orm === 'prisma') {
+      // Routed mode: `packages/db/package.json` exposes db:push, db:migrate,
+      // db:generate, etc. Invoke them via the npm-script runner (which
+      // supports bare-name shorthand on pnpm/yarn) so the message is
+      // package-manager agnostic and the cwd is unambiguous. Non-routed
+      // mode runs the prisma binary directly via the binary runner
+      // (`pnpm exec`, `npx`, etc.).
+      const pushCmd = routedToDbPkg
+        ? `${cdHint}${runScript('db:push')}`
+        : `${cdHint}${packageRunner} prisma db push`;
+      const migrateAlt = routedToDbPkg ? 'db:migrate' : 'prisma migrate dev';
+      const generateCmd = routedToDbPkg
+        ? `${cdHint}${runScript('db:generate')}`
+        : `${cdHint}${packageRunner} prisma generate`;
+
       instructions += `1. Prisma client has been generated and is ready to use!\n`;
-      instructions += `2. Update your schema in prisma/schema.prisma (optional)\n`;
-      instructions += `3. Run: ${packageRunner} prisma db push (or prisma migrate dev)\n`;
-      instructions += `4. After schema changes, run: ${packageRunner} prisma generate\n`;
+      instructions += `2. Update your schema in ${prismaSchemaPath} (optional)\n`;
+      instructions += `3. Run: ${pushCmd} (or ${migrateAlt})\n`;
+      instructions += `4. After schema changes, run: ${generateCmd}\n`;
       instructions += `5. Import and use: import { db } from '${importSpecifier}'\n`;
     } else if (orm === 'drizzle') {
-      instructions += `1. Define your schema in ${schemaLocationDrizzle}\n`;
-      instructions += `2. Run: ${packageRunner} drizzle-kit generate\n`;
-      instructions += `3. Run: ${packageRunner} drizzle-kit push (or migrate)\n`;
+      const generateCmd = routedToDbPkg
+        ? `${cdHint}${runScript('db:generate')}`
+        : `${cdHint}${packageRunner} drizzle-kit generate`;
+      const pushCmd = routedToDbPkg
+        ? `${cdHint}${runScript('db:push')}`
+        : `${cdHint}${packageRunner} drizzle-kit push`;
+      const migrateAlt = routedToDbPkg ? 'db:migrate' : 'drizzle-kit migrate';
+
+      instructions += `1. Add your tables to ${schemaDirDrizzle} — it is a barrel directory: auth tables live in schema/auth.ts (populated by \`pnpm auth:generate\`); create new files like schema/users.ts and re-export them from schema/index.ts.\n`;
+      instructions += `2. Run: ${generateCmd}\n`;
+      instructions += `3. Run: ${pushCmd} (or ${migrateAlt})\n`;
       instructions += `4. Import and use: import { db } from '${importSpecifier}'\n`;
     } else if (orm === 'mongoose') {
       instructions += `1. Create your models in ${modelsLocationMongoose}\n`;
