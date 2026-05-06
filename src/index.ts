@@ -565,7 +565,11 @@ const DOCKERFILE_PM_VALUES: Record<PackageManager, DockerfilePlaceholderValues> 
   },
   npm: {
     __BASE_IMAGE__: 'node:24-alpine',
-    __COREPACK_SETUP__: 'corepack enable && corepack prepare npm@latest --activate',
+    // npm ships with the Node image and Corepack does not provision it
+    // (Corepack only manages pnpm/yarn/bun). `corepack prepare npm@latest`
+    // exits non-zero, killing `docker build` before turbo prune runs.
+    // Skip the prepare step entirely for npm.
+    __COREPACK_SETUP__: 'true',
     __PM_PATH_SETUP__: '# no extra PATH setup',
     __PM__: 'npm',
     __PM_DLX__: 'npx',
@@ -1935,8 +1939,16 @@ class NextMCPServer {
       // package.json (added by {@link scaffoldMonorepoRoot}). Adding them
       // to apps/web in monorepo mode would point users at the wrong build
       // context where the docker assets don't exist.
+      // The `typecheck` (no hyphen) alias is for turbo's task graph and
+      // `validate_project` — both call `<pm> run typecheck` against the
+      // workspace root. Turbo only invokes scripts whose name matches
+      // exactly, so without this entry apps/web is silently skipped
+      // during root-level typechecking even though it's the main app.
+      // The legacy `type-check` (hyphen) is kept for users who scripted
+      // against it.
       const additionalScripts: Record<string, string> = {
         'type-check': 'tsc --noEmit',
+        typecheck: 'tsc --noEmit',
         test: 'echo "No test command specified"',
         'test:watch': 'echo "No test watch command specified"',
         'test:ui': 'echo "No test UI command specified"',

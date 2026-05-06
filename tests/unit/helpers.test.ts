@@ -285,7 +285,10 @@ COPY --from=deps /app/out/__LOCKFILE__ ./
   it('substitutes for npm', () => {
     const out = substituteDockerfilePlaceholders(tpl, 'npm', 'my-app');
     expect(out).toContain('FROM node:24-alpine');
-    expect(out).toContain('corepack enable && corepack prepare npm@latest --activate');
+    // npm ships with the Node image and Corepack does not provision it,
+    // so the prepare step is a no-op (`true`) — running the corepack
+    // command would fail and kill `docker build`.
+    expect(out).not.toContain('corepack prepare npm');
     expect(out).toContain('npm ci');
     expect(out).toContain('npx turbo prune');
     expect(out).toContain('npm run turbo build');

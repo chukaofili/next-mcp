@@ -444,6 +444,67 @@ describe('generate_dockerfile tool', () => {
 
       expect(await fileExists(path.join(monorepoDir, 'Dockerfile.migrate'))).toBe(true);
     });
+
+    it('monorepo Dockerfile builder declares NEXT_PUBLIC_* + DATABASE_URL build args', async () => {
+      // Codex flagged that docker-compose.yml passes `NEXT_PUBLIC_*` build
+      // args but the monorepo builder stage didn't declare them — Docker
+      // discards undeclared build args, so the Next.js build was baking
+      // empty values. The flat Dockerfile already declared them; this
+      // test pins the same coverage for the monorepo template.
+      const dir = await createTempDir('next-mcp-builder-args-');
+      try {
+        const config = createMockConfig({
+          name: 'builder-args',
+          architecture: {
+            monorepo: 'full',
+            packageManager: 'pnpm',
+            database: 'postgres',
+            orm: 'prisma',
+            auth: 'better-auth',
+          },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        const dockerfile = await readFile(path.join(dir, 'Dockerfile'));
+        // Builder stage declares each build arg compose passes in.
+        expect(dockerfile).toMatch(/FROM base AS builder[\s\S]*?ARG NEXT_PUBLIC_BETTER_AUTH_URL/);
+        expect(dockerfile).toMatch(/FROM base AS builder[\s\S]*?ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID/);
+        expect(dockerfile).toMatch(/FROM base AS builder[\s\S]*?ARG DATABASE_URL/);
+        // And exposes them as ENV so Next.js bakes the right values.
+        expect(dockerfile).toMatch(/ENV NEXT_PUBLIC_BETTER_AUTH_URL=\$NEXT_PUBLIC_BETTER_AUTH_URL/);
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+
+    it('npm-monorepo Dockerfile skips corepack prepare (npm ships with the Node image)', async () => {
+      // Codex flagged that `corepack prepare npm@latest --activate` exits
+      // non-zero, so npm-based monorepo `docker build` died before
+      // `turbo prune` ran. Fix replaces the corepack line with `true`.
+      const dir = await createTempDir('next-mcp-npm-corepack-');
+      try {
+        const config = createMockConfig({
+          name: 'npm-corepack',
+          architecture: {
+            monorepo: 'full',
+            packageManager: 'npm',
+            database: 'postgres',
+            orm: 'prisma',
+          },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        const dockerfile = await readFile(path.join(dir, 'Dockerfile'));
+        expect(dockerfile).not.toContain('corepack prepare npm');
+        expect(dockerfile).toContain('npm ci');
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
   });
 
   describe('Dockerfile.migrate templating (K — schema path + PMs)', () => {

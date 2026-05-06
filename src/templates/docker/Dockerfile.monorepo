@@ -18,10 +18,21 @@ ARG PACKAGE_PATH="apps/web"
 ARG BUILD_ENV
 ARG TURBO_TEAM
 ARG TURBO_TOKEN
+# Build-time public envs from docker-compose `args:`. Undeclared build args
+# are silently dropped by Docker, so without these ARGs Next.js would bake
+# empty values for `NEXT_PUBLIC_*` even when compose passes them. A dummy
+# DATABASE_URL keeps `prisma generate` (and any other build-time consumers)
+# happy without leaking real credentials into the layer cache.
+ARG NEXT_PUBLIC_BETTER_AUTH_URL
+ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ARG DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
 RUN apk add --no-cache libc6-compat
 ENV BUILD_ENV=${BUILD_ENV:-production}
 ENV TURBO_TEAM=$TURBO_TEAM
 ENV TURBO_TOKEN=$TURBO_TOKEN
+ENV NEXT_PUBLIC_BETTER_AUTH_URL=$NEXT_PUBLIC_BETTER_AUTH_URL
+ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ENV DATABASE_URL=$DATABASE_URL
 ENV CI=true
 WORKDIR /app
 

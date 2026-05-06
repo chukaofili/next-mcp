@@ -217,6 +217,14 @@ describe('scaffold_project tool — monorepo:full', () => {
     // builds.
     expect(appPkg.scripts?.prebuild).toBeUndefined();
 
+    // apps/web declares both `typecheck` (no hyphen — turbo's task graph
+    // and validate_project both call this exact name) and the legacy
+    // `type-check` alias. Without `typecheck`, turbo silently skips
+    // apps/web during root-level typechecking — TS errors in the main
+    // app would slip through the validation pipeline.
+    expect(appPkg.scripts?.typecheck).toBe('tsc --noEmit');
+    expect(appPkg.scripts?.['type-check']).toBe('tsc --noEmit');
+
     // Docker helper scripts live on the workspace root in monorepo mode
     // (Dockerfile + docker-compose.yml are emitted there, not in apps/web).
     // Putting them on apps/web would point users at the wrong build context.
