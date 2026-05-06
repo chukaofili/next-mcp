@@ -72,21 +72,31 @@ cd /tmp/next-mcp-smoke
 
 # 3. Drive the MCP server. Pick ONE of:
 #
-#    Option A: MCP inspector (interactive, recommended for first run)
+#    Option A: pnpm smoke (headless driver — Tier 5a, see below)
+#             For the skipInstall:true generation-only signal that
+#             this section's per-tool checklist exercises, the
+#             headless driver at `tools/smoke.ts` runs all five
+#             preset configs end-to-end in ~6 seconds total. CI
+#             runs this on every PR.
+pnpm run smoke              # all five presets
+pnpm run smoke variant-a-full-npm   # one preset
+#
+#             A future `--full` flag would chain `<pm> install` +
+#             `<pm> build` per generated project for the actual
+#             runtime signal that steps 6-7 below exercise. Until
+#             that lands, run the manual procedure (Option B/C
+#             below) for the install/build/docker pass.
+#
+#    Option B: MCP inspector (interactive, recommended for the
+#             install/build/docker pass that `pnpm smoke` doesn't
+#             yet cover)
 npx @modelcontextprotocol/inspector node ~/projects/chukaofili/next-mcp/dist/index.js
 #
-#    Option B: spawn the server from a Claude Code / other MCP client
+#    Option C: spawn the server from a Claude Code / other MCP client
 #             session and call the tools from there. Configure the
 #             client to launch:
 #               command: node
 #               args:    ["~/projects/chukaofili/next-mcp/dist/index.js"]
-#
-#    Option C: hand-rolled JSON-RPC over stdio (advanced — only if A/B
-#             are unavailable). Not recommended for first runs.
-#
-# Note: there is currently no `pnpm start` script in next-mcp. If you
-# find yourself doing this often, see "Findings" / follow-ups below
-# for a suggestion to add one.
 
 # 4. Inside the inspector (or your MCP client), call `scaffold_project`
 #    with this config:
@@ -403,12 +413,15 @@ differently from `main`, that's a bug.
   newish invocation format.** If the registry / CLI changes its
   contract, this is where it'll surface first.
 
-- **No headless driver / `pnpm start` for the MCP server.** Driving
-  the server from the inspector requires a full path to
-  `dist/index.js`. Recommended-fixes Tier 5a proposes adding
-  `pnpm start` + `tools/smoke-call.ts` so this smoke can be
-  reproduced from CI on every PR. Out of scope for the immediate
-  smoke run.
+- **Headless smoke driver — shipped (Tier 5a).** `tools/smoke.ts`
+  drives the MCP server over stdio for all five preset configs in
+  ~6 seconds total with `skipInstall: true`, asserting a small set
+  of file-existence post-conditions per variant. CI runs this on
+  every PR via `pnpm run smoke`. The manual install / build /
+  docker pass (sections 5 + the migrate end-to-end) is still done
+  by hand — a `--full` flag for the driver to chain `<pm> install`
+  + `<pm> build` is a future extension and tracked as the
+  remaining gap below.
 
 - **Out-of-scope follow-ups.** For everything else not directly
   testable by this smoke (Tier 2 tool audits like

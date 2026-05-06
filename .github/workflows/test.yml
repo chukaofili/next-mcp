@@ -40,3 +40,6 @@ jobs:
 
       - name: Run integration tests
         run: pnpm run test:integration
+
+      - name: Run smoke driver (skipInstall)
+        run: pnpm run smoke
