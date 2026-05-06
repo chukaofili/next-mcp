@@ -329,15 +329,20 @@ describe('scaffold_project tool — monorepo:full', () => {
     const turboRaw = await fs.readFile(turboPath, 'utf-8');
     const turbo = JSON.parse(turboRaw);
 
+    expect(turbo.$schema).toBe('https://turbo.build/schema.json');
     expect(turbo.tasks).toBeDefined();
-    expect(turbo.tasks.build).toBeDefined();
+    expect(Object.keys(turbo.tasks).sort()).toEqual(
+      ['build', 'clean', 'dev', 'lint', 'lint:fix', 'test', 'typecheck'].sort()
+    );
     expect(turbo.tasks.build.dependsOn).toEqual(['^build']);
     expect(turbo.tasks.build.outputs).toEqual(
       expect.arrayContaining(['.next/**', '!.next/cache/**', 'dist/**'])
     );
-    expect(turbo.tasks.lint?.dependsOn).toEqual(['^build']);
-    expect(turbo.tasks.typecheck?.dependsOn).toEqual(['^build']);
-    expect(turbo.tasks.test?.dependsOn).toEqual(['^build']);
+    expect(turbo.tasks.dev.persistent).toBe(true);
+    expect(turbo.tasks.dev.cache).toBe(false);
+    expect(turbo.tasks.lint.dependsOn).toEqual(['^build']);
+    expect(turbo.tasks.typecheck.dependsOn).toEqual(['^build']);
+    expect(turbo.tasks.test.dependsOn).toEqual(['^build']);
   }, 120000);
 
   it('full mode + auth:better-auth + database:none does NOT emit packages/auth', async () => {
