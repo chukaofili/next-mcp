@@ -365,6 +365,15 @@ describe('scaffold_project tool — monorepo:full', () => {
 
     const uiPkg = JSON.parse(await fs.readFile(path.join(uiDir, 'package.json'), 'utf-8'));
     expect(uiPkg.name).toBe(`@${projectName}/ui`);
+
+    // The `ui:add` maintenance script must invoke shadcn through the
+    // package manager's runner (e.g. `pnpm dlx`). A bare
+    // `shadcn@latest add` would try to execute a literal binary that
+    // doesn't exist on PATH.
+    expect(uiPkg.scripts['ui:add']).toBeDefined();
+    expect(uiPkg.scripts['ui:add']).not.toMatch(/^shadcn@latest\b/);
+    expect(uiPkg.scripts['ui:add']).toContain('shadcn@latest add');
+    expect(uiPkg.scripts['ui:add']).toMatch(/(pnpm dlx|yarn dlx|bunx|npx)\s+shadcn@latest/);
   }, 120000);
 
   it('full mode + orpc generates packages/orpc with router and middleware', async () => {
@@ -404,6 +413,16 @@ describe('scaffold_project tool — monorepo:full', () => {
     expect(await fileExists(path.join(orpcDir, 'src', 'procedures', 'health', 'router.ts'))).toBe(
       true
     );
+
+    // The orpc package must NOT ship `test` / `test:integration` scripts
+    // unless we also emit a vitest dep + the integration config they
+    // reference. Today neither is scaffolded, so the scripts have to
+    // stay absent — otherwise `pnpm --filter @<name>/orpc test` and the
+    // root `turbo run test` would both fail immediately.
+    const orpcPkg = JSON.parse(await fs.readFile(path.join(orpcDir, 'package.json'), 'utf-8'));
+    expect(orpcPkg.scripts.test).toBeUndefined();
+    expect(orpcPkg.scripts['test:integration']).toBeUndefined();
+    expect(orpcPkg.devDependencies?.vitest).toBeUndefined();
   }, 120000);
 
   it('full mode + database:postgres + orm:none does NOT emit packages/db', async () => {
@@ -434,7 +453,7 @@ describe('scaffold_project tool — monorepo:full', () => {
     expect(await fileExists(dbDir)).toBe(false);
   }, 120000);
 
-  it('emits turbo.json with build/lint/typecheck/test task entries', async () => {
+  it('emits turbo.json with build/lint/typecheck/test task entries when a runner is configured', async () => {
     const projectName = 'turbo-tasks-shape';
     const config = createMockConfig({
       name: projectName,
@@ -444,7 +463,7 @@ describe('scaffold_project tool — monorepo:full', () => {
         orm: 'none',
         auth: 'none',
         uiLibrary: 'none',
-        testing: 'none',
+        testing: 'vitest',
         skipInstall: true,
       },
     });
@@ -478,6 +497,48 @@ describe('scaffold_project tool — monorepo:full', () => {
     expect(turbo.tasks.test.dependsOn).toEqual(['^build']);
     expect(turbo.tasks['test:watch'].persistent).toBe(true);
     expect(turbo.tasks['test:watch'].cache).toBe(false);
+  }, 120000);
+
+  it('drops test/test:watch from turbo.json + root scripts when testing: none', async () => {
+    // turbo 2 errors with "Could not find task `test`" when no workspace
+    // implements the script. Shipping a broken `pnpm test` (or `pnpm
+    // pipeline`) is worse than shipping no `pnpm test`, so the root
+    // package.json prunes the test scripts AND turbo.json drops the
+    // matching tasks when `testing: 'none'`.
+    const projectName = 'turbo-no-tests';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'none',
+        orm: 'none',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+    expect(client.isSuccess(result)).toBe(true);
+
+    const projectPath = path.join(tempDir, projectName);
+    const turbo = JSON.parse(await fs.readFile(path.join(projectPath, 'turbo.json'), 'utf-8'));
+    expect(turbo.tasks.test).toBeUndefined();
+    expect(turbo.tasks['test:watch']).toBeUndefined();
+    // The non-test tasks survive intact.
+    expect(turbo.tasks.build).toBeDefined();
+    expect(turbo.tasks.lint).toBeDefined();
+    expect(turbo.tasks.typecheck).toBeDefined();
+
+    const rootPkg = JSON.parse(await fs.readFile(path.join(projectPath, 'package.json'), 'utf-8'));
+    expect(rootPkg.scripts.test).toBeUndefined();
+    expect(rootPkg.scripts['test:watch']).toBeUndefined();
+    // `pipeline` is collapsed to `build lint` (no test task to run).
+    expect(rootPkg.scripts.pipeline).toBe('turbo run build lint');
   }, 120000);
 
   it('globalPassThroughEnv contains only NODE_ENV when auth:none + database:none', async () => {

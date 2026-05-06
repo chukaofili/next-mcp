@@ -22,9 +22,7 @@
     "dev": "tsc -b tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --cache",
-    "lint:fix": "eslint . --cache --fix",
-    "test": "vitest run",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "lint:fix": "eslint . --cache --fix"
   },
   "dependencies": {
     "@orpc/client": "^1",

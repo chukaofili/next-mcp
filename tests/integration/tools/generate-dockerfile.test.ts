@@ -378,20 +378,52 @@ describe('generate_dockerfile tool', () => {
 
         const compose = await readFile(path.join(dir, 'docker-compose.yml'));
         // sqlite is file-based — no db: service block should be emitted.
-        // The migrate service's `depends_on:` does include the literal
-        // `db:` key as a child, so the structural check has to look for a
-        // db SERVICE (a `db:` block with an `image:` child), not just any
-        // occurrence of `db:`. None of the four image strings below should
-        // appear because no db service exists for sqlite.
+        // None of the four image strings below should appear because no db
+        // service exists for sqlite.
         expect(compose).not.toContain('image: postgres');
         expect(compose).not.toContain('image: mysql');
         expect(compose).not.toContain('image: mongo');
         // The migrate service IS still expected — prisma drives schema
         // deploys regardless of whether the db service exists.
         expect(compose).toContain('migrate:');
+        // The migrate service must NOT depend on a `db` service for sqlite
+        // (there is none — compose would reject the file with
+        // "service `migrate` depends on undefined service `db`"). Instead
+        // it mounts the sqlite_data volume so the .db file persists across
+        // both the migrate and web containers.
+        expect(compose).not.toMatch(/migrate:[\s\S]*?depends_on:[\s\S]*?db:/);
+        expect(compose).toMatch(/migrate:[\s\S]*?volumes:[\s\S]*?- sqlite_data:\/app\/data/);
 
         const dockerignore = await readFile(path.join(dir, '.dockerignore'));
         expect(dockerignore).toContain('packages/db/src/.prisma');
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+
+    it('sqlite + drizzle migrate service mounts sqlite_data volume and skips depends_on', async () => {
+      // Symmetric coverage to the prisma + sqlite case above. The migrate
+      // service must work for both ORMs that produce SQL migrations, and
+      // both must avoid the missing-`db`-service compose error.
+      const dir = await createTempDir('next-mcp-sqlite-drizzle-');
+      try {
+        const config = createMockConfig({
+          name: 'sqlite-drizzle',
+          architecture: {
+            monorepo: 'full',
+            packageManager: 'pnpm',
+            database: 'sqlite',
+            orm: 'drizzle',
+          },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        const compose = await readFile(path.join(dir, 'docker-compose.yml'));
+        expect(compose).toContain('migrate:');
+        expect(compose).not.toMatch(/migrate:[\s\S]*?depends_on:[\s\S]*?db:/);
+        expect(compose).toMatch(/migrate:[\s\S]*?volumes:[\s\S]*?- sqlite_data:\/app\/data/);
       } finally {
         await cleanupTempDir(dir);
       }

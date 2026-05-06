@@ -1595,6 +1595,23 @@ class NextMCPServer {
       };
     }
 
+    // Strip test-related scripts when no test runner was configured. The
+    // template ships `test`, `test:watch`, and `pipeline` (which invokes
+    // turbo's `test` task) for the common case, but turbo 2 errors with
+    // "Could not find task `test`" when no workspace defines the script.
+    // Shipping a broken `pnpm test` is worse than shipping no `pnpm test`,
+    // so prune both the root scripts and the turbo task graph in lockstep
+    // when `testing === 'none'`.
+    if (config.architecture.testing === 'none' && parsed.scripts) {
+      delete parsed.scripts.test;
+      delete parsed.scripts['test:watch'];
+      // `pipeline` is build + lint + test; replace it with build + lint
+      // so the script still exists but doesn't trip on the missing task.
+      if (typeof parsed.scripts.pipeline === 'string') {
+        parsed.scripts.pipeline = 'turbo run build lint';
+      }
+    }
+
     rootPkgRaw = JSON.stringify(parsed, null, 2) + '\n';
 
     await fs.writeFile(path.join(projectPath, 'package.json'), rootPkgRaw);
@@ -1608,6 +1625,13 @@ class NextMCPServer {
     const turboTpl = await fs.readFile(path.join(templatesDir, 'turbo.json.template'), 'utf-8');
     const turbo = JSON.parse(turboTpl);
     turbo.globalPassThroughEnv = buildGlobalPassThroughEnv(config);
+    // Match the package.json prune above — drop the test tasks from turbo's
+    // task graph when no test runner is configured, so `turbo run test`
+    // can't be invoked at all.
+    if (config.architecture.testing === 'none' && turbo.tasks) {
+      delete turbo.tasks.test;
+      delete turbo.tasks['test:watch'];
+    }
     await fs.writeFile(path.join(projectPath, 'turbo.json'), JSON.stringify(turbo, null, 2) + '\n');
 
     // 4. .gitignore at workspace root
@@ -2188,8 +2212,26 @@ class NextMCPServer {
         // Generate migrate service for any ORM that produces SQL migrations
         // (prisma, drizzle). Mongoose stays excluded — mongo is schemaless,
         // there are no SQL migrations to apply.
+        //
+        // For postgres/mysql/mongodb the migrate container `depends_on` the
+        // `db` service and waits for it to be healthy. For sqlite there is
+        // no `db` container — the database is a file in the
+        // `sqlite_data` volume — so we drop `depends_on` (compose would
+        // otherwise reject the file) and mount the same volume so the
+        // migrate container writes to the same .db file the web service
+        // reads.
         if (config.architecture.orm === 'prisma' || config.architecture.orm === 'drizzle') {
-          migrateService = `  migrate:
+          if (config.architecture.database === 'sqlite') {
+            migrateService = `  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    environment:
+      - DATABASE_URL=${databaseUrl}
+    volumes:
+      - sqlite_data:/app/data`;
+          } else {
+            migrateService = `  migrate:
     build:
       context: .
       dockerfile: Dockerfile.migrate
@@ -2198,6 +2240,7 @@ class NextMCPServer {
     depends_on:
       db:
         condition: service_healthy`;
+          }
         }
       }
 
