@@ -332,7 +332,7 @@ describe('scaffold_project tool — monorepo:full', () => {
     expect(turbo.$schema).toBe('https://turbo.build/schema.json');
     expect(turbo.tasks).toBeDefined();
     expect(Object.keys(turbo.tasks).sort()).toEqual(
-      ['build', 'clean', 'dev', 'lint', 'lint:fix', 'test', 'typecheck'].sort()
+      ['build', 'clean', 'dev', 'lint', 'lint:fix', 'test', 'test:watch', 'typecheck'].sort()
     );
     expect(turbo.tasks.build.dependsOn).toEqual(['^build']);
     expect(turbo.tasks.build.outputs).toEqual(
@@ -343,6 +343,104 @@ describe('scaffold_project tool — monorepo:full', () => {
     expect(turbo.tasks.lint.dependsOn).toEqual(['^build']);
     expect(turbo.tasks.typecheck.dependsOn).toEqual(['^build']);
     expect(turbo.tasks.test.dependsOn).toEqual(['^build']);
+    expect(turbo.tasks['test:watch'].persistent).toBe(true);
+    expect(turbo.tasks['test:watch'].cache).toBe(false);
+  }, 120000);
+
+  it('globalPassThroughEnv contains only NODE_ENV when auth:none + database:none', async () => {
+    const projectName = 'turbo-env-bare';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'none',
+        orm: 'none',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const turboPath = path.join(tempDir, projectName, 'turbo.json');
+    const turbo = JSON.parse(await fs.readFile(turboPath, 'utf-8'));
+
+    expect(turbo.globalPassThroughEnv).toEqual(['NODE_ENV']);
+  }, 120000);
+
+  it('globalPassThroughEnv contains DATABASE_URL but no better-auth vars when auth:none + database:postgres', async () => {
+    const projectName = 'turbo-env-db-only';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const turboPath = path.join(tempDir, projectName, 'turbo.json');
+    const turbo = JSON.parse(await fs.readFile(turboPath, 'utf-8'));
+
+    expect(turbo.globalPassThroughEnv).toContain('NODE_ENV');
+    expect(turbo.globalPassThroughEnv).toContain('DATABASE_URL');
+    expect(turbo.globalPassThroughEnv).not.toContain('BETTER_AUTH_SECRET');
+    expect(turbo.globalPassThroughEnv).not.toContain('BETTER_AUTH_URL');
+    expect(turbo.globalPassThroughEnv).not.toContain('NEXT_PUBLIC_BETTER_AUTH_URL');
+  }, 120000);
+
+  it('globalPassThroughEnv contains all five vars when auth:better-auth + database:postgres', async () => {
+    const projectName = 'turbo-env-full';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const turboPath = path.join(tempDir, projectName, 'turbo.json');
+    const turbo = JSON.parse(await fs.readFile(turboPath, 'utf-8'));
+
+    expect([...turbo.globalPassThroughEnv].sort()).toEqual(
+      [
+        'NODE_ENV',
+        'DATABASE_URL',
+        'BETTER_AUTH_SECRET',
+        'BETTER_AUTH_URL',
+        'NEXT_PUBLIC_BETTER_AUTH_URL',
+      ].sort()
+    );
   }, 120000);
 
   it('full mode + auth:better-auth + database:none does NOT emit packages/auth', async () => {

@@ -235,6 +235,29 @@ export function shouldRouteToAuthPackage(config: ProjectConfig): boolean {
 }
 
 /**
+ * Build the `globalPassThroughEnv` array emitted into the scaffolded
+ * `turbo.json`. Gating these on the resolved config avoids leaking unused
+ * pass-through entries into projects that won't ever read them (e.g.
+ * shipping `BETTER_AUTH_SECRET` to a project with `auth: 'none'`).
+ *
+ * Order is fixed and stable so snapshot/array-equality tests don't churn:
+ *   1. `NODE_ENV` — always present.
+ *   2. `DATABASE_URL` — only when a database is configured.
+ *   3. `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `NEXT_PUBLIC_BETTER_AUTH_URL` —
+ *      only when `auth === 'better-auth'`.
+ */
+export function buildGlobalPassThroughEnv(config: ProjectConfig): string[] {
+  const env: string[] = ['NODE_ENV'];
+  if (config.architecture.database !== 'none') {
+    env.push('DATABASE_URL');
+  }
+  if (config.architecture.auth === 'better-auth') {
+    env.push('BETTER_AUTH_SECRET', 'BETTER_AUTH_URL', 'NEXT_PUBLIC_BETTER_AUTH_URL');
+  }
+  return env;
+}
+
+/**
  * File paths for the better-auth core sources (`server.ts`, `client.ts`, and
  * the `index.ts` barrel). In `packages/auth` routing, the three files live
  * inside the package's own `src/`. In all other modes, only `serverPath` and
@@ -1071,7 +1094,9 @@ class NextMCPServer {
 
     // 3. turbo.json
     const turboTpl = await fs.readFile(path.join(templatesDir, 'turbo.json.template'), 'utf-8');
-    await fs.writeFile(path.join(projectPath, 'turbo.json'), turboTpl);
+    const turbo = JSON.parse(turboTpl);
+    turbo.globalPassThroughEnv = buildGlobalPassThroughEnv(config);
+    await fs.writeFile(path.join(projectPath, 'turbo.json'), JSON.stringify(turbo, null, 2) + '\n');
 
     // 4. .gitignore at workspace root
     const giTpl = await fs.readFile(path.join(templatesDir, '.gitignore.template'), 'utf-8');
