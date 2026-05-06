@@ -301,6 +301,45 @@ describe('scaffold_project tool — monorepo:full', () => {
     expect(await fileExists(dbDir)).toBe(false);
   }, 120000);
 
+  it('emits turbo.json with build/lint/typecheck/test task entries', async () => {
+    const projectName = 'turbo-tasks-shape';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'none',
+        orm: 'none',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const turboPath = path.join(tempDir, projectName, 'turbo.json');
+    expect(await fileExists(turboPath)).toBe(true);
+
+    const turboRaw = await fs.readFile(turboPath, 'utf-8');
+    const turbo = JSON.parse(turboRaw);
+
+    expect(turbo.tasks).toBeDefined();
+    expect(turbo.tasks.build).toBeDefined();
+    expect(turbo.tasks.build.dependsOn).toEqual(['^build']);
+    expect(turbo.tasks.build.outputs).toEqual(
+      expect.arrayContaining(['.next/**', '!.next/cache/**', 'dist/**'])
+    );
+    expect(turbo.tasks.lint?.dependsOn).toEqual(['^build']);
+    expect(turbo.tasks.typecheck?.dependsOn).toEqual(['^build']);
+    expect(turbo.tasks.test?.dependsOn).toEqual(['^build']);
+  }, 120000);
+
   it('full mode + auth:better-auth + database:none does NOT emit packages/auth', async () => {
     const projectName = 'full-auth-no-db';
     const config = createMockConfig({
