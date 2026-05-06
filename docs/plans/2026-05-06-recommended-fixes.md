@@ -3,6 +3,12 @@
 > **Status:** Snapshot at HEAD `259eb0b` (branch `feat/upgrade-packages`, 185/185 tests passing across 14 files).
 > **Scope:** Everything that's known-untested, known-deferred, or otherwise needs follow-up after Groups A–J + the post-J coverage audit + Group K (Dockerfile.migrate adaptation).
 > **How to use:** Each tier below is independently triageable. File individual issues from the items inside; pull from Tier 1+2 when scoping pre-merge work, Tier 3+4 for the next planning cycle.
+>
+> **Progress:**
+> - Tier 1 — pending (gated on smoke run; the smoke driver lands as Tier 5a).
+> - Tier 2 — ✅ done (commits `4f8f5cf`, `7c95c0e`, `6d061ed`, `7bee294`, plus the post-2c audit follow-ups `f3170a1` and `a60d9b3`).
+> - Tier 3 — ✅ done (commits `2e16c93`, `487a417`).
+> - Tier 4a — ✅ done (commits `bf2248f`, `9042359`). Tier 4b deferred per the plan note (extract when a 3rd workspace dep is added).
 
 ---
 
