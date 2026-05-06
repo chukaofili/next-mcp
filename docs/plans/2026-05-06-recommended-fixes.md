@@ -12,6 +12,7 @@
 > - Tier 4a — ✅ done (commits `bf2248f`, `9042359`).
 > - Tier 4b — ✅ done (extracts shared `wireAppsWebToWorkspacePackage` helper at module scope; both `wireAppsWebToDbPackage` and `wireAppsWebToAuthPackage` delegate to it; G fix-loop "no silent fallback" contract preserved; +6 direct unit tests).
 > - Tier 5a — ✅ done (commits `5a692da`, `6ae790e`). `--full` flag (real `<pm> install` + build per preset) still deferred. Tier 5b (yarn variant) deferred per the plan note (add when there's a yarn user to validate against).
+> - Tier 6 — ✅ done (commit `369d99c`). 12-item polish bundle (test rename, `replaceAll` defense, auth barrel template, quote consistency, Step-12 dedup, registry-install error specificity, `path.posix.relative` no-op drop, `generateAgentsMd` hoists, AGENTS.md description punctuation, `pnpm-workspace.yaml*` glob annotation, .dockerignore audit confirmed already-correct, `wireAppsWebToWorkspacePackage` parse-failure phrasing). F1 parallelization, F1 pnpm-pin retroactive split, and CLAUDE.md inline-vs-const skipped per plan note.
 
 ---
 
