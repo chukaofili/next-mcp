@@ -1,8 +1,16 @@
-# Monorepo Support — Session Handoff
+# Monorepo Support — Session Handoff (ARCHIVED)
 
-> **You are picking up subagent-driven execution of the monorepo support plan.**
+> **🗄️ ARCHIVED — implementation complete (Groups A–J + post-J coverage audit + Group K).**
 >
-> Read this doc first, then `docs/plans/2026-05-05-monorepo-support-implementation.md` (the actual plan). The design doc at `docs/plans/2026-05-05-monorepo-support-design.md` has rationale if you need to understand a decision.
+> All shipping work is in `feat/upgrade-packages` and the branch is ready for the smoke run + merge. This document is preserved for engineering archaeology — the **"In-context nuances"** sections per group document why specific decisions were made, the **"Footguns"** section captures codebase-specific traps, and the **"Plan deltas"** section records where execution diverged from the original plan. All of that remains useful to anyone touching this code in the future.
+>
+> **For current state:**
+> - **Follow-ups / known gaps:** `docs/plans/2026-05-06-recommended-fixes.md` (Tier 1–7 punch list)
+> - **Smoke procedure:** `docs/plans/2026-05-05-monorepo-smoke-test.md`
+> - **Original plan:** `docs/plans/2026-05-05-monorepo-support-implementation.md`
+> - **Design rationale:** `docs/plans/2026-05-05-monorepo-support-design.md`
+>
+> The "How to pick up", "Token budget", "Where to look next", and "Status by group" sections below are historical and no longer load-bearing. Don't update them — the relevant info has moved to the docs above.
 
 ## Where we are
 
