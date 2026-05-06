@@ -5,10 +5,12 @@
 > **How to use:** Each tier below is independently triageable. File individual issues from the items inside; pull from Tier 1+2 when scoping pre-merge work, Tier 3+4 for the next planning cycle.
 >
 > **Progress:**
+>
 > - Tier 1 — pending (gated on smoke run; Tier 5a's `pnpm smoke` now runs the generation half on every PR).
 > - Tier 2 — ✅ done (commits `4f8f5cf`, `7c95c0e`, `6d061ed`, `7bee294`, plus the post-2c audit follow-ups `f3170a1` and `a60d9b3`).
 > - Tier 3 — ✅ done (commits `2e16c93`, `487a417`).
-> - Tier 4a — ✅ done (commits `bf2248f`, `9042359`). Tier 4b deferred per the plan note (extract when a 3rd workspace dep is added).
+> - Tier 4a — ✅ done (commits `bf2248f`, `9042359`).
+> - Tier 4b — ✅ done (extracts shared `wireAppsWebToWorkspacePackage` helper at module scope; both `wireAppsWebToDbPackage` and `wireAppsWebToAuthPackage` delegate to it; G fix-loop "no silent fallback" contract preserved; +6 direct unit tests).
 > - Tier 5a — ✅ done (commits `5a692da`, `6ae790e`). `--full` flag (real `<pm> install` + build per preset) still deferred. Tier 5b (yarn variant) deferred per the plan note (add when there's a yarn user to validate against).
 
 ---
@@ -17,14 +19,14 @@
 
 These shipped as templated/coded logic but were never exercised end-to-end. **Every test in the suite passes `skipInstall: true`**, so the entire shell-out and Docker-build surface is unverified. The smoke procedure (`docs/plans/2026-05-05-monorepo-smoke-test.md`) is the first time these run for real. **Treat each as a bug candidate until proven otherwise.**
 
-| Item | Untested behavior | Failure mode | First-look files |
-|---|---|---|---|
-| `pnpm install` of generated full-mode workspace | Workspace dep resolution (`@<n>/db: workspace:*`, `@<n>/auth: workspace:*`) | Missing `pnpm-workspace.yaml` glob, wrong `name` in a `packages/*/package.json`, catalog-substitution drift | `src/index.ts:scaffoldMonorepoRoot`, `src/templates/packages/*/package.json.template` |
-| `turbo build` against generated `turbo.json` | Task wiring (build/lint/typecheck/test) | Missing `tasks` entries; a workspace's script not surfaced via Turbo | `src/templates/turbo.json.template`, root `package.json.template` |
-| `docker build .` against `Dockerfile.monorepo` × 4 PMs | Multi-stage build with turbo-prune | Wrong `COPY` path in deps stage, missing lockfile, base-image mismatch | `src/templates/docker/Dockerfile.monorepo`, `substituteDockerfilePlaceholders` |
-| `docker compose run --rm migrate` × 4 PMs × 3 monorepo modes | Group K's new templated `Dockerfile.migrate` | `COPY . .` filtering via `.dockerignore`; `__PM_DLX__` resolution inside `sh -c`; schema path substitution | `src/templates/docker/Dockerfile.migrate`, `substituteMigrateDockerfilePlaceholders` |
-| better-auth CLI schema-gen with cwd = `packages/auth`, `--config src/server.ts` | Group G's chosen cwd | CLI may not write the schema fragment to the right location; may need `--output` or post-processing | `src/index.ts:getAuthSchemaCwd`, `getAuthSchemaCommand` |
-| Drizzle CLI (`generate`/`push`/`migrate`) with cwd = `packages/db`, schema at `./src/schema.ts` | Group F's chosen cwd + `__SCHEMA_PATH__` substitution | drizzle-kit may not find the schema; migrations dir path | `src/index.ts:setupDrizzle`, `src/templates/database/drizzle/drizzle.config.ts.template` |
+| Item                                                                                            | Untested behavior                                                           | Failure mode                                                                                                | First-look files                                                                         |
+| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `pnpm install` of generated full-mode workspace                                                 | Workspace dep resolution (`@<n>/db: workspace:*`, `@<n>/auth: workspace:*`) | Missing `pnpm-workspace.yaml` glob, wrong `name` in a `packages/*/package.json`, catalog-substitution drift | `src/index.ts:scaffoldMonorepoRoot`, `src/templates/packages/*/package.json.template`    |
+| `turbo build` against generated `turbo.json`                                                    | Task wiring (build/lint/typecheck/test)                                     | Missing `tasks` entries; a workspace's script not surfaced via Turbo                                        | `src/templates/turbo.json.template`, root `package.json.template`                        |
+| `docker build .` against `Dockerfile.monorepo` × 4 PMs                                          | Multi-stage build with turbo-prune                                          | Wrong `COPY` path in deps stage, missing lockfile, base-image mismatch                                      | `src/templates/docker/Dockerfile.monorepo`, `substituteDockerfilePlaceholders`           |
+| `docker compose run --rm migrate` × 4 PMs × 3 monorepo modes                                    | Group K's new templated `Dockerfile.migrate`                                | `COPY . .` filtering via `.dockerignore`; `__PM_DLX__` resolution inside `sh -c`; schema path substitution  | `src/templates/docker/Dockerfile.migrate`, `substituteMigrateDockerfilePlaceholders`     |
+| better-auth CLI schema-gen with cwd = `packages/auth`, `--config src/server.ts`                 | Group G's chosen cwd                                                        | CLI may not write the schema fragment to the right location; may need `--output` or post-processing         | `src/index.ts:getAuthSchemaCwd`, `getAuthSchemaCommand`                                  |
+| Drizzle CLI (`generate`/`push`/`migrate`) with cwd = `packages/db`, schema at `./src/schema.ts` | Group F's chosen cwd + `__SCHEMA_PATH__` substitution                       | drizzle-kit may not find the schema; migrations dir path                                                    | `src/index.ts:setupDrizzle`, `src/templates/database/drizzle/drizzle.config.ts.template` |
 
 **Action:** run the smoke procedure; populate the "Findings" section in `docs/plans/2026-05-05-monorepo-smoke-test.md`; file any failures from this tier as new issues.
 
@@ -66,7 +68,7 @@ Currently only `rpc: 'orpc'` requires `monorepo: 'full'` at schema-parse time. O
 - **`auth: 'better-auth' + database: 'none'`** — currently throws inside `setupAuthentication` ("Better Auth requires a database. Please select a database option."). Schema refine would catch this at config-parse.
 - **`orm: 'mongoose' + database: !== 'mongodb'`** — currently caught inside `setupDatabase`'s `validCombinations` table. Could move to schema.
 - **`orm: 'drizzle' + database: 'mongodb'`** — also runtime-checked.
-- **`uiLibrary: 'shadcn' + monorepo: 'minimal'`** — *probably* fine, but worth verifying that the shadcn init actually works in minimal mode. If it doesn't, gate it.
+- **`uiLibrary: 'shadcn' + monorepo: 'minimal'`** — _probably_ fine, but worth verifying that the shadcn init actually works in minimal mode. If it doesn't, gate it.
 
 **Effort:** ~1 hour to write the refines + tests + update error messages. Nice ergonomic win, no runtime behavior change.
 
@@ -84,9 +86,11 @@ Extract these next to `shouldRouteToDbPackage`:
 
 ```ts
 export function hasDbPackageEmitted(config: ProjectConfig): boolean {
-  return config.architecture.monorepo === 'full'
-    && config.architecture.database !== 'none'
-    && config.architecture.orm !== 'none';
+  return (
+    config.architecture.monorepo === 'full' &&
+    config.architecture.database !== 'none' &&
+    config.architecture.orm !== 'none'
+  );
 }
 export function hasAuthPackageEmitted(config: ProjectConfig): boolean {
   return hasDbPackageEmitted(config) && config.architecture.auth === 'better-auth';
@@ -100,17 +104,20 @@ export function hasOrpcPackageEmitted(config: ProjectConfig): boolean {
 ```
 
 Then replace the inline expressions in:
+
 - `src/index.ts:generateFullModePackages` (Group D)
 - `src/index.ts:generateReadme` Project Structure section
 - `src/index.ts:generateAgentsMd` package layout section
 
 **Effort:** small refactor; existing tests cover the behavior. Add unit tests for each helper.
 
-### 4b. `wireAppsWebToWorkspacePackage` extraction
+### 4b. `wireAppsWebToWorkspacePackage` extraction — ✅ done
 
-`wireAppsWebToDbPackage` and `wireAppsWebToAuthPackage` are 90% structural duplicates (resolve canonical name from `packages/<dir>/package.json`, throw on missing, add `<name>: 'workspace:*'` to `apps/web/package.json`, return resolved name). YAGNI defends keeping them today (2 callers); **extract when a 3rd workspace dep is added** (e.g., `@<n>/api` for Group H+ work).
+`wireAppsWebToDbPackage` and `wireAppsWebToAuthPackage` were 90% structural duplicates (resolve canonical name from `packages/<dir>/package.json`, throw on missing, add `<name>: 'workspace:*'` to `apps/web/package.json`, return resolved name). YAGNI originally defended keeping them while there were only two callers; the user opted to extract now anyway since a third caller (`@<n>/api` for future Group H+ work) is plausible.
 
-**Reference:** the G fix-loop's "no silent fallback" contract must carry forward — the shared helper must throw on missing package.json, not fall back.
+The shared logic lives at module scope (`wireAppsWebToWorkspacePackage` in `src/index.ts`, next to the other exported scaffolding helpers like `getAppPath` / `shouldRouteToDbPackage`). Both class methods now call into it and keep their own per-caller import-rewrite work.
+
+**Contract preserved:** the G fix-loop's "no silent fallback" guarantee carried forward unchanged — a missing `packages/<dir>/package.json`, an unparsable file, or a missing/empty `name` field all throw with the helper name, the package dir, and a caller-specific actionable hint. No fallback to a hand-derived name. Direct unit tests in `tests/unit/wire-apps-web-to-workspace-package.test.ts` lock in happy-path, idempotency, and every throw path.
 
 ---
 
@@ -135,11 +142,13 @@ Smoke matrix today covers pnpm, npm, bun. Yarn excluded because there's no valid
 All flagged during F/G/H/I/K reviews and explicitly deferred. None blocking. Group together as a "polish pass" if motivated.
 
 ### From F1
+
 - `rewriteImportsInTree` walks serially; `Promise.all(entries.map(...))` would parallelize. Optional perf.
 - `pnpm@10.18.0` pin bundled into F1's diff (could split retroactively; not worth the rebase).
 - One test name reads `import-rewrite is a no-op` while peers use verb-first phrasing. Cosmetic.
 
 ### From G
+
 - `String.replace` (single-arg) at placeholder substitution sites → `replaceAll` for defensiveness against future template edits with multiple occurrences.
 - Barrel `index.ts` for `packages/auth` written inline as a string literal in `setupAuthentication`; could templatize for parity with the other auth files.
 - `src/templates/auth/auth-ui-provider.tsx.template` mixes single and double quotes (pre-existing). `auth-route.ts.template` is single-quote consistent.
@@ -147,16 +156,19 @@ All flagged during F/G/H/I/K reviews and explicitly deferred. None blocking. Gro
 - `registryInstallSummary` user-facing text doesn't distinguish which of the two registry-install calls failed when one fails; logs have it.
 
 ### From H
+
 - `getPrismaGeneratedIgnorePath`'s `path.posix.relative('.', ...)` is a no-op (cosmetic — output is correct).
 
 ### From I
+
 - `generateAgentsMd`'s pitfalls section recomputes `cd packages/db && ` and `pm === 'npm' ? 'npx' : ...` per ORM branch; could hoist.
 - CLAUDE.md content is inline in `generateClaudeMd` rather than a module-scope `const`. Single short literal — fine either way.
 - When `config.description` is provided without trailing punctuation, AGENTS.md overview reads `<description> Stack: ...` without a period.
 
 ### From K
+
 - `Dockerfile.migrate`'s `pnpm-workspace.yaml*` glob is dead code in flat mode (legacy artifact, harmless).
-- `COPY . .` in monorepo mode bloats migrate-image build context if user has stale `.next/` or `node_modules/` (not a correctness issue, build perf only).
+- `COPY . .` in monorepo mode bloats migrate-image build context if user has stale `.next/` or `node_modules/` (not a correctness issue, build perf only). Also confirm that the `.dockerignore` properly excludes those in the generated monorepo (it should, but worth verifying).
 
 ---
 

@@ -778,6 +778,96 @@ export async function rewriteImportsInTree(
   }
 }
 
+/**
+ * Wire `apps/web/package.json` to consume a sibling workspace package under
+ * `packages/<packageDir>/`.
+ *
+ * Resolves the canonical package name from `packages/<packageDir>/package.json`
+ * (rather than recomputing one from the project name) and appends
+ * `<resolvedName>: 'workspace:*'` to `apps/web/package.json`'s `dependencies`
+ * if the entry is missing or stale. Returns the resolved name so callers can
+ * include it in user-facing instructions or in subsequent import-rewrite
+ * steps.
+ *
+ * Contract — "no silent fallback" (Group G fix-loop): a missing
+ * `packages/<packageDir>/package.json`, an unparsable file, or a missing /
+ * empty `name` field is treated as an invariant violation and surfaced as a
+ * thrown error rather than papered over with a guessed name. The thrown
+ * message always includes the helper name, the offending package directory,
+ * and the caller-supplied `hint` so the user knows which precondition was
+ * violated.
+ *
+ * If `apps/web/package.json` itself is missing the helper is a no-op on the
+ * write side (both existing callers historically skipped that branch
+ * silently when `apps/web` had not been scaffolded yet) — but the resolved
+ * name is still returned so callers can proceed.
+ *
+ * Import-rewriting (e.g. `@/lib/db` → `<pkgName>` or `@/lib/auth` →
+ * `<pkgName>/server`) is the caller's responsibility; this helper only
+ * handles the workspace-dep wiring half.
+ *
+ * Callers:
+ *   - `NextMCPServer#wireAppsWebToDbPackage` (Group F)
+ *   - `NextMCPServer#wireAppsWebToAuthPackage` (Group F1)
+ *
+ * Exported (module-scope) — matches the precedent of `getAppPath`,
+ * `shouldRouteToDbPackage`, etc. The helper has no instance-state dependency
+ * (only `projectPath`, `packageDir`, `hint`) so lifting it out makes it
+ * directly unit-testable without instantiating the server.
+ */
+export async function wireAppsWebToWorkspacePackage(
+  projectPath: string,
+  packageDir: string,
+  hint: string
+): Promise<string> {
+  const appPath = path.join(projectPath, 'apps/web');
+  const pkgJsonPath = path.join(projectPath, 'packages', packageDir, 'package.json');
+
+  // 1. Resolve the workspace package name from the on-disk package.json.
+  //    A missing file is an invariant violation — the caller is gated on a
+  //    precondition (e.g. `shouldRouteToDbPackage(config)`) which means the
+  //    upstream emitter MUST have produced this file. Throwing surfaces a
+  //    real bug rather than silently picking a guessed name.
+  if (!existsSync(pkgJsonPath)) {
+    throw new Error(
+      `wireAppsWebToWorkspacePackage: expected packages/${packageDir}/package.json to exist ` +
+        `(upstream emitter should have produced it). ${hint}`
+    );
+  }
+
+  let resolvedName: string;
+  try {
+    const pkg = JSON.parse(await fs.readFile(pkgJsonPath, 'utf-8'));
+    if (typeof pkg.name !== 'string' || pkg.name.length === 0) {
+      throw new Error(`packages/${packageDir}/package.json has no usable "name" field`);
+    }
+    resolvedName = pkg.name;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `wireAppsWebToWorkspacePackage: failed to read packages/${packageDir}/package.json ` +
+        `(upstream emitter should have produced it). ${hint} Underlying error: ${reason}`
+    );
+  }
+
+  // 2. Append the workspace dep to apps/web/package.json. If apps/web has
+  //    not been scaffolded yet (the file is missing) this is a silent
+  //    skip — both pre-extraction callers behaved this way and integration
+  //    tests rely on that ordering tolerance.
+  const appPkgPath = path.join(appPath, 'package.json');
+  if (existsSync(appPkgPath)) {
+    const appPkg = JSON.parse(await fs.readFile(appPkgPath, 'utf-8'));
+    appPkg.dependencies = appPkg.dependencies || {};
+    if (appPkg.dependencies[resolvedName] !== 'workspace:*') {
+      appPkg.dependencies[resolvedName] = 'workspace:*';
+      await fs.writeFile(appPkgPath, JSON.stringify(appPkg, null, 2) + '\n');
+      logger.info(`Added ${resolvedName}: workspace:* to apps/web/package.json`);
+    }
+  }
+
+  return resolvedName;
+}
+
 const ORM_PACKAGE_SUBDIR: Partial<Record<NonNullable<ProjectConfig['architecture']['orm']>, string>> = {
   prisma: 'db/prisma',
   drizzle: 'db/drizzle',
@@ -2567,10 +2657,13 @@ export const db = drizzle(pool, { schema });`;
    * Wire `apps/web` to consume the `packages/db` workspace package after the
    * db sources have been routed there. Two effects:
    *
-   *  1. Ensure `apps/web/package.json` lists `@<projectName>/db: workspace:*` under
-   *     `dependencies`. We pull the package name straight from the scaffolded
-   *     `packages/db/package.json` rather than recomputing — that guards against
-   *     drift if a future template changes the convention.
+   *  1. Workspace-dep wiring (resolve canonical name from
+   *     `packages/db/package.json` and append `<dbPkgName>: 'workspace:*'` to
+   *     `apps/web/package.json`'s `dependencies`) is delegated to the shared
+   *     {@link wireAppsWebToWorkspacePackage} helper. The helper enforces
+   *     the Group G "no silent fallback" contract — a missing or unparsable
+   *     `packages/db/package.json` throws with the caller-supplied hint
+   *     rather than guessing a name.
    *  2. Rewrite any `apps/web` source file that imports from `@/lib/db` (or a
    *     subpath like `@/lib/db/types`) to import from `@<projectName>/db` instead.
    *     Today, no callers of `setup_database` will have produced such imports
@@ -2581,49 +2674,14 @@ export const db = drizzle(pool, { schema });`;
    * descend into `node_modules`, `.next`, `.prisma`, or `public`.
    */
   private async wireAppsWebToDbPackage(_config: ProjectConfig, projectPath: string): Promise<string> {
+    const dbPkgName = await wireAppsWebToWorkspacePackage(
+      projectPath,
+      'db',
+      'Did setup_database run before scaffold_project?'
+    );
+
+    // Rewrite `@/lib/db` imports inside apps/web sources.
     const appPath = path.join(projectPath, 'apps/web');
-    const dbPkgJsonPath = path.join(projectPath, 'packages/db/package.json');
-
-    // 1. Resolve db package name from the on-disk package.json. This function is
-    //    only called when `shouldRouteToDbPackage(config)` is true, which means
-    //    Group D MUST have already emitted `packages/db/package.json`. A missing
-    //    or unparsable file here is an invariant violation, not a soft fault —
-    //    we surface it loudly rather than guessing a name.
-    if (!existsSync(dbPkgJsonPath)) {
-      throw new Error(
-        'wireAppsWebToDbPackage: expected packages/db/package.json to exist ' +
-          '(Group D should have emitted it). Did setup_database run before scaffold_project?'
-      );
-    }
-    let dbPkgName: string;
-    try {
-      const dbPkg = JSON.parse(await fs.readFile(dbPkgJsonPath, 'utf-8'));
-      if (typeof dbPkg.name !== 'string' || dbPkg.name.length === 0) {
-        throw new Error('packages/db/package.json has no usable "name" field');
-      }
-      dbPkgName = dbPkg.name;
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        `wireAppsWebToDbPackage: failed to read packages/db/package.json (Group D ` +
-          `should have emitted it). Did setup_database run before scaffold_project? ` +
-          `Underlying error: ${reason}`
-      );
-    }
-
-    // 2. Add workspace dep to apps/web/package.json
-    const appPkgPath = path.join(appPath, 'package.json');
-    if (existsSync(appPkgPath)) {
-      const appPkg = JSON.parse(await fs.readFile(appPkgPath, 'utf-8'));
-      appPkg.dependencies = appPkg.dependencies || {};
-      if (appPkg.dependencies[dbPkgName] !== 'workspace:*') {
-        appPkg.dependencies[dbPkgName] = 'workspace:*';
-        await fs.writeFile(appPkgPath, JSON.stringify(appPkg, null, 2) + '\n');
-        logger.info(`Added ${dbPkgName}: workspace:* to apps/web/package.json`);
-      }
-    }
-
-    // 3. Rewrite `@/lib/db` imports inside apps/web sources.
     for (const sub of ['src', 'app']) {
       const root = path.join(appPath, sub);
       if (existsSync(root)) {
@@ -2638,16 +2696,16 @@ export const db = drizzle(pool, { schema });`;
 
   /**
    * Wire `apps/web` to consume the `packages/auth` workspace package after the
-   * better-auth core sources have been written into `packages/auth/src/`.
+   * better-auth core sources have been written into `packages/auth/src/`
+   * (Group F1):
    *
-   * Mirrors {@link wireAppsWebToDbPackage} (Group F1):
-   *   - The auth package name is read from `packages/auth/package.json` (Group D
-   *     emits this in the same `monorepo: 'full' + auth: 'better-auth' +
-   *     database !== 'none'` shape this helper is gated on). A missing or
-   *     unreadable file is an invariant violation that we surface loudly
-   *     rather than guessing a name.
-   *   - `apps/web/package.json` is updated in place to add
-   *     `<authPkgName>: 'workspace:*'` under `dependencies`.
+   *   - Workspace-dep wiring (resolve canonical name from
+   *     `packages/auth/package.json` and append `<authPkgName>: 'workspace:*'`
+   *     to `apps/web/package.json`'s `dependencies`) is delegated to the
+   *     shared {@link wireAppsWebToWorkspacePackage} helper. The helper
+   *     enforces the Group G "no silent fallback" contract — a missing or
+   *     unparsable `packages/auth/package.json` throws with the
+   *     caller-supplied hint rather than guessing a name.
    *   - Pre-existing `@/lib/auth` / `@/lib/auth-client` imports inside
    *     `apps/web/src` and `apps/web/app` are rewritten to the workspace
    *     package's subpath exports (`<authPkgName>/server` and
@@ -2661,42 +2719,13 @@ export const db = drizzle(pool, { schema });`;
     _config: ProjectConfig,
     projectPath: string
   ): Promise<string> {
+    const authPkgName = await wireAppsWebToWorkspacePackage(
+      projectPath,
+      'auth',
+      "Did scaffold_project run with auth: 'better-auth' and a database configured?"
+    );
+
     const appPath = path.join(projectPath, 'apps/web');
-    const authPkgJsonPath = path.join(projectPath, 'packages/auth/package.json');
-
-    if (!existsSync(authPkgJsonPath)) {
-      throw new Error(
-        'wireAppsWebToAuthPackage: expected packages/auth/package.json to exist ' +
-          '(Group D should have emitted it). Did scaffold_project run with auth: ' +
-          "'better-auth' and a database configured?"
-      );
-    }
-
-    let authPkgName: string;
-    try {
-      const authPkg = JSON.parse(await fs.readFile(authPkgJsonPath, 'utf-8'));
-      if (typeof authPkg.name !== 'string' || authPkg.name.length === 0) {
-        throw new Error('packages/auth/package.json has no usable "name" field');
-      }
-      authPkgName = authPkg.name;
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        `wireAppsWebToAuthPackage: failed to read packages/auth/package.json (Group D ` +
-          `should have emitted it). Underlying error: ${reason}`
-      );
-    }
-
-    const appPkgPath = path.join(appPath, 'package.json');
-    if (existsSync(appPkgPath)) {
-      const appPkg = JSON.parse(await fs.readFile(appPkgPath, 'utf-8'));
-      appPkg.dependencies = appPkg.dependencies || {};
-      if (appPkg.dependencies[authPkgName] !== 'workspace:*') {
-        appPkg.dependencies[authPkgName] = 'workspace:*';
-        await fs.writeFile(appPkgPath, JSON.stringify(appPkg, null, 2) + '\n');
-        logger.info(`Added ${authPkgName}: workspace:* to apps/web/package.json`);
-      }
-    }
 
     // Rewrite `@/lib/auth` and `@/lib/auth-client` imports. The walker sorts
     // mappings longest-prefix-first internally, so the deliberately
