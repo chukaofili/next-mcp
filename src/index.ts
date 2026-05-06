@@ -368,6 +368,93 @@ export function substituteDockerfilePlaceholders(
   return substituteProjectName(out, projectName);
 }
 
+/**
+ * Returns the project-relative POSIX directory containing `schema.prisma` for
+ * the migrate Dockerfile. Mirrors the host layout inside the container — the
+ * same path is used as both the COPY destination and the `--schema=` arg in
+ * the CMD, so a single placeholder (`__SCHEMA_HOST_PATH__`) is sufficient.
+ *
+ * - `full + orm`:                    `packages/db/prisma`
+ * - `minimal` / `full + orm:none`:   `apps/web/prisma`
+ * - `none`:                          `prisma`
+ */
+export function getMigrateSchemaHostPath(config: ProjectConfig): string {
+  if (shouldRouteToDbPackage(config)) return 'packages/db/prisma';
+  if (config.architecture.monorepo === 'none') return 'prisma';
+  return 'apps/web/prisma';
+}
+
+/**
+ * Per-PM ad-hoc add command used by the migrate Dockerfile in flat mode. The
+ * migrate image only needs prisma + the runtime client + dotenv — there's no
+ * benefit to a full workspace install when there's no workspace.
+ */
+const MIGRATE_DEPS_ADD: Record<PackageManager, string> = {
+  pnpm: 'pnpm add prisma @prisma/client dotenv',
+  npm: 'npm install prisma @prisma/client dotenv',
+  yarn: 'yarn add prisma @prisma/client dotenv',
+  bun: 'bun add prisma @prisma/client dotenv',
+};
+
+/**
+ * Substitutes placeholders in the Dockerfile.migrate template. Resolves both
+ * the shared PM placeholders (via {@link substituteDockerfilePlaceholders})
+ * and the migrate-specific ones:
+ *
+ * - `__SCHEMA_HOST_PATH__`        — directory containing `schema.prisma`,
+ *                                   relative to project root and mirrored as
+ *                                   the in-container path.
+ * - `__MIGRATE_COPY__`            — COPY block. Flat mode preserves the
+ *                                   targeted legacy copy (root manifests +
+ *                                   prisma dir + optional prisma.config.ts).
+ *                                   Monorepo modes do `COPY . .` so the
+ *                                   workspace structure is intact for
+ *                                   `__PM_INSTALL__` to resolve workspace
+ *                                   `db` deps.
+ * - `__MIGRATE_DEPS_INSTALL__`    — flat mode: PM-specific
+ *                                   `add prisma @prisma/client dotenv`.
+ *                                   Monorepo modes: full
+ *                                   `__PM_INSTALL__` (lockfile-driven).
+ *
+ * All paths use POSIX separators so the result is stable on Windows hosts.
+ */
+export function substituteMigrateDockerfilePlaceholders(
+  template: string,
+  config: ProjectConfig
+): string {
+  const pm = config.architecture.packageManager;
+  const isMonorepo = config.architecture.monorepo !== 'none';
+  const schemaHostPath = getMigrateSchemaHostPath(config);
+  const lockfile = DOCKERFILE_PM_VALUES[pm].__LOCKFILE__;
+
+  let migrateCopy: string;
+  let migrateDepsInstall: string;
+
+  if (isMonorepo) {
+    // The migrate image needs the full workspace tree so the lockfile-driven
+    // install can resolve workspace `db` deps. `COPY . .` plus `.dockerignore`
+    // keeps the build context lean enough; the migrate is a one-shot, not a
+    // hot-path runtime image.
+    migrateCopy = 'COPY . .';
+    migrateDepsInstall = DOCKERFILE_PM_VALUES[pm].__PM_INSTALL__;
+  } else {
+    // Flat mode: keep the legacy targeted COPY pattern. `prisma.config.ts*`
+    // glob handles the case where the file doesn't exist.
+    migrateCopy = [
+      `COPY package.json ${lockfile}* pnpm-workspace.yaml* ./`,
+      `COPY ${schemaHostPath} ./${schemaHostPath}`,
+      'COPY prisma.config.ts* ./',
+    ].join('\n');
+    migrateDepsInstall = MIGRATE_DEPS_ADD[pm];
+  }
+
+  let out = template;
+  out = out.replaceAll('__SCHEMA_HOST_PATH__', schemaHostPath);
+  out = out.replaceAll('__MIGRATE_COPY__', migrateCopy);
+  out = out.replaceAll('__MIGRATE_DEPS_INSTALL__', migrateDepsInstall);
+  return substituteDockerfilePlaceholders(out, pm, config.name!);
+}
+
 function assertNoResidualCatalog(value: unknown, pathParts: string[] = []): void {
   if (typeof value === 'string' && value === 'catalog:') {
     throw new Error(
@@ -1546,14 +1633,18 @@ class NextMCPServer {
       await fs.writeFile(path.join(projectPath, '.dockerignore'), finalDockerignore);
       await fs.writeFile(path.join(projectPath, 'docker-compose.yml'), dockerCompose);
 
-      // Copy Dockerfile.migrate if using Prisma with a database
+      // Generate Dockerfile.migrate if using Prisma with a database. The
+      // template is fully placeholder-driven so it adapts to all four package
+      // managers and all three monorepo modes — see
+      // {@link substituteMigrateDockerfilePlaceholders}.
       let migrateDockerfileMessage = '';
       if (config.architecture.orm === 'prisma' && config.architecture.database !== 'none') {
         const dockerfileMigrateTemplate = await fs.readFile(
           path.join(__dirname, 'templates', 'docker', 'Dockerfile.migrate'),
           'utf-8'
         );
-        await fs.writeFile(path.join(projectPath, 'Dockerfile.migrate'), dockerfileMigrateTemplate);
+        const migrateDockerfile = substituteMigrateDockerfilePlaceholders(dockerfileMigrateTemplate, config);
+        await fs.writeFile(path.join(projectPath, 'Dockerfile.migrate'), migrateDockerfile);
         migrateDockerfileMessage = '\n- Dockerfile.migrate for running Prisma migrations';
       }
 
@@ -3358,13 +3449,13 @@ For more information, visit [Better Auth Documentation](https://www.better-auth.
 `;
       }
 
-      // Generate Docker monorepo+prisma migrate caveat. In monorepo mode the
+      // Generate Docker monorepo+prisma migrate note. In monorepo mode the
       // web service no longer auto-applies migrations on boot (Group H made
       // the inline `prisma migrate deploy` skip web for monorepo), so users
-      // must invoke the dedicated migrate service. In monorepo:full the
-      // schema also lives at packages/db/prisma — Dockerfile.migrate's
-      // default `prisma/schema.prisma` path won't resolve, so we surface a
-      // note about adding `--schema=./packages/db/prisma/schema.prisma`.
+      // must invoke the dedicated migrate service. `Dockerfile.migrate` now
+      // templatizes the schema path per monorepo mode (see
+      // {@link substituteMigrateDockerfilePlaceholders}), so no workaround
+      // note is needed.
       let monorepoDockerNotes = '';
       if (isMonorepo && architecture.orm === 'prisma' && architecture.database !== 'none') {
         monorepoDockerNotes = `
@@ -3376,13 +3467,7 @@ The web service no longer runs Prisma migrations on startup in monorepo mode. Af
 \`\`\`bash
 docker compose run --rm migrate
 \`\`\`
-${
-  isFullMonorepo
-    ? `
-> **Note**: \`Dockerfile.migrate\` ships with a default schema path of \`prisma/schema.prisma\`. In \`monorepo: full\` the schema lives at \`packages/db/prisma/schema.prisma\`, so you may need to update the migrate service to pass \`--schema=./packages/db/prisma/schema.prisma\` (either by editing the Dockerfile's \`CMD\` or by overriding it in \`docker-compose.yml\`).
-`
-    : ''
-}`;
+`;
       }
 
       // Generate testing instructions
@@ -3950,11 +4035,6 @@ ${architecture.testing !== 'none' ? `${pm} test               # Run tests\n` : '
       pitfallLines.push(
         `- **Migrations don't run on web boot in monorepo mode.** After \`docker compose up\`, apply pending migrations with \`docker compose run --rm migrate\`.`
       );
-      if (isFullMonorepo) {
-        pitfallLines.push(
-          `- **Dockerfile.migrate schema path.** In \`monorepo: full\` the Prisma schema lives at \`packages/db/prisma/schema.prisma\` — \`Dockerfile.migrate\`'s default \`prisma/schema.prisma\` won't resolve, so you may need to pass \`--schema=./packages/db/prisma/schema.prisma\` (edit the Dockerfile \`CMD\` or override it in \`docker-compose.yml\`).`
-        );
-      }
     }
     if (isFullMonorepo) {
       pitfallLines.push(

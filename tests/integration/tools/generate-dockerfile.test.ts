@@ -408,4 +408,164 @@ describe('generate_dockerfile tool', () => {
       expect(await fileExists(path.join(monorepoDir, 'Dockerfile.migrate'))).toBe(true);
     });
   });
+
+  describe('Dockerfile.migrate templating (K — schema path + PMs)', () => {
+    // Each test uses its own fresh tempDir so writes from prior cases can't
+    // mask placeholder leakage in the current assertion.
+    it.each([
+      {
+        pm: 'pnpm' as const,
+        baseImage: 'FROM node:24-alpine',
+        depsAdd: 'pnpm add prisma @prisma/client dotenv',
+        dlxPrisma: 'pnpm dlx prisma migrate deploy',
+      },
+      {
+        pm: 'npm' as const,
+        baseImage: 'FROM node:24-alpine',
+        depsAdd: 'npm install prisma @prisma/client dotenv',
+        dlxPrisma: 'npx prisma migrate deploy',
+      },
+      {
+        pm: 'yarn' as const,
+        baseImage: 'FROM node:24-alpine',
+        depsAdd: 'yarn add prisma @prisma/client dotenv',
+        dlxPrisma: 'yarn dlx prisma migrate deploy',
+      },
+      {
+        pm: 'bun' as const,
+        baseImage: 'FROM oven/bun:1-alpine',
+        depsAdd: 'bun add prisma @prisma/client dotenv',
+        dlxPrisma: 'bunx prisma migrate deploy',
+      },
+    ])(
+      'flat + prisma + $pm: ad-hoc PM add, --schema=./prisma/schema.prisma, no placeholder leakage',
+      async ({ pm, baseImage, depsAdd, dlxPrisma }) => {
+        const dir = await createTempDir(`next-mcp-migrate-flat-${pm}-`);
+        try {
+          const config = createMockConfig({
+            name: `flat-${pm}`,
+            architecture: { monorepo: 'none', packageManager: pm, database: 'postgres', orm: 'prisma' },
+          });
+
+          const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+          expect(client.isSuccess(result)).toBe(true);
+
+          const migrate = await readFile(path.join(dir, 'Dockerfile.migrate'));
+          expect(migrate).toContain(baseImage);
+          expect(migrate).toContain(depsAdd);
+          expect(migrate).toContain('--schema=./prisma/schema.prisma');
+          expect(migrate).toContain(dlxPrisma);
+          // Flat mode keeps the targeted COPY pattern, not COPY . .
+          expect(migrate).toContain('COPY prisma ./prisma');
+          expect(migrate).not.toMatch(/^COPY \. \.$/m);
+          // No unsubstituted placeholders.
+          expect(migrate).not.toMatch(/__[A-Z_]+__/);
+        } finally {
+          await cleanupTempDir(dir);
+        }
+      }
+    );
+
+    it('monorepo:minimal + prisma + pnpm: schema path resolves to apps/web/prisma + COPY . . + PM_INSTALL', async () => {
+      const dir = await createTempDir('next-mcp-migrate-minimal-');
+      try {
+        const config = createMockConfig({
+          name: 'mini-migrate',
+          architecture: { monorepo: 'minimal', packageManager: 'pnpm', database: 'postgres', orm: 'prisma' },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        const migrate = await readFile(path.join(dir, 'Dockerfile.migrate'));
+        expect(migrate).toContain('--schema=./apps/web/prisma/schema.prisma');
+        // Monorepo modes use a full workspace copy + lockfile-driven install.
+        expect(migrate).toMatch(/^COPY \. \.$/m);
+        expect(migrate).toContain('pnpm install --frozen-lockfile');
+        // Should not reach for the flat-mode ad-hoc add.
+        expect(migrate).not.toContain('pnpm add prisma @prisma/client dotenv');
+        expect(migrate).not.toMatch(/__[A-Z_]+__/);
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+
+    it('monorepo:full + prisma + pnpm: schema path resolves to packages/db/prisma (the K target)', async () => {
+      const dir = await createTempDir('next-mcp-migrate-full-pnpm-');
+      try {
+        const config = createMockConfig({
+          name: 'full-migrate',
+          architecture: { monorepo: 'full', packageManager: 'pnpm', database: 'postgres', orm: 'prisma' },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        const migrate = await readFile(path.join(dir, 'Dockerfile.migrate'));
+        expect(migrate).toContain('--schema=./packages/db/prisma/schema.prisma');
+        expect(migrate).toContain('pnpm dlx prisma migrate deploy');
+        expect(migrate).toMatch(/^COPY \. \.$/m);
+        expect(migrate).toContain('pnpm install --frozen-lockfile');
+        expect(migrate).not.toMatch(/__[A-Z_]+__/);
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+
+    it('monorepo:full + prisma + bun: bun base image + bun install + packages/db schema path', async () => {
+      const dir = await createTempDir('next-mcp-migrate-full-bun-');
+      try {
+        const config = createMockConfig({
+          name: 'full-bun-migrate',
+          architecture: { monorepo: 'full', packageManager: 'bun', database: 'postgres', orm: 'prisma' },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        const migrate = await readFile(path.join(dir, 'Dockerfile.migrate'));
+        expect(migrate).toContain('FROM oven/bun:1-alpine');
+        expect(migrate).toContain('bun install --frozen-lockfile');
+        expect(migrate).toContain('--schema=./packages/db/prisma/schema.prisma');
+        expect(migrate).toContain('bunx prisma migrate deploy');
+        expect(migrate).not.toMatch(/__[A-Z_]+__/);
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+
+    it('monorepo:full + orm:none: no Dockerfile.migrate is generated (orm gate holds)', async () => {
+      const dir = await createTempDir('next-mcp-migrate-orm-none-');
+      try {
+        const config = createMockConfig({
+          name: 'no-orm',
+          architecture: { monorepo: 'full', packageManager: 'pnpm', database: 'postgres', orm: 'none' },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        expect(await fileExists(path.join(dir, 'Dockerfile.migrate'))).toBe(false);
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+
+    it('database:none: no Dockerfile.migrate is generated (db gate holds)', async () => {
+      const dir = await createTempDir('next-mcp-migrate-db-none-');
+      try {
+        const config = createMockConfig({
+          name: 'no-db',
+          architecture: { monorepo: 'none', packageManager: 'pnpm', database: 'none', orm: 'prisma' },
+        });
+
+        const result = await client.callTool('generate_dockerfile', { config, projectPath: dir });
+        expect(client.isSuccess(result)).toBe(true);
+
+        expect(await fileExists(path.join(dir, 'Dockerfile.migrate'))).toBe(false);
+      } finally {
+        await cleanupTempDir(dir);
+      }
+    });
+  });
 });

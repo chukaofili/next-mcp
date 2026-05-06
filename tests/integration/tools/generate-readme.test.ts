@@ -474,8 +474,9 @@ describe('generate_readme tool', () => {
 
         const readme = await readFile(path.join(dir, 'README.md'));
         expect(readme).toContain('docker compose run --rm migrate');
-        // Schema-path note for Dockerfile.migrate adjustment.
-        expect(readme).toContain('packages/db/prisma/schema.prisma');
+        // Group K: Dockerfile.migrate is now templated per monorepo mode, so
+        // the README no longer needs the manual `--schema=...` workaround.
+        expect(readme).not.toContain('--schema=./packages/db/prisma/schema.prisma');
       } finally {
         await cleanupTempDir(dir);
       }
