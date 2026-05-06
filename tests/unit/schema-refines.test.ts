@@ -91,29 +91,18 @@ describe('ProjectConfigSchema cross-field refines', () => {
       }
     });
 
-    it('accepts orm:prisma + postgres only and rejects the other databases', () => {
-      // Prisma is currently postgres-only — the generator's client template
-      // and getDbDeps both hard-code @prisma/adapter-pg + pg. The schema
-      // refine rejects any other database to avoid scaffolding projects
-      // that cannot compile or connect. When the client template +
-      // getDbDeps become database-aware, widen ORM_DATABASE_COMPATIBILITY
-      // and update this test.
-      expect(() =>
-        ProjectConfigSchema.parse({
-          architecture: { orm: 'prisma', database: 'postgres' },
-        })
-      ).not.toThrow();
-      for (const database of ['mysql', 'sqlite', 'mongodb'] as const) {
+    it('accepts orm:prisma with each of postgres/mysql/sqlite/mongodb', () => {
+      // Prisma's client.ts.template is now dialect-agnostic (bare
+      // PrismaClient — no driver adapter), and getDbDeps only declares
+      // `@prisma/client` + `prisma` + `dotenv`. The bundled Prisma engine
+      // reads the dialect from schema.prisma, set by `prisma init
+      // --datasource-provider <dialect>` during scaffolding.
+      for (const database of ['postgres', 'mysql', 'sqlite', 'mongodb'] as const) {
         expect(() =>
           ProjectConfigSchema.parse({
             architecture: { orm: 'prisma', database },
           })
-        ).toThrow(ZodError);
-        expect(() =>
-          ProjectConfigSchema.parse({
-            architecture: { orm: 'prisma', database },
-          })
-        ).toThrow(/Valid databases for prisma: postgres/);
+        ).not.toThrow();
       }
     });
 

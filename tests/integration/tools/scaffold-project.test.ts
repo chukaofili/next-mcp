@@ -80,9 +80,7 @@ describe('scaffold_project tool', () => {
     const configs: TestProjectConfig['architecture'][] = [
       { database: 'mysql', orm: 'drizzle' },
       { database: 'mongodb', orm: 'mongoose' },
-      // Prisma is postgres-only — pair sqlite with drizzle to keep
-      // ORM_DATABASE_COMPATIBILITY happy.
-      { database: 'sqlite', orm: 'drizzle' },
+      { database: 'sqlite', orm: 'prisma' },
     ];
 
     for (const arch of configs) {

@@ -129,17 +129,22 @@ describe('Package-emission gate helpers', () => {
   });
 
   describe('getDbDeps', () => {
-    it('returns prisma client + adapter + driver + dotenv for orm:prisma', () => {
+    it('returns dialect-agnostic prisma deps for orm:prisma (no driver adapter)', () => {
+      // The prisma client.ts.template uses bare `new PrismaClient()` so
+      // the same deps work for postgres, mysql, sqlite, and mongodb. The
+      // generator no longer wires `@prisma/adapter-pg` or the postgres
+      // driver `pg` — opt into them on the consumer's package.json if
+      // adapter throughput matters.
       const config = createMockConfig({
         architecture: { monorepo: 'full', database: 'postgres', orm: 'prisma', auth: 'none' },
       });
       const { dependencies, devDependencies } = getDbDeps(config);
       expect(dependencies).toMatchObject({
         '@prisma/client': expect.any(String),
-        '@prisma/adapter-pg': expect.any(String),
-        pg: expect.any(String),
         dotenv: expect.any(String),
       });
+      expect(dependencies['@prisma/adapter-pg']).toBeUndefined();
+      expect(dependencies.pg).toBeUndefined();
       expect(devDependencies).toMatchObject({ prisma: expect.any(String) });
     });
 

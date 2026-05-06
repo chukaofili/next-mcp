@@ -148,16 +148,13 @@ export type DatabaseName = (typeof DATABASE_NAMES)[number];
  * value (including `'none'`), so direct-driver setups are unconstrained.
  */
 export const ORM_DATABASE_COMPATIBILITY: Record<OrmName, ReadonlyArray<DatabaseName>> = {
-  // Prisma is currently constrained to postgres because the generator's
-  // implementation is postgres-only: `setupPrisma()` always writes
-  // `templates/database/prisma/client.ts.template` (which imports
-  // `@prisma/adapter-pg`) and {@link getDbDeps} unconditionally adds
-  // `pg` + `@prisma/adapter-pg`. Accepting mysql/sqlite/mongodb at
-  // schema-validation time would scaffold projects that cannot compile
-  // or connect. Widen this list when the client template + getDbDeps
-  // become database-aware (separate templates per dialect, or
-  // placeholder-driven adapter substitution).
-  prisma: ['postgres'],
+  // Prisma supports all 4 dialects because the generator now scaffolds a
+  // dialect-agnostic client (bare `new PrismaClient()` — no driver
+  // adapter) and `getDbDeps` only declares `@prisma/client` + `prisma` +
+  // `dotenv` (no per-dialect driver). The bundled Prisma engine handles
+  // the dialect from the schema.prisma datasource, which `prisma init
+  // --datasource-provider <dialect>` writes during scaffolding.
+  prisma: ['postgres', 'mysql', 'sqlite', 'mongodb'],
   drizzle: ['postgres', 'mysql', 'sqlite'],
   mongoose: ['mongodb'],
   none: ['none', 'postgres', 'mysql', 'sqlite', 'mongodb'],
@@ -259,11 +256,13 @@ export function getDbDeps(config: ProjectConfig): {
   const { orm, database } = config.architecture;
 
   if (orm === 'prisma') {
-    // client.ts.template imports @prisma/adapter-pg + @prisma/client; pg is the
-    // adapter's transitive driver and must be declared explicitly.
-    // prisma.config.ts (post-init) imports dotenv. prisma CLI is a devDep.
-    deps.pg = PACKAGE_VERSIONS.pg;
-    deps['@prisma/adapter-pg'] = PACKAGE_VERSIONS['@prisma/adapter-pg'];
+    // Dialect-agnostic deps. The client.ts.template uses a bare
+    // PrismaClient (no driver adapter) so it works for postgres, mysql,
+    // sqlite, and mongodb without per-dialect drivers. prisma.config.ts
+    // (post-init) imports dotenv; prisma CLI is a devDep. To opt into
+    // a driver adapter (e.g. `@prisma/adapter-pg` for postgres
+    // throughput), declare it on the consumer's package.json — the
+    // generator no longer wires it up by default.
     deps['@prisma/client'] = PACKAGE_VERSIONS['@prisma/client'];
     deps.dotenv = PACKAGE_VERSIONS.dotenv;
     devDeps.prisma = PACKAGE_VERSIONS.prisma;
@@ -1393,6 +1392,19 @@ class NextMCPServer {
         appendFileSync(recordPath, record);
       } catch (err) {
         logger.warn(`Failed to record command to ${recordPath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      // Test-only failure injection: when NEXT_MCP_FAIL_COMMANDS is set,
+      // any recorded command whose label contains one of the
+      // comma-separated patterns reports `success: false`. Lets tests
+      // exercise downstream error handling (e.g. setup_authentication's
+      // registry-install failure path) without spawning a process or
+      // mocking network. Only valid alongside NEXT_MCP_RECORD_COMMANDS.
+      const failPatterns = process.env.NEXT_MCP_FAIL_COMMANDS;
+      if (failPatterns) {
+        const patterns = failPatterns.split(',').map((p) => p.trim()).filter(Boolean);
+        if (patterns.some((p) => commandLabel.includes(p))) {
+          return { success: false, output: `simulated failure for label: ${commandLabel}` };
+        }
       }
       return { success: true, output: '' };
     }
@@ -3602,17 +3614,87 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       );
       await fs.writeFile(path.join(appPath, 'src/proxy.ts'), proxyContent);
 
+      // Step 4.9: Install better-auth-ui shadcn registry pieces. These live
+      // in apps/web (route-coupled compositions, not reusable primitives) so
+      // we always run with cwd = appPath, even when `monorepo === 'full' +
+      // uiLibrary === 'shadcn'` (where setup_shadcn additionally inits
+      // packages/ui).
+      //
+      // The registry install runs BEFORE the registry-dependent layer is
+      // written (steps 5-9) so a network/install failure can short-circuit
+      // those writes — otherwise the tool would emit pages/providers that
+      // import `@/components/auth/*` modules the registry never created and
+      // leave the project uncompilable while still reporting success.
+      // {@link registryInstallFailed} drives both (a) suppressing the
+      // registry-dependent writes below and (b) the final error response
+      // at the end of this function.
+      let registryInstallSummary = '';
+      let registryInstallFailed = false;
+      const registryUrls = {
+        auth: 'https://better-auth-ui.com/r/auth.json',
+        settings: 'https://better-auth-ui.com/r/settings.json',
+        userButton: 'https://better-auth-ui.com/r/user-button.json',
+      };
+
+      if (!config.architecture.skipInstall) {
+        const runner = getShadcnRunner(config.architecture.packageManager);
+        const authRegistryResult = this.execCommand(
+          `${runner} shadcn@latest add ${registryUrls.auth} -y`,
+          appPath,
+          'better-auth-ui auth registry'
+        );
+        const settingsAndButtonResult = this.execCommand(
+          `${runner} shadcn@latest add ${registryUrls.settings} ${registryUrls.userButton} -y`,
+          appPath,
+          'better-auth-ui settings/user-button registry'
+        );
+
+        if (authRegistryResult.success && settingsAndButtonResult.success) {
+          registryInstallSummary = 'Installed better-auth-ui shadcn-registry components in apps/web';
+        } else {
+          registryInstallFailed = true;
+          const failed: string[] = [];
+          if (!authRegistryResult.success) failed.push('better-auth-ui auth registry');
+          if (!settingsAndButtonResult.success) failed.push('better-auth-ui settings/user-button registry');
+          registryInstallSummary = `Failed to install: ${failed.join(', ')} — see logs for details`;
+        }
+        logger.info(registryInstallSummary);
+      } else {
+        // Under `skipInstall`, the registry-install AND the
+        // registry-dependent presentation files (auth-ui-provider, dynamic
+        // auth/account pages, user-button shim, layout AuthProvider
+        // injection) are both skipped to avoid emitting a project with
+        // unresolvable imports. Surface the exact follow-up the user needs
+        // to run to bring the project to a fully-configured state.
+        const runner = getShadcnRunner(config.architecture.packageManager);
+        registryInstallSummary = [
+          '⚠️  skipInstall: true — UI registry components and the route/page',
+          '    presentation layer were not emitted (they import registry-generated',
+          '    modules that only exist after `shadcn add`). To finish the setup,',
+          `    run from ${routedToAuthPkg || config.architecture.monorepo !== 'none' ? 'apps/web' : 'the project root'}:`,
+          `      ${config.architecture.packageManager} install`,
+          `      ${runner} shadcn@latest add ${registryUrls.auth} -y`,
+          `      ${runner} shadcn@latest add ${registryUrls.settings} ${registryUrls.userButton} -y`,
+          '    Then re-run `setup_authentication` (with `skipInstall: false`)',
+          '    to emit the auth/account pages, user-button, and AuthProvider.',
+        ].join('\n');
+        logger.info(registryInstallSummary);
+      }
+
       // Steps 5-9 below emit the *registry-dependent* presentation layer:
       // auth-ui-provider.tsx, the dynamic auth/account route pages, the
       // user-button shim, and the root-layout AuthProvider injection. Each
       // of those files imports a module that is only created by the
-      // `shadcn add` calls in Step 11 (`@/components/auth/auth-provider`,
+      // `shadcn add` calls in Step 4.9 (`@/components/auth/auth-provider`,
       // `@/components/auth/auth`, `@/components/auth/settings/settings`,
-      // `@/components/auth/user/user-button`). Under `skipInstall: true`
-      // we deliberately skip Step 11, so writing the importing files would
-      // produce an uncompilable project. Gate them on the same flag and
-      // surface the manual follow-up in the success message instead.
-      const writeRegistryDependentLayer = !config.architecture.skipInstall;
+      // `@/components/auth/user/user-button`). Skip them when:
+      //   - `skipInstall: true` (install skipped on purpose) — the
+      //     manual-follow-up message above guides the user.
+      //   - `registryInstallFailed` — the install ran but failed; emitting
+      //     the importing templates would leave the project uncompilable.
+      //     We surface a hard tool error at the end of this function.
+      const writeRegistryDependentLayer =
+        !config.architecture.skipInstall && !registryInstallFailed;
 
       if (writeRegistryDependentLayer) {
         // Step 5: Generate AuthUIProvider. Substitutes the auth-client import.
@@ -3681,60 +3763,6 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
         resolvedAuthPkgName = await this.wireAppsWebToAuthPackage(config, projectPath);
       }
 
-      // Step 11: Install better-auth-ui shadcn registry pieces. These live
-      // in apps/web (route-coupled compositions, not reusable primitives) so
-      // we always run with cwd = appPath, even when `monorepo === 'full' +
-      // uiLibrary === 'shadcn'` (where setup_shadcn additionally inits
-      // packages/ui).
-      let registryInstallSummary = '';
-      if (!config.architecture.skipInstall) {
-        const runner = getShadcnRunner(config.architecture.packageManager);
-        const authRegistryUrl = 'https://better-auth-ui.com/r/auth.json';
-        const settingsRegistryUrl = 'https://better-auth-ui.com/r/settings.json';
-        const userButtonRegistryUrl = 'https://better-auth-ui.com/r/user-button.json';
-
-        const authRegistryResult = this.execCommand(
-          `${runner} shadcn@latest add ${authRegistryUrl} -y`,
-          appPath,
-          'better-auth-ui auth registry'
-        );
-        const settingsAndButtonResult = this.execCommand(
-          `${runner} shadcn@latest add ${settingsRegistryUrl} ${userButtonRegistryUrl} -y`,
-          appPath,
-          'better-auth-ui settings/user-button registry'
-        );
-
-        if (authRegistryResult.success && settingsAndButtonResult.success) {
-          registryInstallSummary = 'Installed better-auth-ui shadcn-registry components in apps/web';
-        } else {
-          const failed: string[] = [];
-          if (!authRegistryResult.success) failed.push('better-auth-ui auth registry');
-          if (!settingsAndButtonResult.success) failed.push('better-auth-ui settings/user-button registry');
-          registryInstallSummary = `Failed to install: ${failed.join(', ')} — see logs for details`;
-        }
-        logger.info(registryInstallSummary);
-      } else {
-        // Under `skipInstall`, the registry-install AND the
-        // registry-dependent presentation files (auth-ui-provider, dynamic
-        // auth/account pages, user-button shim, layout AuthProvider
-        // injection) are both skipped to avoid emitting a project with
-        // unresolvable imports. Surface the exact follow-up the user needs
-        // to run to bring the project to a fully-configured state.
-        const runner = getShadcnRunner(config.architecture.packageManager);
-        registryInstallSummary = [
-          '⚠️  skipInstall: true — UI registry components and the route/page',
-          '    presentation layer were not emitted (they import registry-generated',
-          '    modules that only exist after `shadcn add`). To finish the setup,',
-          `    run from ${routedToAuthPkg || config.architecture.monorepo !== 'none' ? 'apps/web' : 'the project root'}:`,
-          `      ${config.architecture.packageManager} install`,
-          `      ${runner} shadcn@latest add https://better-auth-ui.com/r/auth.json -y`,
-          `      ${runner} shadcn@latest add https://better-auth-ui.com/r/settings.json https://better-auth-ui.com/r/user-button.json -y`,
-          '    Then re-run `setup_authentication` (with `skipInstall: false`)',
-          '    to emit the auth/account pages, user-button, and AuthProvider.',
-        ].join('\n');
-        logger.info(registryInstallSummary);
-      }
-
       // Step 12: Run schema generation and migration
       const { database } = config.architecture;
       let schemaGenerated = false;
@@ -3758,6 +3786,41 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
           const migrationResult = this.execCommand(migrationCmd, migrationCwd, 'auth migration');
           migrationRan = migrationResult.success;
         }
+      }
+
+      // If the shadcn registry install failed, surface a hard MCP error
+      // — the registry-dependent presentation layer was deliberately
+      // skipped above, but the headless layer (route, proxy, server,
+      // client) IS on disk, and the workspace dep wiring also ran. The
+      // project is partially configured and not buildable as-is. Tell
+      // the caller exactly what failed and what manual recovery looks
+      // like; isError:true makes MCP clients (smoke driver, MCPTestClient)
+      // classify this as failure rather than success-with-text.
+      if (registryInstallFailed) {
+        const runner = getShadcnRunner(config.architecture.packageManager);
+        const cwdHint = routedToAuthPkg || config.architecture.monorepo !== 'none' ? 'apps/web' : 'the project root';
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: `❌ ${registryInstallSummary}
+
+The headless auth layer (server config, client, route handler, proxy)
+was emitted, but the route/page presentation files that depend on the
+registry components were skipped to avoid an uncompilable project.
+
+Manual recovery — from ${cwdHint}:
+  ${config.architecture.packageManager} install
+  ${runner} shadcn@latest add ${registryUrls.auth} -y
+  ${runner} shadcn@latest add ${registryUrls.settings} ${registryUrls.userButton} -y
+
+Then re-run \`setup_authentication\` to emit the auth/account pages,
+user-button, and AuthProvider against the now-installed registry
+components.`,
+            },
+          ],
+        };
       }
 
       // Step 13: Generate success message with instructions
@@ -3931,10 +3994,11 @@ ${quickStartBlock}`;
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`Authentication setup failed: ${errorMessage}`);
       return {
+        isError: true,
         content: [
           {
             type: 'text',
-            text: `Failed to set up authentication: ${errorMessage}`,
+            text: `❌ Failed to set up authentication: ${errorMessage}`,
           },
         ],
       };

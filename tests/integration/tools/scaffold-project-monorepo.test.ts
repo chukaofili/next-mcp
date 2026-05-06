@@ -188,11 +188,13 @@ describe('scaffold_project tool — monorepo:full', () => {
     // Runtime deps that the generated client.ts + prisma.config.ts actually
     // import must be declared on packages/db, not apps/web. Under strict pnpm
     // a workspace package cannot resolve a dep declared only on a sibling.
+    // The client.ts.template is dialect-agnostic now (bare PrismaClient),
+    // so no adapter / driver deps are wired by default.
     expect(dbPkg.dependencies['@prisma/client']).toBeDefined();
-    expect(dbPkg.dependencies['@prisma/adapter-pg']).toBeDefined();
-    expect(dbPkg.dependencies.pg).toBeDefined();
     expect(dbPkg.dependencies.dotenv).toBeDefined();
     expect(dbPkg.devDependencies.prisma).toBeDefined();
+    expect(dbPkg.dependencies['@prisma/adapter-pg']).toBeUndefined();
+    expect(dbPkg.dependencies.pg).toBeUndefined();
 
     // The runtime db deps must not duplicate onto apps/web — apps/web
     // consumes db only via the workspace `@<project>/db: workspace:*` dep

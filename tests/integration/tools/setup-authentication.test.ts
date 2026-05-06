@@ -787,6 +787,103 @@ describe('setup_authentication tool — shadcn-registry install', () => {
     expect(layoutContent).toContain('AuthProvider');
     expect(layoutContent).toContain('<AuthProvider>');
   }, 180000);
+
+  it('returns isError + skips registry-dependent writes when shadcn registry install fails', async () => {
+    // Codex flagged that a failing `shadcn add` left the project in a
+    // broken state while still reporting success: the tool emitted
+    // `auth-ui-provider.tsx`, the dynamic auth/account pages, and the
+    // user-button shim, all of which import `@/components/auth/*`
+    // modules that the failed registry install never created.
+    //
+    // The fix moves the registry install BEFORE those writes and
+    // surfaces a hard MCP error (isError:true) when the install fails.
+    // This test exercises the failure path by injecting
+    // NEXT_MCP_FAIL_COMMANDS so the recorded shadcn calls return
+    // success:false; we then assert (a) the response is an MCP error
+    // and (b) the registry-dependent files were not written.
+    const projectName = 'shadcn-registry-fail';
+    const projectPath = path.join(tempDir, projectName);
+    const appPath = path.join(projectPath, 'apps', 'web');
+
+    const scaffoldConfig = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        packageManager: 'pnpm',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+    expect(scaffolder.isSuccess(await scaffolder.callTool('scaffold_project', { config: scaffoldConfig, targetPath: tempDir }))).toBe(true);
+
+    // Spin up a dedicated recorder client with the failure-injection env
+    // var set so any execCommand whose label contains "better-auth-ui"
+    // returns success:false.
+    const failingRecorder = new MCPTestClient();
+    await failingRecorder.connect(serverPath, {
+      NEXT_MCP_RECORD_COMMANDS: recordPath,
+      NEXT_MCP_FAIL_COMMANDS: 'better-auth-ui',
+    });
+    try {
+      await fs.writeFile(recordPath, '');
+      const authConfig = createMockConfig({
+        name: projectName,
+        architecture: {
+          monorepo: 'full',
+          packageManager: 'pnpm',
+          database: 'postgres',
+          orm: 'prisma',
+          auth: 'better-auth',
+          uiLibrary: 'none',
+          testing: 'none',
+          skipInstall: false,
+        },
+      });
+      const result = (await failingRecorder.callTool('setup_authentication', {
+        config: authConfig,
+        projectPath,
+      })) as { isError?: boolean; content?: Array<{ type?: string; text?: string }> };
+
+      // The tool returns an MCP error response, not a success-with-text
+      // result. The cross-path isFailure helper picks this up via the
+      // protocol flag.
+      expect(result.isError).toBe(true);
+      expect(failingRecorder.isFailure(result)).toBe(true);
+
+      // The error text names the failed registry calls AND includes the
+      // manual recovery commands — same shape the skipInstall message
+      // uses.
+      const text = result.content?.[0]?.text ?? '';
+      expect(text).toContain('Failed to install');
+      expect(text).toContain('better-auth-ui auth registry');
+      expect(text).toContain('pnpm dlx shadcn@latest add');
+      expect(text).toContain('Manual recovery');
+
+      // Registry-dependent files were NOT written — emitting them
+      // against a failed install would have left unresolvable imports.
+      expect(await fileExists(path.join(appPath, 'src', 'providers', 'auth-ui-provider.tsx'))).toBe(false);
+      expect(await fileExists(path.join(appPath, 'src', 'app', 'auth', '[path]', 'page.tsx'))).toBe(false);
+      expect(await fileExists(path.join(appPath, 'src', 'app', 'account', '[path]', 'page.tsx'))).toBe(false);
+      expect(await fileExists(path.join(appPath, 'src', 'components', 'auth', 'user-button.tsx'))).toBe(false);
+
+      // The headless layer (server config, route handler, proxy) IS on
+      // disk — it has no registry dependency, so partial success is
+      // safe to keep.
+      expect(await fileExists(path.join(projectPath, 'packages', 'auth', 'src', 'server.ts'))).toBe(true);
+      expect(await fileExists(path.join(appPath, 'src', 'app', 'api', 'auth', '[...all]', 'route.ts'))).toBe(true);
+      expect(await fileExists(path.join(appPath, 'src', 'proxy.ts'))).toBe(true);
+
+      // Layout was NOT patched — the AuthProvider import would not resolve.
+      const layoutContent = await fs.readFile(path.join(appPath, 'src', 'app', 'layout.tsx'), 'utf-8');
+      expect(layoutContent).not.toContain('AuthProvider');
+    } finally {
+      await failingRecorder.disconnect();
+    }
+  }, 180000);
 });
 
 describe('setup_authentication tool — skipInstall split', () => {

@@ -123,15 +123,13 @@ describe('setup_database tool', () => {
   });
 
   it('should handle SQLite', async () => {
-    // Prisma is postgres-only in ORM_DATABASE_COMPATIBILITY — sqlite pairs
-    // with drizzle (or direct driver) instead.
     const projectName = `sqlite-setup-test_${Date.now()}`;
     const projectPath = path.join(tempDir, projectName);
     const config = createMockConfig({
       name: projectName,
       architecture: {
         database: 'sqlite',
-        orm: 'drizzle',
+        orm: 'prisma',
       },
     });
 
@@ -144,7 +142,7 @@ describe('setup_database tool', () => {
     const text = client.getTextContent(result);
     expect(text).toBeDefined();
     expect(text).toContain('Database setup completed successfully');
-    expect(text).toContain('ORM: drizzle');
+    expect(text).toContain('ORM: prisma');
   });
 });
 
