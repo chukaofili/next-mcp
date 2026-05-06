@@ -91,16 +91,36 @@ describe('ProjectConfigSchema cross-field refines', () => {
       }
     });
 
+    it('accepts orm:prisma with each of postgres/mysql/sqlite/mongodb', () => {
+      // Symmetric to the drizzle happy-path loop above. Catches an accidental
+      // future drop of any of prisma's compat dbs from
+      // ORM_DATABASE_COMPATIBILITY.prisma.
+      for (const database of ['postgres', 'mysql', 'sqlite', 'mongodb'] as const) {
+        expect(() =>
+          ProjectConfigSchema.parse({
+            architecture: { orm: 'prisma', database },
+          })
+        ).not.toThrow();
+      }
+    });
+
     it('rejects any non-none ORM combined with database:none', () => {
       // Implicit rule: if you opted into an ORM, you must point it at a
       // database. Falls out of ORM_DATABASE_COMPATIBILITY (no non-`none` ORM
-      // lists `none` as a valid database).
+      // lists `none` as a valid database). Pin the message format so a
+      // future refactor can't reduce it to a bare ZodError without naming
+      // the bad fields and listing valid alternatives.
       for (const orm of ['prisma', 'drizzle', 'mongoose'] as const) {
         expect(() =>
           ProjectConfigSchema.parse({
             architecture: { orm, database: 'none', auth: 'none' },
           })
         ).toThrow(ZodError);
+        expect(() =>
+          ProjectConfigSchema.parse({
+            architecture: { orm, database: 'none', auth: 'none' },
+          })
+        ).toThrow(new RegExp(`Valid databases for ${orm}`));
       }
     });
 
