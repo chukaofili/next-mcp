@@ -1,3 +1,3 @@
 # Claude Code
 
-See [AGENTS.md](./AGENTS.md) — the canonical orientation doc for agents working in this repo.
+[AGENTS.md](./AGENTS.md) is the source of truth for working in this repo. Read it before any non-trivial change.
