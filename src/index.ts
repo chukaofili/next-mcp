@@ -286,18 +286,18 @@ export function getPrismaOutputArg(config: ProjectConfig): string {
  * - `full + orm:none`: falls back to the app path (no `packages/db` exists)
  */
 export function getPrismaGeneratedIgnorePath(config: ProjectConfig): string {
-  // Use a synthetic root anchor so we get a relative POSIX path regardless of
-  // the caller's actual `projectPath` separators or location.
-  const projectRoot = '.';
+  // Build a relative POSIX path. The base dir is anchored so the returned
+  // string is stable on Windows hosts (Docker reads forward-slash paths
+  // regardless of the host OS).
   const dbBaseDir = shouldRouteToDbPackage(config)
-    ? path.posix.join(projectRoot, 'packages/db')
+    ? 'packages/db'
     : config.architecture.monorepo === 'none'
-      ? projectRoot
-      : path.posix.join(projectRoot, 'apps/web');
+      ? '.'
+      : 'apps/web';
   const dbSrcDir = shouldRouteToDbPackage(config)
     ? path.posix.join(dbBaseDir, 'src')
     : path.posix.join(dbBaseDir, 'src/lib/db');
-  return path.posix.relative(projectRoot, path.posix.join(dbSrcDir, '.prisma'));
+  return path.posix.join(dbSrcDir, '.prisma');
 }
 
 /**
@@ -553,6 +553,11 @@ export function substituteMigrateDockerfilePlaceholders(
   } else {
     // Flat mode: keep the legacy targeted COPY pattern. `prisma.config.ts*`
     // glob handles the case where the file doesn't exist.
+    //
+    // Note: `pnpm-workspace.yaml*` is a no-op glob in flat mode (the file is
+    // never emitted there) and remains for any PM. We keep the line — rather
+    // than gate it on `pm === 'pnpm'` — so the COPY shape stays uniform
+    // across PMs; the `*` makes it a safe match-zero on disk.
     migrateCopy = [
       `COPY package.json ${lockfile}* pnpm-workspace.yaml* ./`,
       `COPY ${schemaHostPath} ./${schemaHostPath}`,
@@ -835,13 +840,14 @@ export async function wireAppsWebToWorkspacePackage(
     );
   }
 
-  let resolvedName: string;
+  // Parse the package.json. Read+parse failures are a single error class
+  // (corrupt-or-unreadable). The "missing name field" check is intentionally
+  // hoisted out of the try/catch so its error message stands alone — the
+  // file *was* read fine, it just had no usable `name`. Wrapping that case
+  // in a "failed to read" lead clause was misleading.
+  let pkg: { name?: unknown };
   try {
-    const pkg = JSON.parse(await fs.readFile(pkgJsonPath, 'utf-8'));
-    if (typeof pkg.name !== 'string' || pkg.name.length === 0) {
-      throw new Error(`packages/${packageDir}/package.json has no usable "name" field`);
-    }
-    resolvedName = pkg.name;
+    pkg = JSON.parse(await fs.readFile(pkgJsonPath, 'utf-8'));
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     throw new Error(
@@ -849,6 +855,12 @@ export async function wireAppsWebToWorkspacePackage(
         `(upstream emitter should have produced it). ${hint} Underlying error: ${reason}`
     );
   }
+  if (typeof pkg.name !== 'string' || pkg.name.length === 0) {
+    throw new Error(
+      `wireAppsWebToWorkspacePackage: packages/${packageDir}/package.json has no usable "name" field. ${hint}`
+    );
+  }
+  const resolvedName: string = pkg.name;
 
   // 2. Append the workspace dep to apps/web/package.json. If apps/web has
   //    not been scaffolded yet (the file is missing) this is a silent
@@ -1835,13 +1847,13 @@ class NextMCPServer {
 
       // Replace template placeholders
       const dockerCompose = dockerComposeTemplate
-        .replace('__DATABASE_DEPENDS_ON__', databaseDependsOn)
-        .replace('__DATABASE_SERVICE__', databaseService)
-        .replace('__MIGRATE_SERVICE__', migrateService)
-        .replace('__VOLUMES_SECTION__', volumesSection)
-        .replace('__DATABASE_ENV__', databaseEnv)
-        .replace('__PRISMA_COMMAND__', prismaCommand)
-        .replace('__PRISMA_VOLUMES__', prismaVolumes);
+        .replaceAll('__DATABASE_DEPENDS_ON__', databaseDependsOn)
+        .replaceAll('__DATABASE_SERVICE__', databaseService)
+        .replaceAll('__MIGRATE_SERVICE__', migrateService)
+        .replaceAll('__VOLUMES_SECTION__', volumesSection)
+        .replaceAll('__DATABASE_ENV__', databaseEnv)
+        .replaceAll('__PRISMA_COMMAND__', prismaCommand)
+        .replaceAll('__PRISMA_VOLUMES__', prismaVolumes);
 
       await fs.writeFile(path.join(projectPath, 'Dockerfile'), dockerfileTemplate);
 
@@ -2304,7 +2316,7 @@ export { Button };
 
     const config = importMap[database] || importMap.postgres;
 
-    return template.replace('__IMPORTS__', config.imports).replace('__DIALECT_CORE__', config.dialectCore);
+    return template.replaceAll('__IMPORTS__', config.imports).replaceAll('__DIALECT_CORE__', config.dialectCore);
   }
 
   private generateDrizzleClient(database: string, template: string): string {
@@ -2347,7 +2359,7 @@ import * as schema from './schema';`;
 export const db = drizzle(pool, { schema });`;
     }
 
-    return template.replace('__DRIVER_IMPORT__', driverImport).replace('__CONNECTION_CODE__', connectionCode);
+    return template.replaceAll('__DRIVER_IMPORT__', driverImport).replaceAll('__CONNECTION_CODE__', connectionCode);
   }
 
   private getDrizzleDialect(database: string): string {
@@ -3038,8 +3050,8 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       // src/lib/auth.ts (legacy).
       const authTemplate = await fs.readFile(path.join(__dirname, 'templates/auth/auth.ts.template'), 'utf-8');
       const authContent = authTemplate
-        .replace('__ADAPTER_IMPORT__', adapterImport)
-        .replace('__DATABASE_CONFIG__', databaseConfig);
+        .replaceAll('__ADAPTER_IMPORT__', adapterImport)
+        .replaceAll('__DATABASE_CONFIG__', databaseConfig);
       await fs.writeFile(authPaths.serverPath, authContent);
 
       // Copy auth-client.ts -> client.ts (routed) or src/lib/auth-client.ts
@@ -3055,10 +3067,11 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       // subpaths (`<pkg>/server`, `<pkg>/client`) — the barrel exists for
       // ergonomic import in the package's own internal code.
       if (routedToAuthPkg && authPaths.indexPath) {
-        await fs.writeFile(
-          authPaths.indexPath,
-          `export * from './server';\nexport * from './client';\n`
+        const authIndexTemplate = await fs.readFile(
+          path.join(__dirname, 'templates/auth/index.ts.template'),
+          'utf-8'
         );
+        await fs.writeFile(authPaths.indexPath, authIndexTemplate);
       }
 
       // Resolve the import specifier the templated app-level files should
@@ -3073,7 +3086,7 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       // Step 4: Generate API route. Substitutes the auth-server import so
       // `route.ts` reaches the workspace package in routed mode.
       const routeTemplate = await fs.readFile(path.join(__dirname, 'templates/auth/auth-route.ts.template'), 'utf-8');
-      const routeContent = routeTemplate.replace('__AUTH_SERVER_IMPORT__', authServerImport);
+      const routeContent = routeTemplate.replaceAll('__AUTH_SERVER_IMPORT__', authServerImport);
       await fs.writeFile(path.join(appPath, 'src/app/api/auth/[...all]/route.ts'), routeContent);
 
       // Step 5: Generate AuthUIProvider. Substitutes the auth-client import.
@@ -3081,7 +3094,7 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
         path.join(__dirname, 'templates/auth/auth-ui-provider.tsx.template'),
         'utf-8'
       );
-      const authProviderContent = authProviderTemplate.replace('__AUTH_CLIENT_IMPORT__', authClientImport);
+      const authProviderContent = authProviderTemplate.replaceAll('__AUTH_CLIENT_IMPORT__', authClientImport);
       await fs.writeFile(path.join(appPath, 'src/providers/auth-ui-provider.tsx'), authProviderContent);
 
       // Step 6: Generate dynamic auth pages & layout
@@ -3162,10 +3175,14 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
           'better-auth-ui settings/user-button registry'
         );
 
-        registryInstallSummary =
-          authRegistryResult.success && settingsAndButtonResult.success
-            ? 'Installed better-auth-ui shadcn-registry components in apps/web'
-            : 'Failed to install one or more better-auth-ui shadcn-registry components — see logs';
+        if (authRegistryResult.success && settingsAndButtonResult.success) {
+          registryInstallSummary = 'Installed better-auth-ui shadcn-registry components in apps/web';
+        } else {
+          const failed: string[] = [];
+          if (!authRegistryResult.success) failed.push('better-auth-ui auth registry');
+          if (!settingsAndButtonResult.success) failed.push('better-auth-ui settings/user-button registry');
+          registryInstallSummary = `Failed to install: ${failed.join(', ')} — see logs for details`;
+        }
         logger.info(registryInstallSummary);
       } else {
         registryInstallSummary =
@@ -3198,7 +3215,7 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
         }
       }
 
-      // Step 12: Generate success message with instructions
+      // Step 13: Generate success message with instructions
       let nextSteps = '';
 
       if (database === 'mongodb') {
@@ -4182,6 +4199,10 @@ ${architecture.testing !== 'none' ? `${pm} test               # Run tests\n` : '
     }
 
     // Pitfalls / gotchas — only the ones that apply to this config.
+    // Hoist shared derivations used across the ORM-specific schema-change
+    // pitfalls so we don't recompute them per-branch.
+    const dbPackageCd = hasDbPackage ? 'cd packages/db && ' : '';
+    const pmExec = pm === 'npm' ? 'npx' : `${pm} exec`;
     const pitfallLines: string[] = [];
     if (isMonorepo && architecture.orm === 'prisma' && architecture.database !== 'none') {
       pitfallLines.push(
@@ -4194,17 +4215,13 @@ ${architecture.testing !== 'none' ? `${pm} test               # Run tests\n` : '
       );
     }
     if (architecture.orm === 'prisma' && architecture.database !== 'none') {
-      const cd = hasDbPackage ? 'cd packages/db && ' : '';
-      const exec = pm === 'npm' ? 'npx' : `${pm} exec`;
       pitfallLines.push(
-        `- **Schema changes.** After editing the Prisma schema, regenerate the client: \`${cd}${exec} prisma generate\`.`
+        `- **Schema changes.** After editing the Prisma schema, regenerate the client: \`${dbPackageCd}${pmExec} prisma generate\`.`
       );
     }
     if (architecture.orm === 'drizzle' && architecture.database !== 'none') {
-      const cd = hasDbPackage ? 'cd packages/db && ' : '';
-      const exec = pm === 'npm' ? 'npx' : `${pm} exec`;
       pitfallLines.push(
-        `- **Schema changes.** After editing the Drizzle schema, regenerate migrations: \`${cd}${exec} drizzle-kit generate\`.`
+        `- **Schema changes.** After editing the Drizzle schema, regenerate migrations: \`${dbPackageCd}${pmExec} drizzle-kit generate\`.`
       );
     }
 
@@ -4231,9 +4248,12 @@ Tests run with \`${pm} test\`${architecture.testing === 'vitest' ? ' (Vitest)' :
     sections.push('');
     sections.push(`## Project overview`);
     sections.push('');
-    sections.push(
-      `${config.description || `${config.name} is a Next.js application.`} Stack: ${stackBits.join(', ')}.`
-    );
+    // Append trailing punctuation to the user-supplied description if it's
+    // missing one, so the overview doesn't read as a run-on into the Stack
+    // sentence (e.g. "Foo bar Stack: ...").
+    const descriptionRaw = config.description || `${config.name} is a Next.js application.`;
+    const description = /[.!?]$/.test(descriptionRaw) ? descriptionRaw : `${descriptionRaw}.`;
+    sections.push(`${description} Stack: ${stackBits.join(', ')}.`);
 
     if (workspaceLayout) sections.push(workspaceLayout);
     sections.push(commandsBlock);

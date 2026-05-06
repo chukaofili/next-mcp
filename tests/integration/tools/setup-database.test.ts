@@ -619,7 +619,7 @@ describe('setup_database tool — monorepo:full', () => {
     expect(appPkg.dependencies?.[`@${projectName}/db`]).toBe('workspace:*');
   }, 180000);
 
-  it('import-rewrite is a no-op when apps/web has no @/lib/db imports', async () => {
+  it('does not rewrite imports when apps/web has no @/lib/db imports', async () => {
     const projectName = 'full-db-noop-rewrite';
     const projectPath = path.join(tempDir, projectName);
     const config = createMockConfig({

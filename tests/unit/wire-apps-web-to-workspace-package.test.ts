@@ -106,8 +106,12 @@ describe('wireAppsWebToWorkspacePackage', () => {
     await seed({ packageDir: 'db', pkgJson: {} /* no name */ });
 
     const hint = 'Did setup_database run before scaffold_project?';
+    // The message must lead with `wireAppsWebToWorkspacePackage:` and the
+    // missing-name diagnosis directly — NOT wrap it in a misleading
+    // "failed to read" lead clause (the file was read fine, it just had
+    // no usable `name`). The hint must trail.
     await expect(wireAppsWebToWorkspacePackage(tempDir, 'db', hint)).rejects.toThrow(
-      /no usable "name" field[\s\S]*Did setup_database run before scaffold_project\?|Did setup_database run before scaffold_project\?[\s\S]*no usable "name" field/
+      /^wireAppsWebToWorkspacePackage: packages\/db\/package\.json has no usable "name" field\. Did setup_database run before scaffold_project\?$/
     );
   });
 

@@ -290,8 +290,8 @@ describe('setup_authentication tool — monorepo:full', () => {
       path.join(appPath, 'src', 'providers', 'auth-ui-provider.tsx'),
       'utf-8'
     );
-    expect(providerContent).toContain(`from "@${projectName}/auth/client"`);
-    expect(providerContent).not.toContain('from "@/lib/auth-client"');
+    expect(providerContent).toContain(`from '@${projectName}/auth/client'`);
+    expect(providerContent).not.toContain("from '@/lib/auth-client'");
 
     // The success message reflects the routed layout — it mentions
     // `packages/auth/src/server.ts` and the workspace import specifier.

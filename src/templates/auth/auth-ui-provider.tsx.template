@@ -1,9 +1,9 @@
-"use client";
+'use client';
 
-import { AuthProvider as BetterAuthUIProvider } from "@/components/auth/auth-provider";
-import { authClient } from "__AUTH_CLIENT_IMPORT__";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { AuthProvider as BetterAuthUIProvider } from '@/components/auth/auth-provider';
+import { authClient } from '__AUTH_CLIENT_IMPORT__';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 /**
  * Project-specific wrapper around the shadcn-registry-installed AuthProvider
