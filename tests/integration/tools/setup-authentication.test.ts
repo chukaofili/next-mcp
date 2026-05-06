@@ -189,9 +189,17 @@ describe('setup_authentication tool — monorepo:minimal', () => {
     // packages/auth is NOT used in minimal mode (Group D doesn't emit it).
     expect(await fileExists(path.join(projectPath, 'packages', 'auth', 'src', 'server.ts'))).toBe(false);
 
-    // Route/component-level files also live in apps/web.
+    // Route + proxy (headless) live in apps/web. The registry-dependent
+    // presentation layer (auth-ui-provider, dynamic pages, user-button) is
+    // NOT emitted under `skipInstall: true` because the imports it relies
+    // on (`@/components/auth/...`) are only created by the `shadcn add`
+    // calls that this branch skips.
     expect(await fileExists(path.join(appPath, 'src', 'app', 'api', 'auth', '[...all]', 'route.ts'))).toBe(true);
-    expect(await fileExists(path.join(appPath, 'src', 'providers', 'auth-ui-provider.tsx'))).toBe(true);
+    expect(await fileExists(path.join(appPath, 'src', 'proxy.ts'))).toBe(true);
+    expect(await fileExists(path.join(appPath, 'src', 'providers', 'auth-ui-provider.tsx'))).toBe(false);
+    expect(await fileExists(path.join(appPath, 'src', 'app', 'auth', '[path]', 'page.tsx'))).toBe(false);
+    expect(await fileExists(path.join(appPath, 'src', 'app', 'account', '[path]', 'page.tsx'))).toBe(false);
+    expect(await fileExists(path.join(appPath, 'src', 'components', 'auth', 'user-button.tsx'))).toBe(false);
 
     // The auth-server import in legacy mode resolves to the local `@/lib/auth`.
     const routeContent = await fs.readFile(
@@ -210,6 +218,12 @@ describe('setup_authentication tool — monorepo:minimal', () => {
     expect(proxyContent).not.toContain('__BETTER_AUTH_COOKIES_IMPORT__');
     const appPkg = JSON.parse(await fs.readFile(path.join(appPath, 'package.json'), 'utf-8'));
     expect(appPkg.dependencies?.['better-auth']).toBeDefined();
+
+    // The layout AuthProvider injection is also gated (it imports the
+    // registry-dependent provider), so the as-shipped layout still has
+    // {children} unwrapped under `skipInstall`.
+    const layoutContent = await fs.readFile(path.join(appPath, 'src', 'app', 'layout.tsx'), 'utf-8');
+    expect(layoutContent).not.toContain('AuthProvider');
 
     // Adapter import in auth.ts uses the legacy `@/lib/db` alias because db
     // is NOT routed to packages/db in minimal mode.
@@ -267,9 +281,19 @@ describe('setup_authentication tool — monorepo:full', () => {
     expect(await fileExists(path.join(appPath, 'src', 'lib', 'auth.ts'))).toBe(false);
     expect(await fileExists(path.join(appPath, 'src', 'lib', 'auth-client.ts'))).toBe(false);
 
-    // Route/component-level files still live in apps/web.
+    // Headless route + proxy live in apps/web. Under `skipInstall: true`
+    // the registry-dependent presentation layer (AuthUIProvider, dynamic
+    // route pages, user-button shim, layout AuthProvider injection) is
+    // intentionally not emitted — its imports only resolve after the
+    // skipped `shadcn add` calls run.
     expect(await fileExists(path.join(appPath, 'src', 'app', 'api', 'auth', '[...all]', 'route.ts'))).toBe(true);
-    expect(await fileExists(path.join(appPath, 'src', 'providers', 'auth-ui-provider.tsx'))).toBe(true);
+    expect(await fileExists(path.join(appPath, 'src', 'proxy.ts'))).toBe(true);
+    expect(await fileExists(path.join(appPath, 'src', 'providers', 'auth-ui-provider.tsx'))).toBe(false);
+    expect(await fileExists(path.join(appPath, 'src', 'app', 'auth', '[path]', 'page.tsx'))).toBe(false);
+    expect(await fileExists(path.join(appPath, 'src', 'app', 'account', '[path]', 'page.tsx'))).toBe(false);
+    expect(await fileExists(path.join(appPath, 'src', 'components', 'auth', 'user-button.tsx'))).toBe(false);
+    const layoutContent = await fs.readFile(path.join(appPath, 'src', 'app', 'layout.tsx'), 'utf-8');
+    expect(layoutContent).not.toContain('AuthProvider');
 
     // apps/web/package.json contains the workspace dep on `@<name>/auth`.
     const appPkg = JSON.parse(await fs.readFile(path.join(appPath, 'package.json'), 'utf-8'));
@@ -294,14 +318,6 @@ describe('setup_authentication tool — monorepo:full', () => {
     );
     expect(routeContent).toContain(`from '@${projectName}/auth/server'`);
     expect(routeContent).not.toContain("from '@/lib/auth'");
-
-    // The AuthUIProvider imports authClient from the workspace subpath.
-    const providerContent = await fs.readFile(
-      path.join(appPath, 'src', 'providers', 'auth-ui-provider.tsx'),
-      'utf-8'
-    );
-    expect(providerContent).toContain(`from '@${projectName}/auth/client'`);
-    expect(providerContent).not.toContain("from '@/lib/auth-client'");
 
     // route.ts and proxy.ts route their better-auth helper imports through
     // `@<name>/auth/exports` so apps/web doesn't have to declare a direct
@@ -751,7 +767,149 @@ describe('setup_authentication tool — shadcn-registry install', () => {
     // Success message reflects the install ran (not the skipInstall message).
     const text = recorder.getTextContent(result) ?? '';
     expect(text).not.toContain('Skipped better-auth-ui shadcn-registry installation');
+
+    // Under `skipInstall: false`, the registry-dependent presentation layer
+    // (provider, dynamic auth/account pages, user-button shim) IS emitted —
+    // the imports it produces resolve to the components added by the
+    // (recorded) shadcn calls above. This is the positive complement to
+    // the `skipInstall: true` tests that assert these files are absent.
+    expect(await fileExists(path.join(appPath, 'src', 'providers', 'auth-ui-provider.tsx'))).toBe(true);
+    expect(await fileExists(path.join(appPath, 'src', 'app', 'auth', '[path]', 'page.tsx'))).toBe(true);
+    expect(await fileExists(path.join(appPath, 'src', 'app', 'account', '[path]', 'page.tsx'))).toBe(true);
+    expect(await fileExists(path.join(appPath, 'src', 'components', 'auth', 'user-button.tsx'))).toBe(true);
+
+    // Layout was patched to wrap children in <AuthProvider>.
+    const layoutContent = await fs.readFile(path.join(appPath, 'src', 'app', 'layout.tsx'), 'utf-8');
+    expect(layoutContent).toContain('AuthProvider');
+    expect(layoutContent).toContain('<AuthProvider>');
   }, 180000);
+});
+
+describe('setup_authentication tool — skipInstall split', () => {
+  let client: MCPTestClient;
+  let tempDir: string;
+  const serverPath = path.join(__dirname, '../../../dist/index.js');
+
+  beforeAll(async () => {
+    client = new MCPTestClient();
+    await client.connect(serverPath);
+    tempDir = await createTempDir();
+  }, 30000);
+
+  afterAll(async () => {
+    await client.disconnect();
+    await cleanupTempDir(tempDir);
+  });
+
+  it('skipInstall: true success message lists the manual follow-up (install + shadcn add URLs + re-run)', async () => {
+    // Codex flagged that under `skipInstall: true`, setup_authentication used
+    // to write templates that imported registry-generated modules (e.g.
+    // `@/components/auth/auth-provider`) without ever creating those modules,
+    // leaving the project uncompilable. The fix splits the writes:
+    //   - headless layer (server, client, route, proxy, barrel) is always emitted
+    //   - registry-dependent layer (provider, dynamic pages, user-button,
+    //     layout AuthProvider injection) is gated on `!skipInstall`
+    // and the success message must surface the exact follow-up steps the user
+    // needs to run to bring the project to a fully-configured state. This
+    // test guards the message contract.
+    const projectName = 'skip-install-followup';
+    const projectPath = path.join(tempDir, projectName);
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        packageManager: 'pnpm',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const result = await client.callTool('setup_authentication', { config, projectPath });
+    expect(client.isSuccess(result)).toBe(true);
+
+    const text = client.getTextContent(result) ?? '';
+    // Mentions skipInstall as the cause and explains what was skipped.
+    expect(text).toContain('skipInstall: true');
+    expect(text).toContain('UI registry components');
+    // Enumerates the three follow-up commands explicitly.
+    expect(text).toContain('pnpm install');
+    expect(text).toContain('pnpm dlx shadcn@latest add https://better-auth-ui.com/r/auth.json');
+    expect(text).toContain('pnpm dlx shadcn@latest add https://better-auth-ui.com/r/settings.json');
+    expect(text).toContain('https://better-auth-ui.com/r/user-button.json');
+    // Tells the user to re-run with skipInstall: false to finish the setup.
+    expect(text).toContain('re-run');
+    expect(text).toContain('setup_authentication');
+
+    // Generated-files list reflects what was actually written: the headless
+    // files appear, the registry-dependent ones must not (or the message
+    // would lie about scaffolding).
+    expect(text).toContain('packages/auth/src/server.ts');
+    expect(text).toContain('apps/web/src/app/api/auth/[...all]/route.ts');
+    expect(text).toContain('apps/web/src/proxy.ts');
+    expect(text).not.toContain('apps/web/src/providers/auth-ui-provider.tsx');
+    expect(text).not.toContain('apps/web/src/app/auth/[path]/page.tsx');
+    expect(text).not.toContain('apps/web/src/components/auth/user-button.tsx');
+
+    // Quick-start hint is suppressed (UserButton component does not exist
+    // yet, so telling the user to import it would be misleading).
+    expect(text).not.toContain('import { UserButton }');
+  }, 120000);
+
+  it('flat mode under skipInstall also splits headless vs registry-dependent files', async () => {
+    // Same contract as the routed-mode test above, but for `monorepo: 'none'`
+    // — exercises the second call site (paths under `<projectRoot>/src/...`
+    // instead of `apps/web/src/...`).
+    const projectName = 'skip-install-flat';
+    const projectPath = path.join(tempDir, projectName);
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'none',
+        packageManager: 'pnpm',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const scaffold = await client.callTool('scaffold_project', { config, targetPath: tempDir });
+    expect(client.isSuccess(scaffold)).toBe(true);
+
+    const result = await client.callTool('setup_authentication', { config, projectPath });
+    expect(client.isSuccess(result)).toBe(true);
+
+    // Headless files exist at the flat layout.
+    expect(await fileExists(path.join(projectPath, 'src', 'lib', 'auth.ts'))).toBe(true);
+    expect(await fileExists(path.join(projectPath, 'src', 'lib', 'auth-client.ts'))).toBe(true);
+    expect(await fileExists(path.join(projectPath, 'src', 'app', 'api', 'auth', '[...all]', 'route.ts'))).toBe(true);
+    expect(await fileExists(path.join(projectPath, 'src', 'proxy.ts'))).toBe(true);
+
+    // Registry-dependent files are NOT written.
+    expect(await fileExists(path.join(projectPath, 'src', 'providers', 'auth-ui-provider.tsx'))).toBe(false);
+    expect(await fileExists(path.join(projectPath, 'src', 'app', 'auth', '[path]', 'page.tsx'))).toBe(false);
+    expect(await fileExists(path.join(projectPath, 'src', 'app', 'account', '[path]', 'page.tsx'))).toBe(false);
+    expect(await fileExists(path.join(projectPath, 'src', 'components', 'auth', 'user-button.tsx'))).toBe(false);
+
+    // Layout was NOT patched (the AuthProvider import would be unresolvable).
+    const layoutContent = await fs.readFile(path.join(projectPath, 'src', 'app', 'layout.tsx'), 'utf-8');
+    expect(layoutContent).not.toContain('AuthProvider');
+
+    // The follow-up message points at the project root cwd (not apps/web)
+    // because that's where shadcn add must run in flat mode.
+    const text = client.getTextContent(result) ?? '';
+    expect(text).toContain('the project root');
+    expect(text).not.toContain('run from apps/web');
+  }, 120000);
 });
 
 describe('auth:generate root script', () => {

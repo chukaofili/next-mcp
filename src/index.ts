@@ -3450,19 +3450,9 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
         .replaceAll('__BETTER_AUTH_NEXTJS_IMPORT__', betterAuthNextJsImport);
       await fs.writeFile(path.join(appPath, 'src/app/api/auth/[...all]/route.ts'), routeContent);
 
-      // Step 5: Generate AuthUIProvider. Substitutes the auth-client import.
-      const authProviderTemplate = await fs.readFile(
-        path.join(__dirname, 'templates/auth/auth-ui-provider.tsx.template'),
-        'utf-8'
-      );
-      const authProviderContent = authProviderTemplate.replaceAll('__AUTH_CLIENT_IMPORT__', authClientImport);
-      await fs.writeFile(path.join(appPath, 'src/providers/auth-ui-provider.tsx'), authProviderContent);
-
-      // Step 6: Generate dynamic auth pages & layout
-      // Step 7: Generate dynamic account pages
-      // Step 8: Generate UserButton component
-      // Step 8.5: Generate proxy.ts (uses better-auth/cookies, routed via
-      // `@<project>/auth/exports` in routed mode).
+      // Step 4.5: Generate proxy.ts (headless — only depends on
+      // better-auth/cookies via the routed/upstream import). Always emit
+      // regardless of skipInstall.
       const proxyTemplate = await fs.readFile(
         path.join(__dirname, 'templates/auth/proxy.ts.template'),
         'utf-8'
@@ -3473,40 +3463,71 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       );
       await fs.writeFile(path.join(appPath, 'src/proxy.ts'), proxyContent);
 
-      const templateMappings = [
-        {
-          template: path.join('auth', 'auth-page.tsx.template'),
-          destination: path.join('src', 'app', 'auth', '[path]', 'page.tsx'),
-        },
-        {
-          template: path.join('auth', 'account-page.tsx.template'),
-          destination: path.join('src', 'app', 'account', '[path]', 'page.tsx'),
-        },
-        {
-          template: path.join('auth', 'user-button.tsx.template'),
-          destination: path.join('src', 'components', 'auth', 'user-button.tsx'),
-        },
-      ];
+      // Steps 5-9 below emit the *registry-dependent* presentation layer:
+      // auth-ui-provider.tsx, the dynamic auth/account route pages, the
+      // user-button shim, and the root-layout AuthProvider injection. Each
+      // of those files imports a module that is only created by the
+      // `shadcn add` calls in Step 11 (`@/components/auth/auth-provider`,
+      // `@/components/auth/auth`, `@/components/auth/settings/settings`,
+      // `@/components/auth/user/user-button`). Under `skipInstall: true`
+      // we deliberately skip Step 11, so writing the importing files would
+      // produce an uncompilable project. Gate them on the same flag and
+      // surface the manual follow-up in the success message instead.
+      const writeRegistryDependentLayer = !config.architecture.skipInstall;
 
-      await Promise.all(
-        templateMappings.map(async ({ template, destination }) => {
-          const content = await fs.readFile(path.join(__dirname, 'templates', template), 'utf-8');
-          await fs.writeFile(path.join(appPath, destination), content);
-        })
-      );
+      if (writeRegistryDependentLayer) {
+        // Step 5: Generate AuthUIProvider. Substitutes the auth-client import.
+        const authProviderTemplate = await fs.readFile(
+          path.join(__dirname, 'templates/auth/auth-ui-provider.tsx.template'),
+          'utf-8'
+        );
+        const authProviderContent = authProviderTemplate.replaceAll(
+          '__AUTH_CLIENT_IMPORT__',
+          authClientImport
+        );
+        await fs.writeFile(
+          path.join(appPath, 'src/providers/auth-ui-provider.tsx'),
+          authProviderContent
+        );
 
-      // Step 9: Update root layout to include AuthProvider
-      const layoutPath = path.join(appPath, 'src/app/layout.tsx');
-      let layoutContent = await fs.readFile(layoutPath, 'utf-8');
+        // Step 6: Generate dynamic auth pages & layout
+        // Step 7: Generate dynamic account pages
+        // Step 8: Generate UserButton component
+        const templateMappings = [
+          {
+            template: path.join('auth', 'auth-page.tsx.template'),
+            destination: path.join('src', 'app', 'auth', '[path]', 'page.tsx'),
+          },
+          {
+            template: path.join('auth', 'account-page.tsx.template'),
+            destination: path.join('src', 'app', 'account', '[path]', 'page.tsx'),
+          },
+          {
+            template: path.join('auth', 'user-button.tsx.template'),
+            destination: path.join('src', 'components', 'auth', 'user-button.tsx'),
+          },
+        ];
 
-      if (!layoutContent.includes('AuthProvider')) {
-        // Add import at the top
-        const importStatement = `import { AuthProvider } from "@/providers/auth-ui-provider";\n`;
-        layoutContent = layoutContent.replace(/^(import.*\n)*/, (match) => match + importStatement);
+        await Promise.all(
+          templateMappings.map(async ({ template, destination }) => {
+            const content = await fs.readFile(path.join(__dirname, 'templates', template), 'utf-8');
+            await fs.writeFile(path.join(appPath, destination), content);
+          })
+        );
 
-        // Wrap {children} with <AuthProvider>{children}</AuthProvider>
-        layoutContent = layoutContent.replace(/\{children\}/, '<AuthProvider>{children}</AuthProvider>');
-        await fs.writeFile(layoutPath, layoutContent);
+        // Step 9: Update root layout to include AuthProvider
+        const layoutPath = path.join(appPath, 'src/app/layout.tsx');
+        let layoutContent = await fs.readFile(layoutPath, 'utf-8');
+
+        if (!layoutContent.includes('AuthProvider')) {
+          // Add import at the top
+          const importStatement = `import { AuthProvider } from "@/providers/auth-ui-provider";\n`;
+          layoutContent = layoutContent.replace(/^(import.*\n)*/, (match) => match + importStatement);
+
+          // Wrap {children} with <AuthProvider>{children}</AuthProvider>
+          layoutContent = layoutContent.replace(/\{children\}/, '<AuthProvider>{children}</AuthProvider>');
+          await fs.writeFile(layoutPath, layoutContent);
+        }
       }
 
       // Step 10: Wire `apps/web` to the `packages/auth` workspace package and
@@ -3554,8 +3575,24 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
         }
         logger.info(registryInstallSummary);
       } else {
-        registryInstallSummary =
-          'Skipped better-auth-ui shadcn-registry installation due to skipInstall flag';
+        // Under `skipInstall`, the registry-install AND the
+        // registry-dependent presentation files (auth-ui-provider, dynamic
+        // auth/account pages, user-button shim, layout AuthProvider
+        // injection) are both skipped to avoid emitting a project with
+        // unresolvable imports. Surface the exact follow-up the user needs
+        // to run to bring the project to a fully-configured state.
+        const runner = getShadcnRunner(config.architecture.packageManager);
+        registryInstallSummary = [
+          '⚠️  skipInstall: true — UI registry components and the route/page',
+          '    presentation layer were not emitted (they import registry-generated',
+          '    modules that only exist after `shadcn add`). To finish the setup,',
+          `    run from ${routedToAuthPkg || config.architecture.monorepo !== 'none' ? 'apps/web' : 'the project root'}:`,
+          `      ${config.architecture.packageManager} install`,
+          `      ${runner} shadcn@latest add https://better-auth-ui.com/r/auth.json -y`,
+          `      ${runner} shadcn@latest add https://better-auth-ui.com/r/settings.json https://better-auth-ui.com/r/user-button.json -y`,
+          '    Then re-run `setup_authentication` (with `skipInstall: false`)',
+          '    to emit the auth/account pages, user-button, and AuthProvider.',
+        ].join('\n');
         logger.info(registryInstallSummary);
       }
 
@@ -3663,6 +3700,51 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
         : '';
       const appPrefix = routedToAuthPkg || config.architecture.monorepo !== 'none' ? 'apps/web/' : '';
 
+      // Generated-files list reflects what was actually written. The
+      // headless layer is always emitted; the registry-dependent layer is
+      // gated on `writeRegistryDependentLayer` above. Listing files we
+      // didn't write would mislead users and break trust in the success
+      // message.
+      const generatedFileLines: string[] = [
+        serverFileLine,
+        clientFileLine,
+      ];
+      if (indexFileLine) generatedFileLines.push(indexFileLine.trimStart());
+      generatedFileLines.push(
+        `- ${appPrefix}src/app/api/auth/[...all]/route.ts (API handler)`,
+        `- ${appPrefix}src/proxy.ts (auth-aware middleware)`
+      );
+      if (writeRegistryDependentLayer) {
+        generatedFileLines.push(
+          `- ${appPrefix}src/providers/auth-ui-provider.tsx (UI provider)`,
+          `- ${appPrefix}src/app/auth/[path]/page.tsx (dynamic auth pages)`,
+          `- ${appPrefix}src/app/account/[path]/page.tsx (account settings)`,
+          `- ${appPrefix}src/components/auth/user-button.tsx (UserButton wrapper)`,
+          `- Updated ${appPrefix}src/app/layout.tsx (AuthProvider wrapper)`
+        );
+      }
+
+      // Quick-start hint only makes sense once the UserButton component
+      // exists on disk (i.e. registry-dependent layer was emitted).
+      const quickStartBlock = writeRegistryDependentLayer
+        ? `\n💡 Quick Start:
+Add the UserButton to your layout/navbar:
+
+import { UserButton } from "@/components/auth/user-button";
+
+export default function Header() {
+  return (
+    <header>
+      <nav>
+        {/* Your navigation */}
+        <UserButton />
+      </nav>
+    </header>
+  );
+}
+`
+        : '';
+
       const instructions = `✅ Better Auth + Better Auth UI has been configured successfully!
 
 ${nextSteps}
@@ -3692,31 +3774,8 @@ ${registryInstallSummary}
 - Ready-to-use UserButton component
 
 📁 Generated Files:
-${serverFileLine}
-${clientFileLine}${indexFileLine}
-- ${appPrefix}src/providers/auth-ui-provider.tsx (UI provider)
-- ${appPrefix}src/app/api/auth/[...all]/route.ts (API handler)
-- ${appPrefix}src/app/auth/[path]/page.tsx (dynamic auth pages)
-- ${appPrefix}src/app/account/[path]/page.tsx (account settings)
-- ${appPrefix}src/components/auth/user-button.tsx (UserButton wrapper)
-- Updated ${appPrefix}src/app/layout.tsx (AuthProvider wrapper)
-
-💡 Quick Start:
-Add the UserButton to your layout/navbar:
-
-import { UserButton } from "@/components/auth/user-button";
-
-export default function Header() {
-  return (
-    <header>
-      <nav>
-        {/* Your navigation */}
-        <UserButton />
-      </nav>
-    </header>
-  );
-}
-`;
+${generatedFileLines.join('\n')}
+${quickStartBlock}`;
 
       logger.info('Authentication setup completed successfully');
       logger.info(instructions);
