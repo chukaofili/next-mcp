@@ -7,10 +7,11 @@
 > `create-next-app` plus the `better-auth-ui` shadcn registry, and
 > several minutes of `pnpm install` + `docker build` time.
 >
-> **Up-to-date as of HEAD `fbe32e5`** — covers Groups A–J, the post-J
-> coverage audit (`0f97cc5`), and Group K (`259eb0b`, Dockerfile.migrate
-> templated for all 4 PMs × 3 monorepo modes). The companion punch list
-> for everything **outside** this smoke lives at
+> **Up-to-date as of HEAD `6475db1`** — covers Groups A–J, the post-J
+> coverage audit, Group K (Dockerfile.migrate templated for all 4 PMs
+> × 3 monorepo modes), Tiers 2-6, OoS-1 (`McpServer` migration), and
+> OoS-2 (Dockerfile.migrate extended to drizzle). The companion punch
+> list for everything **outside** this smoke lives at
 > `docs/plans/2026-05-06-recommended-fixes.md` — Tier 1 there
 > enumerates exactly what this smoke is meant to prove out at runtime.
 
@@ -18,7 +19,7 @@
 
 This smoke test exercises the full `next-mcp` tool surface against a
 real filesystem and a real Docker daemon. The integration suite
-(`tests/integration/tools/*` — currently 14 files / 185 tests) covers
+(`tests/integration/tools/*` — currently 18 files / 230 tests) covers
 each tool in isolation with `skipInstall: true` and stubbed shells,
 so it cannot prove that:
 
@@ -33,9 +34,11 @@ so it cannot prove that:
 - the better-auth-ui shadcn registry components
   (`https://better-auth-ui.com/r/auth.json` etc.) install cleanly in
   `monorepo: full` mode,
-- the templated `Dockerfile.migrate` (Group K, `259eb0b`) actually
-  builds and `docker compose run --rm migrate` succeeds for each
-  monorepo mode × package manager combination.
+- the templated `Dockerfile.migrate` (Group K + OoS-2, gate now
+  `(orm === 'prisma' || orm === 'drizzle') && database !== 'none'`,
+  CMD substituted via `__MIGRATE_CMD__` per ORM) actually builds and
+  `docker compose run --rm migrate` succeeds for each monorepo mode
+  × package manager × ORM combination.
 
 Run this **after all groups (A–J) and Group K (Dockerfile.migrate)
 have landed** and before opening the merge PR. If anything fails,
@@ -222,10 +225,14 @@ A failure here is a blocker — stop, capture it, and file a follow-up.
     flat-mode targeted COPYs of `prisma/` etc.
   - `RUN` line installs the workspace via the PM's frozen-lockfile
     install (e.g. `pnpm install --frozen-lockfile`).
-  - The final `CMD` reads:
-    `["sh", "-c", "<pm-dlx> prisma migrate deploy --schema=./packages/db/prisma/schema.prisma"]`
-    — note the `--schema` flag now points into `packages/db/`, not
-    the legacy `prisma/schema.prisma`.
+  - The final `CMD` is `["sh", "-c", "<__MIGRATE_CMD__>"]` and the
+    substituted command varies per ORM (OoS-2):
+    - prisma: `<pm-dlx> prisma migrate deploy --schema=./packages/db/prisma/schema.prisma`
+      (`monorepo: full`); flat-mode points at `./prisma/schema.prisma`.
+    - drizzle: `<pm-dlx> drizzle-kit migrate --config=./packages/db/drizzle.config.ts`
+      (`monorepo: full`); flat-mode points at `./drizzle.config.ts`.
+    Note `--schema` / `--config` paths now live under `packages/db/`
+    in `monorepo: full`, not at the project root.
   - **No `__SOMETHING__` placeholders remain unsubstituted** — grep
     `Dockerfile.migrate` for `__[A-Z_]+__` and confirm zero matches.
 
@@ -283,9 +290,11 @@ first failure — later steps will compound the diagnosis.
     path is mis-emitted, or `prisma generate` runs in the wrong cwd.
   - Layer caching surprises → not necessarily a bug, just note them.
 
-- **`docker compose run --rm migrate`** (Group K — first end-to-end
-  test of the templated `Dockerfile.migrate`) — should connect to
-  the postgres `db` service and apply migrations. Watch for:
+- **`docker compose run --rm migrate`** (Group K + OoS-2 — first
+  end-to-end test of the templated `Dockerfile.migrate`; the same
+  image now serves both prisma `migrate deploy` and drizzle
+  `drizzle-kit migrate`) — should connect to the database service
+  and apply migrations. Watch for:
   - **Schema-not-found** → the substituted `--schema=...` path
     inside the CMD doesn't match what `COPY . .` actually landed in
     the migrate image. Capture the literal CMD line from
@@ -297,9 +306,13 @@ first failure — later steps will compound the diagnosis.
   - **Slow build** → expected. `COPY . .` plus a full workspace
     install isn't optimised; build performance is documented in the
     recommended-fixes Tier 6 (K's known rough edge).
-  - For the bun + sqlite + drizzle variant: `Dockerfile.migrate`
-    must NOT exist (gating: `orm === 'prisma' && database !==
-    'none'`). Also no `migrate:` service in `docker-compose.yml`.
+  - For the bun + sqlite + drizzle variant (post-OoS-2):
+    `Dockerfile.migrate` MUST exist and `docker-compose.yml` MUST
+    have a `migrate:` service (gate is now
+    `(orm === 'prisma' || orm === 'drizzle') && database !== 'none'`).
+    The substituted CMD is the drizzle form
+    (`<pm-dlx> drizzle-kit migrate --config=...`). Mongoose configs
+    remain excluded from the migrate Dockerfile (no SQL migrations).
 
 ## 6. Companion smokes (light variants)
 
@@ -326,7 +339,8 @@ Run sections 3–5, replacing `pnpm` with `npm` (`npm install`,
 ### Variant B — Full + bun + sqlite + drizzle (no auth, no shadcn)
 
 Catches **bun's different base image** in the Dockerfile and the
-**non-Prisma path** for the migrate-service gating.
+**drizzle migrate path** (drizzle-kit + the per-ORM flat-mode COPY
+introduced by OoS-2).
 
 ```diff
 - "packageManager": "pnpm",
@@ -343,12 +357,14 @@ Catches **bun's different base image** in the Dockerfile and the
 + "rpc": "none",
 ```
 
-Skip `setup_authentication` and `setup_shadcn`. Confirm
-`docker-compose.yml` has no `migrate:` service (gated on prisma) and
-that `Dockerfile.migrate` is **not** emitted at the project root
-(same gate; Group K preserved this behaviour). Also: bun's base
-image in `Dockerfile.monorepo` should be `oven/bun:1-alpine`, not
-`node:24-alpine`.
+Skip `setup_authentication` and `setup_shadcn` (gated on
+`auth: 'none'` and `uiLibrary: 'none'`). Confirm `docker-compose.yml`
+DOES have a `migrate:` service and `Dockerfile.migrate` IS emitted
+at the project root (post-OoS-2 the gate is
+`(prisma || drizzle) && db !== 'none'`). The substituted CMD must
+be the drizzle form (`<pm-dlx> drizzle-kit migrate --config=...`).
+Also: bun's base image in `Dockerfile.monorepo` should be
+`oven/bun:1-alpine`, not `node:24-alpine`.
 
 ### Variant C — Minimal + pnpm (no db, no auth, no shadcn)
 
@@ -393,13 +409,22 @@ differently from `main`, that's a bug.
 
 ## 7. Known limitations / where to capture findings
 
-- **`Dockerfile.migrate` was templated in Group K (`259eb0b`).** It
-  no longer needs the `--schema=...` workaround — the substituter
-  bakes the right schema path into the CMD per monorepo mode. The
-  smoke is the first end-to-end test of this templated output;
+- **`Dockerfile.migrate` was templated in Group K + extended in
+  OoS-2.** Gate is now
+  `(orm === 'prisma' || orm === 'drizzle') && database !== 'none'`;
+  mongoose stays explicitly excluded (schemaless, no SQL migrations).
+  The substituter bakes the right schema/config path into the CMD
+  per monorepo mode and ORM via `__MIGRATE_CMD__`. The smoke is the
+  first end-to-end test of this templated output for both ORMs;
   expect the migrate service to "just work", but file a follow-up
-  if it doesn't (the K commit's known rough edges are listed in
-  `2026-05-06-recommended-fixes.md` Tier 6 → "From K").
+  if it doesn't.
+
+- **Flat-mode drizzle ordering.** The flat-mode migrate Dockerfile
+  emits `COPY drizzle ./drizzle`, which requires
+  `drizzle-kit generate` to have produced the `drizzle/` directory
+  before `docker build` runs. If the directory is absent, the build
+  fails with `COPY ... no such file or directory`. Order the smoke:
+  `drizzle-kit generate` first, then build the migrate image.
 
 - **better-auth CLI integration is untested in CI.** Every existing
   test run uses `skipInstall: true`, so the better-auth CLI never
@@ -423,11 +448,12 @@ differently from `main`, that's a bug.
   + `<pm> build` is a future extension and tracked as the
   remaining gap below.
 
-- **Out-of-scope follow-ups.** For everything else not directly
-  testable by this smoke (Tier 2 tool audits like
-  `generate_base_components` × monorepo, Tier 3 schema refines,
-  Tier 4 helper extractions), see
-  `docs/plans/2026-05-06-recommended-fixes.md`.
+- **Out-of-scope follow-ups.** Tiers 2-6 + OoS-1 + OoS-2 have all
+  shipped; Tier 1 (this manual smoke) is the gating step before
+  merge. Tier 5b (yarn variant) and a `--full` flag for
+  `tools/smoke.ts` are deferred follow-ups tracked in
+  `docs/plans/2026-05-06-recommended-fixes.md`. Tier 7 was
+  explicitly skipped per user direction.
 
 ## 8. Acceptance criteria
 
@@ -438,7 +464,8 @@ The smoke is "green" when:
 - The everything-on full smoke gets all the way through
   `docker build .` AND `docker compose run --rm migrate` with no
   manual fixes (the migrate step is the first runtime test of
-  Group K's templated `Dockerfile.migrate`).
+  Group K's templated `Dockerfile.migrate`; variant B exercises the
+  same path on the drizzle side per OoS-2).
 - All four package managers' lockfiles install (variants A and B
   exercise npm and bun; the everything-on smoke covers pnpm; yarn
   is not in the smoke matrix because we have no current yarn user
