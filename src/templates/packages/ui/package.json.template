@@ -15,7 +15,7 @@
     "lint": "eslint . --cache",
     "lint:fix": "eslint . --cache --fix",
     "clean": "rm -rf *.tsbuildinfo",
-    "ui:add": "pnpm dlx shadcn@latest add"
+    "ui:add": "npx shadcn@latest add"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1",
