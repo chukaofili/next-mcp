@@ -4,7 +4,6 @@
  * - Add dark mode toggle
  * - Add side bar or horizontal bar for navigation
  * - Add user profile management
- * - User button from better-auth-ui
  * - Add organisations support
  */
 import { execSync } from 'node:child_process';
@@ -184,6 +183,54 @@ export function getPrismaOutputArg(config: ProjectConfig): string {
     path.posix.join(dbBaseDir, 'prisma'),
     path.posix.join(dbSrcDir, '.prisma')
   );
+}
+
+/**
+ * Returns true when better-auth core sources should be routed into
+ * `packages/auth`. This mirrors the gate in {@link generateFullModePackages}
+ * (D4): the auth package is only emitted when `monorepo: 'full'`,
+ * `auth: 'better-auth'`, AND a database is configured (the auth template
+ * hard-codes `@<projectName>/db` as a workspace dep). For all other shapes,
+ * auth files fall back to the app's `src/lib/`.
+ */
+export function shouldRouteToAuthPackage(config: ProjectConfig): boolean {
+  return (
+    config.architecture.monorepo === 'full' &&
+    config.architecture.auth === 'better-auth' &&
+    config.architecture.database !== 'none'
+  );
+}
+
+/**
+ * File paths for the better-auth core sources (`server.ts`, `client.ts`, and
+ * the `index.ts` barrel). In `packages/auth` routing, the three files live
+ * inside the package's own `src/`. In all other modes, only `serverPath` and
+ * `clientPath` are used and they collapse onto the legacy filenames
+ * (`<app>/src/lib/auth.ts`, `<app>/src/lib/auth-client.ts`); `indexPath` is
+ * `null` because the legacy layout has no barrel.
+ *
+ * Returning a struct (rather than separate getters) keeps the per-mode
+ * branching in one place — callers don't have to know whether they're in
+ * routed mode to pick the right filename.
+ */
+export function getAuthFilePaths(
+  config: ProjectConfig,
+  projectPath: string
+): { serverPath: string; clientPath: string; indexPath: string | null } {
+  if (shouldRouteToAuthPackage(config)) {
+    const base = path.join(projectPath, 'packages/auth/src');
+    return {
+      serverPath: path.join(base, 'server.ts'),
+      clientPath: path.join(base, 'client.ts'),
+      indexPath: path.join(base, 'index.ts'),
+    };
+  }
+  const appPath = getAppPath(config, projectPath);
+  return {
+    serverPath: path.join(appPath, 'src/lib/auth.ts'),
+    clientPath: path.join(appPath, 'src/lib/auth-client.ts'),
+    indexPath: null,
+  };
 }
 
 export function getShadcnRunner(packageManager: PackageManager): string {
@@ -392,6 +439,20 @@ export const ProjectConfigSchema = z
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
 export type PackageManager = NonNullable<ProjectConfig['architecture']['packageManager']>;
+
+/**
+ * Describes a single alias-to-package import rewrite for the codebase walker.
+ * `preserveSubpath: true` keeps any `<alias>/<sub>` suffix intact (used for
+ * the db case, where `@/lib/db/<sub>` maps to `<pkg>/<sub>`).
+ * `preserveSubpath: false` matches the alias exactly with no trailing path
+ * (used for `@/lib/auth` and `@/lib/auth-client`, which are single-file
+ * aliases — any `/<sub>` form would already be invalid in the legacy layout).
+ */
+type ImportRewriteMapping = {
+  alias: string;
+  replacement: string;
+  preserveSubpath: boolean;
+};
 
 const ORM_PACKAGE_SUBDIR: Partial<Record<NonNullable<ProjectConfig['architecture']['orm']>, string>> = {
   prisma: 'db/prisma',
@@ -2191,7 +2252,9 @@ export const db = drizzle(pool, { schema });`;
     for (const sub of ['src', 'app']) {
       const root = path.join(appPath, sub);
       if (existsSync(root)) {
-        await this.rewriteDbImportsInTree(root, dbPkgName);
+        await this.rewriteImportsInTree(root, [
+          { alias: '@/lib/db', replacement: dbPkgName, preserveSubpath: true },
+        ]);
       }
     }
 
@@ -2199,42 +2262,150 @@ export const db = drizzle(pool, { schema });`;
   }
 
   /**
-   * Recursively visit `.ts` / `.tsx` files under `root` and replace any import
-   * specifier of the form `@/lib/db` or `@/lib/db/<sub>` with `<dbPkgName>` /
-   * `<dbPkgName>/<sub>`. Idempotent: a file with no matches is left untouched.
+   * Wire `apps/web` to consume the `packages/auth` workspace package after the
+   * better-auth core sources have been written into `packages/auth/src/`.
+   *
+   * Mirrors {@link wireAppsWebToDbPackage} (Group F1):
+   *   - The auth package name is read from `packages/auth/package.json` (Group D
+   *     emits this in the same `monorepo: 'full' + auth: 'better-auth' +
+   *     database !== 'none'` shape this helper is gated on). A missing or
+   *     unreadable file is an invariant violation that we surface loudly
+   *     rather than guessing a name.
+   *   - `apps/web/package.json` is updated in place to add
+   *     `<authPkgName>: 'workspace:*'` under `dependencies`.
+   *   - Pre-existing `@/lib/auth` / `@/lib/auth-client` imports inside
+   *     `apps/web/src` and `apps/web/app` are rewritten to the workspace
+   *     package's subpath exports (`<authPkgName>/server` and
+   *     `<authPkgName>/client` respectively). The subpath exports are
+   *     declared in `packages/auth/package.json` (D4 emits this).
+   *
+   * Returns the resolved `authPkgName` so callers can include it in
+   * user-facing instructions.
    */
-  private async rewriteDbImportsInTree(root: string, dbPkgName: string): Promise<void> {
+  private async wireAppsWebToAuthPackage(
+    _config: ProjectConfig,
+    projectPath: string
+  ): Promise<string> {
+    const appPath = path.join(projectPath, 'apps/web');
+    const authPkgJsonPath = path.join(projectPath, 'packages/auth/package.json');
+
+    if (!existsSync(authPkgJsonPath)) {
+      throw new Error(
+        'wireAppsWebToAuthPackage: expected packages/auth/package.json to exist ' +
+          '(Group D should have emitted it). Did scaffold_project run with auth: ' +
+          "'better-auth' and a database configured?"
+      );
+    }
+
+    let authPkgName: string;
+    try {
+      const authPkg = JSON.parse(await fs.readFile(authPkgJsonPath, 'utf-8'));
+      if (typeof authPkg.name !== 'string' || authPkg.name.length === 0) {
+        throw new Error('packages/auth/package.json has no usable "name" field');
+      }
+      authPkgName = authPkg.name;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `wireAppsWebToAuthPackage: failed to read packages/auth/package.json (Group D ` +
+          `should have emitted it). Underlying error: ${reason}`
+      );
+    }
+
+    const appPkgPath = path.join(appPath, 'package.json');
+    if (existsSync(appPkgPath)) {
+      const appPkg = JSON.parse(await fs.readFile(appPkgPath, 'utf-8'));
+      appPkg.dependencies = appPkg.dependencies || {};
+      if (appPkg.dependencies[authPkgName] !== 'workspace:*') {
+        appPkg.dependencies[authPkgName] = 'workspace:*';
+        await fs.writeFile(appPkgPath, JSON.stringify(appPkg, null, 2) + '\n');
+        logger.info(`Added ${authPkgName}: workspace:* to apps/web/package.json`);
+      }
+    }
+
+    // Rewrite `@/lib/auth` and `@/lib/auth-client` imports.
+    //
+    // Order matters: `@/lib/auth-client` must be matched BEFORE `@/lib/auth`
+    // or the shorter alias would partially consume the longer one and leave
+    // a corrupted specifier. The walker preserves regex-anchor context so
+    // string literals containing `@/lib/auth` (JSDoc, log strings, fixtures)
+    // are left alone.
+    //
+    // We also intentionally do NOT preserve a subpath on the auth aliases:
+    // `@/lib/auth` is a single-file alias (not a directory), so any
+    // `@/lib/auth/<sub>` form is invalid in the legacy layout and rewriting
+    // it would just propagate broken code into the new package shape.
+    for (const sub of ['src', 'app']) {
+      const root = path.join(appPath, sub);
+      if (existsSync(root)) {
+        await this.rewriteImportsInTree(root, [
+          { alias: '@/lib/auth-client', replacement: `${authPkgName}/client`, preserveSubpath: false },
+          { alias: '@/lib/auth', replacement: `${authPkgName}/server`, preserveSubpath: false },
+        ]);
+      }
+    }
+
+    return authPkgName;
+  }
+
+  /**
+   * Recursively visit `.ts` / `.tsx` files under `root` and rewrite import
+   * specifiers per the supplied {@link ImportRewriteMapping}s. All matches
+   * across all mappings are applied in a single pass per file.
+   *
+   * Mappings are applied in array order. Callers MUST pass them
+   * longest-prefix-first when aliases share a prefix (e.g.
+   * `@/lib/auth-client` before `@/lib/auth`) to avoid the shorter regex
+   * partially consuming the longer specifier.
+   *
+   * Each mapping anchors its regex on import context (`from`, `import`,
+   * `require`) so string literals that merely contain the alias are left
+   * alone — see Group F1's `rewrite-anchored` regression test for the
+   * load-bearing assertion.
+   */
+  private async rewriteImportsInTree(root: string, mappings: ImportRewriteMapping[]): Promise<void> {
     const skipDirs = new Set(['node_modules', '.next', '.prisma', '.turbo', 'dist', 'public']);
     const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       const fullPath = path.join(root, entry.name);
       if (entry.isDirectory()) {
         if (skipDirs.has(entry.name)) continue;
-        await this.rewriteDbImportsInTree(fullPath, dbPkgName);
+        await this.rewriteImportsInTree(fullPath, mappings);
         continue;
       }
       if (!entry.isFile()) continue;
       if (!/\.(ts|tsx)$/.test(entry.name)) continue;
 
-      const content = await fs.readFile(fullPath, 'utf-8');
-      // Anchor on import context so we don't accidentally rewrite string
-      // literals in JSDoc, console logs, fixtures, etc. We cover three forms:
-      //   - static `from '...'` (default/named/side-effect after `export from`)
-      //   - bare side-effect `import '...'`
-      //   - dynamic `import('...')` (the `(` is captured as part of the prefix)
-      //   - CJS `require('...')`
-      // Each prefix is preserved verbatim and only the specifier is replaced,
-      // and the rewrite is idempotent: a file with no `@/lib/db` imports passes
-      // through untouched.
-      const importRewrite = /((?:from|import|require)\s*\(?\s*)(['"])@\/lib\/db(\/[^'"]*)?\2/g;
-      const updated = content.replace(
-        importRewrite,
-        (_match, prefix: string, quote: string, sub: string | undefined) =>
-          `${prefix}${quote}${dbPkgName}${sub ?? ''}${quote}`
-      );
-      if (updated !== content) {
+      const original = await fs.readFile(fullPath, 'utf-8');
+      let updated = original;
+
+      for (const mapping of mappings) {
+        // Anchor on import context so we don't accidentally rewrite string
+        // literals in JSDoc, console logs, fixtures, etc. We cover four forms:
+        //   - static `from '...'` (default/named/side-effect / export-from)
+        //   - bare side-effect `import '...'`
+        //   - dynamic `import('...')` (the `(` is captured as part of the prefix)
+        //   - CJS `require('...')`
+        // The alias is escaped for regex, and `preserveSubpath` controls
+        // whether `<alias>/<sub>` is preserved (db case) or treated as the
+        // exact alias only (auth case, where the alias maps to a single file).
+        const escapedAlias = mapping.alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const pattern = mapping.preserveSubpath
+          ? new RegExp(
+              `((?:from|import|require)\\s*\\(?\\s*)(['"])${escapedAlias}(\\/[^'"]*)?\\2`,
+              'g'
+            )
+          : new RegExp(`((?:from|import|require)\\s*\\(?\\s*)(['"])${escapedAlias}\\2`, 'g');
+
+        updated = updated.replace(pattern, (_match, prefix: string, quote: string, sub?: string) => {
+          const tail = mapping.preserveSubpath ? (sub ?? '') : '';
+          return `${prefix}${quote}${mapping.replacement}${tail}${quote}`;
+        });
+      }
+
+      if (updated !== original) {
         await fs.writeFile(fullPath, updated);
-        logger.info(`Rewrote @/lib/db imports in ${path.relative(root, fullPath)}`);
+        logger.info(`Rewrote imports in ${path.relative(root, fullPath)}`);
       }
     }
   }
@@ -2295,10 +2466,21 @@ export const db = drizzle(pool, { schema });`;
   private getAdapterConfig(config: ProjectConfig): { adapterImport: string; databaseConfig: string } {
     const { database, orm } = config.architecture;
 
+    // In `monorepo: 'full' + auth + db` routing, the auth source lives at
+    // `packages/auth/src/server.ts` and there is no `@/...` resolution from
+    // there to `@/lib/db`. The auth package's `package.json` already declares
+    // `@<projectName>/db: workspace:*` as a dep (Group D's auth template), so
+    // the headless `betterAuth({...})` config imports the same workspace
+    // package that the rest of the monorepo uses. In all other modes, the
+    // legacy `@/lib/db` alias resolves to the app's local `src/lib/db`.
+    const dbImportSpecifier = shouldRouteToDbPackage(config)
+      ? `@${config.name}/db`
+      : '@/lib/db';
+
     if (orm === 'prisma') {
       return {
         adapterImport: `import { prismaAdapter } from "better-auth/adapters/prisma";
-import { db } from "@/lib/db";`,
+import { db } from "${dbImportSpecifier}";`,
         databaseConfig: `prismaAdapter(db, {
     provider: "${this.getPrismaProvider(database)}",
   })`,
@@ -2308,7 +2490,7 @@ import { db } from "@/lib/db";`,
     if (orm === 'drizzle') {
       return {
         adapterImport: `import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { db } from "@/lib/db";`,
+import { db } from "${dbImportSpecifier}";`,
         databaseConfig: `drizzleAdapter(db, {
     provider: "${this.getDrizzleProvider(database)}",
   })`,
@@ -2352,8 +2534,16 @@ const db = new Database("./dev.db");`,
     };
   }
 
-  private getAuthSchemaCommand(): string {
-    return 'npx @better-auth/cli@latest generate -y --config src/lib/auth.ts';
+  /**
+   * `--config <path>` is interpreted relative to the better-auth CLI's cwd.
+   * In `packages/auth` routing, the auth file is `src/server.ts` (relative to
+   * `packages/auth`); in legacy mode it is `src/lib/auth.ts` (relative to the
+   * app — flat or `apps/web`). Schema/migration commands are run with the
+   * cwd returned by {@link getAuthCommandCwd} so the relative paths match.
+   */
+  private getAuthSchemaCommand(config: ProjectConfig): string {
+    const configRelPath = shouldRouteToAuthPackage(config) ? 'src/server.ts' : 'src/lib/auth.ts';
+    return `npx @better-auth/cli@latest generate -y --config ${configRelPath}`;
   }
 
   private getAuthMigrationCommand(config: ProjectConfig): string {
@@ -2368,7 +2558,40 @@ const db = new Database("./dev.db");`,
       return `${packageRunner} drizzle-kit generate && ${packageRunner} drizzle-kit migrate`;
     }
 
-    return 'npx @better-auth/cli@latest migrate -y --config src/lib/auth.ts';
+    const configRelPath = shouldRouteToAuthPackage(config) ? 'src/server.ts' : 'src/lib/auth.ts';
+    return `npx @better-auth/cli@latest migrate -y --config ${configRelPath}`;
+  }
+
+  /**
+   * cwd for the better-auth schema/migration commands. The auth CLI's
+   * `--config <path>` is relative to this cwd, and the ORM CLIs (prisma,
+   * drizzle-kit) need to be invoked wherever their own artifacts live:
+   *   - `full + orm`: `packages/db` so `prisma migrate` finds the schema
+   *     emitted by Group F1 at `packages/db/prisma/schema.prisma`. The
+   *     auth schema generation runs from the same cwd; `--config
+   *     ../auth/src/server.ts` is unwieldy, so we run schema-gen from
+   *     `packages/auth` (which has its own `--config src/server.ts`) and
+   *     run migrations from `packages/db`.
+   *   - other modes: cwd = appPath (which is projectPath in `none` mode
+   *     and `apps/web` in `minimal` mode). Same shape for both auth-cli
+   *     and ORM CLIs because everything lives in the app dir.
+   */
+  private getAuthSchemaCwd(config: ProjectConfig, projectPath: string): string {
+    if (shouldRouteToAuthPackage(config)) {
+      return path.join(projectPath, 'packages/auth');
+    }
+    return getAppPath(config, projectPath);
+  }
+
+  private getAuthMigrationCwd(config: ProjectConfig, projectPath: string): string {
+    // Migrations are owned by the ORM, so they need to run wherever the ORM
+    // artifacts live. In `full + orm`, that's `packages/db`. In other modes
+    // (or `full + orm:none`, which doesn't get here because better-auth
+    // requires a database), it's the app dir.
+    if (shouldRouteToDbPackage(config)) {
+      return getDbBaseDir(config, projectPath);
+    }
+    return getAppPath(config, projectPath);
   }
 
   private async setupAuthentication(config: ProjectConfig, projectPath: string) {
@@ -2389,8 +2612,22 @@ const db = new Database("./dev.db");`,
         throw new Error('Better Auth requires a database. Please select a database option.');
       }
 
+      // Resolve mode-aware locations once. `appPath` is where all the
+      // route/component-level files live (apps/web in monorepo modes, the
+      // workspace root in `none` mode). In `full + better-auth + db`, the
+      // headless `betterAuth({...})` server config and the typed client are
+      // additionally routed into `packages/auth/src/` via Group D's
+      // pre-emitted package. `.env*` files always sit at projectPath
+      // regardless of mode (workspace root === single-app root in flat mode).
+      const appPath = getAppPath(config, projectPath);
+      const authPaths = getAuthFilePaths(config, projectPath);
+      const routedToAuthPkg = shouldRouteToAuthPackage(config);
+
       // Step 1: Create directory structure
-      const authDirs = [
+      // App-level dirs (route-coupled / component-coupled — these live in
+      // apps/web regardless of monorepo mode because their imports use
+      // Next.js's `@/...` alias which resolves inside the app).
+      const appLevelDirs = [
         'src/lib',
         'src/providers',
         'src/app/api/auth/[...all]',
@@ -2399,8 +2636,13 @@ const db = new Database("./dev.db");`,
         'src/components/auth',
       ];
 
-      for (const dir of authDirs) {
-        await fs.mkdir(path.join(projectPath, dir), { recursive: true });
+      for (const dir of appLevelDirs) {
+        await fs.mkdir(path.join(appPath, dir), { recursive: true });
+      }
+
+      // Auth-package src dir (only in `full + better-auth + db` routing)
+      if (routedToAuthPkg) {
+        await fs.mkdir(path.dirname(authPaths.serverPath), { recursive: true });
       }
 
       // Update .env files (smart merge with existing DATABASE_URL)
@@ -2430,34 +2672,58 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
         }
       }
 
-      // Step 3: Generate auth configuration files
+      // Step 3: Generate auth configuration files (server + client)
       const { adapterImport, databaseConfig } = this.getAdapterConfig(config);
 
-      // Read and process auth.ts template
+      // Read and process auth.ts template -> server.ts (routed) or
+      // src/lib/auth.ts (legacy).
       const authTemplate = await fs.readFile(path.join(__dirname, 'templates/auth/auth.ts.template'), 'utf-8');
       const authContent = authTemplate
         .replace('__ADAPTER_IMPORT__', adapterImport)
         .replace('__DATABASE_CONFIG__', databaseConfig);
+      await fs.writeFile(authPaths.serverPath, authContent);
 
-      await fs.writeFile(path.join(projectPath, 'src/lib/auth.ts'), authContent);
-
-      // Copy auth-client.ts
+      // Copy auth-client.ts -> client.ts (routed) or src/lib/auth-client.ts
+      // (legacy).
       const authClientTemplate = await fs.readFile(
         path.join(__dirname, 'templates/auth/auth-client.ts.template'),
         'utf-8'
       );
-      await fs.writeFile(path.join(projectPath, 'src/lib/auth-client.ts'), authClientTemplate);
+      await fs.writeFile(authPaths.clientPath, authClientTemplate);
 
-      // Step 4: Generate API route
+      // In routed mode, also write the barrel `index.ts` that re-exports the
+      // subpath modules. apps/web consumers should still prefer the explicit
+      // subpaths (`<pkg>/server`, `<pkg>/client`) — the barrel exists for
+      // ergonomic import in the package's own internal code.
+      if (routedToAuthPkg && authPaths.indexPath) {
+        await fs.writeFile(
+          authPaths.indexPath,
+          `export * from './server';\nexport * from './client';\n`
+        );
+      }
+
+      // Resolve the import specifier the templated app-level files should
+      // use to reach the headless `auth` and `authClient` exports. In routed
+      // mode this is the workspace package's subpath exports
+      // (`<pkg>/server` and `<pkg>/client`); in legacy mode it stays as the
+      // local `@/lib/auth` / `@/lib/auth-client` aliases.
+      const authPkgName = routedToAuthPkg ? `@${config.name}/auth` : null;
+      const authServerImport = authPkgName ? `${authPkgName}/server` : '@/lib/auth';
+      const authClientImport = authPkgName ? `${authPkgName}/client` : '@/lib/auth-client';
+
+      // Step 4: Generate API route. Substitutes the auth-server import so
+      // `route.ts` reaches the workspace package in routed mode.
       const routeTemplate = await fs.readFile(path.join(__dirname, 'templates/auth/auth-route.ts.template'), 'utf-8');
-      await fs.writeFile(path.join(projectPath, 'src/app/api/auth/[...all]/route.ts'), routeTemplate);
+      const routeContent = routeTemplate.replace('__AUTH_SERVER_IMPORT__', authServerImport);
+      await fs.writeFile(path.join(appPath, 'src/app/api/auth/[...all]/route.ts'), routeContent);
 
-      // Step 5: Generate AuthUIProvider
+      // Step 5: Generate AuthUIProvider. Substitutes the auth-client import.
       const authProviderTemplate = await fs.readFile(
         path.join(__dirname, 'templates/auth/auth-ui-provider.tsx.template'),
         'utf-8'
       );
-      await fs.writeFile(path.join(projectPath, 'src/providers/auth-ui-provider.tsx'), authProviderTemplate);
+      const authProviderContent = authProviderTemplate.replace('__AUTH_CLIENT_IMPORT__', authClientImport);
+      await fs.writeFile(path.join(appPath, 'src/providers/auth-ui-provider.tsx'), authProviderContent);
 
       // Step 6: Generate dynamic auth pages & layout
       // Step 7: Generate dynamic account pages
@@ -2484,12 +2750,12 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       await Promise.all(
         templateMappings.map(async ({ template, destination }) => {
           const content = await fs.readFile(path.join(__dirname, 'templates', template), 'utf-8');
-          await fs.writeFile(path.join(projectPath, destination), content);
+          await fs.writeFile(path.join(appPath, destination), content);
         })
       );
 
       // Step 9: Update root layout to include AuthProvider
-      const layoutPath = path.join(projectPath, 'src/app/layout.tsx');
+      const layoutPath = path.join(appPath, 'src/app/layout.tsx');
       let layoutContent = await fs.readFile(layoutPath, 'utf-8');
 
       if (!layoutContent.includes('AuthProvider')) {
@@ -2502,16 +2768,53 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
         await fs.writeFile(layoutPath, layoutContent);
       }
 
-      // Step 10: Update globals.css with better-auth-ui import
-      const globalsCssPath = path.join(projectPath, 'src/app/globals.css');
-      let globalsCss = await fs.readFile(globalsCssPath, 'utf-8');
-
-      if (!globalsCss.includes('@daveyplate/better-auth-ui/css')) {
-        globalsCss = `@import "@daveyplate/better-auth-ui/css";\n\n${globalsCss}`;
-        await fs.writeFile(globalsCssPath, globalsCss);
+      // Step 10: Wire `apps/web` to the `packages/auth` workspace package and
+      // rewrite any pre-existing `@/lib/auth(-client)` imports. The dep is
+      // added to `apps/web/package.json`; pre-existing imports inside
+      // `apps/web/src` and `apps/web/app` are rewritten to `<pkg>/server`
+      // and `<pkg>/client`. The walker is a safety net — the templated
+      // files emitted above already use the routed specifiers when
+      // `routedToAuthPkg` is true.
+      let resolvedAuthPkgName: string | undefined;
+      if (routedToAuthPkg) {
+        resolvedAuthPkgName = await this.wireAppsWebToAuthPackage(config, projectPath);
       }
 
-      // Step 11: Run schema generation and migration
+      // Step 11: Install better-auth-ui shadcn registry pieces. These live
+      // in apps/web (route-coupled compositions, not reusable primitives) so
+      // we always run with cwd = appPath, even when `monorepo === 'full' +
+      // uiLibrary === 'shadcn'` (where setup_shadcn additionally inits
+      // packages/ui).
+      let registryInstallSummary = '';
+      if (!config.architecture.skipInstall) {
+        const runner = getShadcnRunner(config.architecture.packageManager);
+        const authRegistryUrl = 'https://better-auth-ui.com/r/auth.json';
+        const settingsRegistryUrl = 'https://better-auth-ui.com/r/settings.json';
+        const userButtonRegistryUrl = 'https://better-auth-ui.com/r/user-button.json';
+
+        const authRegistryResult = this.execCommand(
+          `${runner} shadcn@latest add ${authRegistryUrl} -y`,
+          appPath,
+          'better-auth-ui auth registry'
+        );
+        const settingsAndButtonResult = this.execCommand(
+          `${runner} shadcn@latest add ${settingsRegistryUrl} ${userButtonRegistryUrl} -y`,
+          appPath,
+          'better-auth-ui settings/user-button registry'
+        );
+
+        registryInstallSummary =
+          authRegistryResult.success && settingsAndButtonResult.success
+            ? 'Installed better-auth-ui shadcn-registry components in apps/web'
+            : 'Failed to install one or more better-auth-ui shadcn-registry components — see logs';
+        logger.info(registryInstallSummary);
+      } else {
+        registryInstallSummary =
+          'Skipped better-auth-ui shadcn-registry installation due to skipInstall flag';
+        logger.info(registryInstallSummary);
+      }
+
+      // Step 12: Run schema generation and migration
       const { database } = config.architecture;
       let schemaGenerated = false;
       let migrationRan = false;
@@ -2520,15 +2823,18 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       const shouldRunMigrations = database !== 'mongodb';
 
       if (shouldRunMigrations && !config.architecture.skipInstall) {
-        // Generate auth schema
-        const schemaCmd = this.getAuthSchemaCommand();
-        const schemaResult = this.execCommand(schemaCmd, projectPath, 'auth schema generation');
+        // Generate auth schema (cwd is mode-aware — see getAuthSchemaCwd).
+        const schemaCmd = this.getAuthSchemaCommand(config);
+        const schemaCwd = this.getAuthSchemaCwd(config, projectPath);
+        const schemaResult = this.execCommand(schemaCmd, schemaCwd, 'auth schema generation');
         schemaGenerated = schemaResult.success;
 
-        // Run migrations if schema was generated successfully
+        // Run migrations if schema was generated successfully (cwd
+        // follows the ORM artifacts — see getAuthMigrationCwd).
         if (schemaGenerated) {
           const migrationCmd = this.getAuthMigrationCommand(config);
-          const migrationResult = this.execCommand(migrationCmd, projectPath, 'auth migration');
+          const migrationCwd = this.getAuthMigrationCwd(config, projectPath);
+          const migrationResult = this.execCommand(migrationCmd, migrationCwd, 'auth migration');
           migrationRan = migrationResult.success;
         }
       }
@@ -2577,7 +2883,7 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
 📋 Next Steps:
 
 1. Generate the database schema:
-   ${this.getAuthSchemaCommand()}
+   ${this.getAuthSchemaCommand(config)}
 
 2. Run database migrations:
    ${this.getAuthMigrationCommand(config)}
@@ -2597,9 +2903,26 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
 2. Visit http://localhost:3000/auth/sign-up to create your first user`;
       }
 
+      // Reflect routed file locations in the user-facing output. In routed
+      // mode, the headless server config and typed client live inside the
+      // workspace package; otherwise the legacy `src/lib/...` layout
+      // applies. The route/component-level files always live in the app.
+      const serverFileLine = routedToAuthPkg
+        ? `- packages/auth/src/server.ts (server config) — exposed via ${resolvedAuthPkgName}/server`
+        : '- src/lib/auth.ts (server config)';
+      const clientFileLine = routedToAuthPkg
+        ? `- packages/auth/src/client.ts (client) — exposed via ${resolvedAuthPkgName}/client`
+        : '- src/lib/auth-client.ts (client)';
+      const indexFileLine = routedToAuthPkg
+        ? '\n- packages/auth/src/index.ts (workspace barrel re-exporting server + client)'
+        : '';
+      const appPrefix = routedToAuthPkg || config.architecture.monorepo !== 'none' ? 'apps/web/' : '';
+
       const instructions = `✅ Better Auth + Better Auth UI has been configured successfully!
 
 ${nextSteps}
+
+${registryInstallSummary}
 
 📚 Documentation:
 - Better Auth: https://www.better-auth.com/docs
@@ -2624,15 +2947,14 @@ ${nextSteps}
 - Ready-to-use UserButton component
 
 📁 Generated Files:
-- src/lib/auth.ts (server config)
-- src/lib/auth-client.ts (client)
-- src/providers/auth-ui-provider.tsx (UI provider)
-- src/app/api/auth/[...all]/route.ts (API handler)
-- src/app/auth/[path]/page.tsx (dynamic auth pages)
-- src/app/account/[path]/page.tsx (account settings)
-- src/components/auth/user-button.tsx (UserButton wrapper)
-- Updated src/app/layout.tsx (AuthProvider wrapper)
-- Updated src/app/globals.css (better-auth-ui styles)
+${serverFileLine}
+${clientFileLine}${indexFileLine}
+- ${appPrefix}src/providers/auth-ui-provider.tsx (UI provider)
+- ${appPrefix}src/app/api/auth/[...all]/route.ts (API handler)
+- ${appPrefix}src/app/auth/[path]/page.tsx (dynamic auth pages)
+- ${appPrefix}src/app/account/[path]/page.tsx (account settings)
+- ${appPrefix}src/components/auth/user-button.tsx (UserButton wrapper)
+- Updated ${appPrefix}src/app/layout.tsx (AuthProvider wrapper)
 
 💡 Quick Start:
 Add the UserButton to your layout/navbar:
