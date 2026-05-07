@@ -66,16 +66,20 @@ describe('setup_shadcn tool', () => {
   });
 });
 
-describe('setup_shadcn tool — dual-init recording (full + shadcn)', () => {
-  // Two clients on purpose: `scaffolder` runs without the recorder so
-  // create-next-app actually fires and lays down `apps/web` AND
-  // `packages/ui` on disk; then `recorder` runs setup_shadcn with
-  // NEXT_MCP_RECORD_COMMANDS set so the four shadcn execCommand calls
-  // (init + add-all in apps/web, init + add-all in packages/ui) are
-  // captured to a JSONL file instead of spawning real shells. This
-  // asserts the dual-init contract for monorepo:full + uiLibrary:shadcn
-  // — a future short-circuit removing the packages/ui leg would otherwise
-  // ship silently with the existing skipInstall-only test coverage.
+describe('setup_shadcn tool — single add --all (R1)', () => {
+  // Two clients on purpose: `scaffolder` runs without the recorder so the
+  // shadcn-led scaffold actually fires and lays down apps/web (with the
+  // R1 layout fixup applied) on disk; then `recorder` runs setup_shadcn
+  // with NEXT_MCP_RECORD_COMMANDS set so the single `shadcn add --all`
+  // execCommand call is captured to a JSONL file instead of spawning a
+  // real shell.
+  //
+  // Pre-R1 setup_shadcn ran a four-command dance (init + add-all in
+  // apps/web, init + add-all in packages/ui). After R1, scaffold_project
+  // delegates the entire workspace skeleton to shadcn's monorepo init,
+  // so setup_shadcn collapses to just the add --all leg — cross-workspace
+  // alias routing in apps/web/components.json sends UI components to
+  // packages/ui automatically.
   let scaffolder: MCPTestClient;
   let recorder: MCPTestClient;
   let tempDir: string;
@@ -100,15 +104,15 @@ describe('setup_shadcn tool — dual-init recording (full + shadcn)', () => {
     await cleanupTempDir(tempDir);
   });
 
-  it('fires shadcn init in both apps/web and packages/ui (skipInstall: false)', async () => {
-    const projectName = 'shadcn-dual-init';
+  it('fires shadcn add --all in apps/web only (skipInstall: false)', async () => {
+    const projectName = 'shadcn-single-add';
     const projectPath = path.join(tempDir, projectName);
     const appPath = path.join(projectPath, 'apps', 'web');
-    const uiPath = path.join(projectPath, 'packages', 'ui');
 
-    // Scaffold with the non-recording client so apps/web AND packages/ui
-    // exist on disk. skipInstall: true keeps it fast (create-next-app
-    // passes --skip-install).
+    // Scaffold with the non-recording client so apps/web (and
+    // shadcn-emitted packages/ui) exist on disk. skipInstall: true keeps
+    // it fast (we still pay the shadcn init network cost — that's
+    // fundamental to R1).
     const scaffoldConfig = createMockConfig({
       name: projectName,
       architecture: {
@@ -128,9 +132,6 @@ describe('setup_shadcn tool — dual-init recording (full + shadcn)', () => {
     // Reset the JSONL recorder so this test sees only its own commands.
     await fs.writeFile(recordPath, '');
 
-    // Now invoke setup_shadcn via the recorder client with
-    // skipInstall: false. The four shadcn execCommand calls will be
-    // recorded as JSONL lines instead of spawning real shells.
     const setupConfig = createMockConfig({
       name: projectName,
       architecture: {
@@ -148,31 +149,21 @@ describe('setup_shadcn tool — dual-init recording (full + shadcn)', () => {
     const result = await recorder.callTool('setup_shadcn', { config: setupConfig, projectPath });
     expect(recorder.isSuccess(result)).toBe(true);
 
-    // Parse the JSONL recorder. Each line is one execCommand invocation.
     const recorded = (await fs.readFile(recordPath, 'utf-8'))
       .split('\n')
       .filter((line) => line.trim().length > 0)
       .map((line) => JSON.parse(line) as { command: string; cwd: string; label: string });
 
-    // Find both init invocations. We assert against label so we don't
-    // accidentally pick up an unrelated `shadcn` invocation from
-    // elsewhere in the pipeline.
-    const appInit = recorded.find((r) => r.label === 'shadcn init (apps/web)');
-    const uiInit = recorded.find((r) => r.label === 'shadcn init (packages/ui)');
+    // Single recorded command: `shadcn add --all` against apps/web.
     const appAdd = recorded.find((r) => r.label === 'shadcn add all (apps/web)');
-    const uiAdd = recorded.find((r) => r.label === 'shadcn add all (packages/ui)');
-
-    expect(appInit).toBeDefined();
-    expect(uiInit).toBeDefined();
     expect(appAdd).toBeDefined();
-    expect(uiAdd).toBeDefined();
-
-    // The cwd routing is the load-bearing assertion: apps/web init runs
-    // in apps/web, packages/ui init runs in packages/ui. Same cwd routing
-    // applies to the matching `add --all` invocations.
-    expect(appInit!.cwd).toBe(appPath);
-    expect(uiInit!.cwd).toBe(uiPath);
     expect(appAdd!.cwd).toBe(appPath);
-    expect(uiAdd!.cwd).toBe(uiPath);
-  }, 120000);
+    expect(appAdd!.command).toContain('shadcn@latest add --all');
+
+    // The pre-R1 dual-init dance is gone — neither shadcn init nor
+    // packages/ui-targeted invocations should appear.
+    expect(recorded.find((r) => r.label === 'shadcn init (apps/web)')).toBeUndefined();
+    expect(recorded.find((r) => r.label === 'shadcn init (packages/ui)')).toBeUndefined();
+    expect(recorded.find((r) => r.label === 'shadcn add all (packages/ui)')).toBeUndefined();
+  }, 180000);
 });

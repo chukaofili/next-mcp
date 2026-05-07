@@ -1739,6 +1739,43 @@ export class NextMCPServer {
       const isMonorepo = config.architecture.monorepo !== 'none';
       const appPath = getAppPath(config, projectPath);
 
+      // R1 dispatch: when the user wants shadcn, delegate the entire
+      // workspace skeleton to `shadcn@latest init` and then augment.
+      // shadcn produces apps/web + packages/ui + packages/eslint-config
+      // + packages/typescript-config + root files in a single shot,
+      // eliminating the v1 B2/B5 bug class by construction. Common
+      // post-scaffold steps (updateGitignore, createDirectoryStructure,
+      // updatePackageJson, generateNextJSCustomCode) still run after
+      // the helper returns. Refs: design doc §6.1 + §6.2 + §6.3,
+      // spike-results "patch sketch".
+      if (config.architecture.uiLibrary === 'shadcn') {
+        if (isMonorepo) {
+          await this.scaffoldViaShadcnMonorepo(config, projectPath);
+        } else {
+          await this.scaffoldViaShadcnFlat(config, projectPath);
+        }
+
+        // Common post-scaffold steps (per-app file ops + optional install).
+        await this.updateGitignore(appPath);
+        await this.createDirectoryStructure(config, appPath);
+        await this.updatePackageJson(config, appPath);
+        await this.generateNextJSCustomCode(appPath);
+
+        if (!config.architecture.skipInstall) {
+          logger.info('Install not skipped: Installing dependencies as part of project scaffolding');
+          await this.installDependencies(config, projectPath);
+        }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `✅ Successfully created Next.js project at ${projectPath} via shadcn@latest init\n\n[Configuration]:\n${JSON.stringify(config, null, 2)}`,
+            },
+          ],
+        };
+      }
+
       // Build create-next-app command based on configuration
       // For monorepo, create-next-app produces <projectPath>/apps/web; for flat,
       // it produces <projectPath>/<projectName>.
@@ -2818,15 +2855,26 @@ export class NextMCPServer {
         { template: 'terms-page.tsx.template', destination: path.join('src', 'app', 'terms', 'page.tsx') },
       ];
 
+      // shadcn-led scaffolding ships its own next.config.mjs that the
+      // augmentation pipeline patches with `output: 'standalone'`. Skip
+      // writing next.config.ts here so we don't end up with two configs
+      // (Next prefers .ts, which would clobber shadcn's transpilePackages
+      // wiring). Detect by looking for an existing .mjs/.js next config.
+      const hasExistingNextConfig =
+        existsSync(path.join(appPath, 'next.config.mjs')) || existsSync(path.join(appPath, 'next.config.js'));
+
       // Read and write all template files in parallel
       await Promise.all(
         templateMappings.map(async ({ template, destination }) => {
+          if (destination === 'next.config.ts' && hasExistingNextConfig) return;
           const content = await fs.readFile(path.join(__dirname, 'templates', template), 'utf-8');
           await fs.writeFile(path.join(appPath, destination), content);
         })
       );
 
-      const filesCreated = templateMappings.map(({ destination }) => destination);
+      const filesCreated = templateMappings
+        .filter(({ destination }) => !(destination === 'next.config.ts' && hasExistingNextConfig))
+        .map(({ destination }) => destination);
 
       return {
         content: [
@@ -2864,13 +2912,11 @@ export class NextMCPServer {
 
     try {
       const packageManager = config.architecture.packageManager;
-      const monorepoMode = config.architecture.monorepo;
-      const shadcnInitCommand = buildShadcnInitCommand(packageManager, monorepoMode);
       const shadcnRunner = getShadcnRunner(packageManager);
       const shadcnAddAllCommand = `${shadcnRunner} shadcn@latest add --all -y -o`;
       const appPath = getAppPath(config, projectPath);
       const results: string[] = [];
-      logger.info(`Initializing shadcn/ui with ${packageManager}...`);
+      logger.info(`Adding shadcn/ui components with ${packageManager}...`);
 
       if (config.architecture.skipInstall) {
         results.push(`⚠️  Skipped installation of shadcn/ui components due to skipInstall flag`);
@@ -2884,86 +2930,48 @@ export class NextMCPServer {
         };
       }
 
-      // Step 1: Initialize shadcn/ui with default configuration
-      try {
-        const result = this.execCommand(shadcnInitCommand, appPath, 'shadcn init (apps/web)');
-
-        if (!result.success) {
-          throw new Error('[shadcn init failed]: Check logs for details');
-        }
-
-        results.push(`✅ Initialized shadcn/ui with default configuration using ${packageManager}`);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.error('Failed to initialize shadcn/ui:', errorMessage);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `❌ Failed to initialize shadcn/ui: ${errorMessage}`,
-            },
-          ],
-        };
-      }
-
-      // Step 2: Install all shadcn/ui components using the --all flag
-      logger.info(`Installing all shadcn/ui components with ${packageManager}...`);
+      // R1: shadcn init was already done by scaffold_project. setup_shadcn
+      // collapses to a single `shadcn add --all` invocation against
+      // apps/web; cross-workspace alias routing in apps/web/components.json
+      // sends UI components to packages/ui automatically. The chart/sidebar
+      // token manipulation that was previously appended here is now part
+      // of shadcn's b0 preset (verified against /tmp/test-2's globals.css)
+      // and no longer needed.
       try {
         const result = this.execCommand(shadcnAddAllCommand, appPath, 'shadcn add all (apps/web)');
-
         if (!result.success) {
-          throw new Error('[shadcn init failed]: Check logs for details');
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: `❌ Failed to add shadcn/ui components: ${result.reason ?? 'check logs for details'}`,
+              },
+            ],
+          };
         }
+        results.push(`✅ Successfully added all shadcn/ui components`);
+        logger.info(`shadcn/ui add --all components executed successfully`);
 
-        results.push(`✅ Successfully installed all shadcn/ui components`);
-        logger.info(`shadcn/ui add all components executed successfully`);
-
-        // Step 3: When full + shadcn, also run init+add against packages/ui
-        if (config.architecture.monorepo === 'full' && config.architecture.uiLibrary === 'shadcn') {
-          const uiCwd = path.join(projectPath, 'packages/ui');
-          const uiInitResult = this.execCommand(shadcnInitCommand, uiCwd, 'shadcn init (packages/ui)');
-          if (!uiInitResult.success) {
-            throw new Error('[shadcn init (packages/ui) failed]: Check logs for details');
-          }
-          const uiAddResult = this.execCommand(shadcnAddAllCommand, uiCwd, 'shadcn add all (packages/ui)');
-          if (!uiAddResult.success) {
-            throw new Error('[shadcn add all (packages/ui) failed]: Check logs for details');
-          }
-          results.push(`✅ Successfully installed shadcn/ui components in packages/ui`);
-        }
-
-        const globalsCssPath = path.join(appPath, 'src/app/globals.css');
-        let globalsCss = await fs.readFile(globalsCssPath, 'utf-8');
-
-        if (!globalsCss.includes('--chart-1: oklch(0.646 0.222 41.116)')) {
-          globalsCss = `${globalsCss}\n@layer base {\n  :root {\n    --chart-1: oklch(0.646 0.222 41.116);\n    --chart-2: oklch(0.6 0.118 184.704);\n    --chart-3: oklch(0.398 0.07 227.392);\n    --chart-4: oklch(0.828 0.189 84.429);\n    --chart-5: oklch(0.769 0.188 70.08);\n  }\n\n  .dark {\n    --chart-1: oklch(0.488 0.243 264.376);\n    --chart-2: oklch(0.696 0.17 162.48);\n    --chart-3: oklch(0.769 0.188 70.08);\n    --chart-4: oklch(0.627 0.265 303.9);\n    --chart-5: oklch(0.645 0.246 16.439);\n  }\n}`;
-        }
-
-        if (!globalsCss.includes('--sidebar: oklch(0.985 0 0);')) {
-          globalsCss = `${globalsCss}\n@layer base {\n  :root {\n    --sidebar: oklch(0.985 0 0);\n    --sidebar-foreground: oklch(0.145 0 0);\n    --sidebar-primary: oklch(0.205 0 0);\n    --sidebar-primary-foreground: oklch(0.985 0 0);\n    --sidebar-accent: oklch(0.97 0 0);\n    --sidebar-accent-foreground: oklch(0.205 0 0);\n    --sidebar-border: oklch(0.922 0 0);\n    --sidebar-ring: oklch(0.708 0 0);\n  }\n\n  .dark {\n    --sidebar: oklch(0.205 0 0);\n    --sidebar-foreground: oklch(0.985 0 0);\n    --sidebar-primary: oklch(0.488 0.243 264.376);\n    --sidebar-primary-foreground: oklch(0.985 0 0);\n    --sidebar-accent: oklch(0.269 0 0);\n    --sidebar-accent-foreground: oklch(0.985 0 0);\n    --sidebar-border: oklch(1 0 0 / 10%);\n    --sidebar-ring: oklch(0.439 0 0);\n  }\n}`;
-        }
-
-        await fs.writeFile(globalsCssPath, globalsCss);
-
+        // Layout.tsx Toaster injection — locate apps/web/src/app/layout.tsx
+        // (post-R1 layout fixup moves shadcn's flat layout under src/).
         const layoutPath = path.join(appPath, 'src/app/layout.tsx');
-        let layoutContent = await fs.readFile(layoutPath, 'utf-8');
-        if (!layoutContent.includes('Toaster')) {
-          // Add import at the top
-          const importStatement = `import { Toaster } from "@/components/ui/sonner";\n`;
-          layoutContent = layoutContent.replace(/^(import.*\n)*/, (match) => match + importStatement);
-
-          // Add Toaster component after children
-          layoutContent = layoutContent.replace(/<body[^>]*>([\s\S]*?)<\/body>/, (match, content) =>
-            match.replace(content, `${content}  <Toaster position="top-center" />\n      `)
-          );
-
-          await fs.writeFile(layoutPath, layoutContent);
+        if (existsSync(layoutPath)) {
+          let layoutContent = await fs.readFile(layoutPath, 'utf-8');
+          if (!layoutContent.includes('Toaster')) {
+            const importStatement = `import { Toaster } from "@/components/ui/sonner";\n`;
+            layoutContent = layoutContent.replace(/^(import.*\n)*/, (match) => match + importStatement);
+            layoutContent = layoutContent.replace(/<body[^>]*>([\s\S]*?)<\/body>/, (match, content) =>
+              match.replace(content, `${content}  <Toaster position="top-center" />\n      `)
+            );
+            await fs.writeFile(layoutPath, layoutContent);
+            logger.info('Injected Toaster into apps/web/src/app/layout.tsx');
+          }
         }
-        logger.info('Updated globals.css and layout.tsx for shadcn/ui');
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.error('Failed to install shadcn/ui components:', errorMessage);
-        results.push(`⚠️  Failed to install all components: ${errorMessage}`);
+        logger.error('Failed to add shadcn/ui components:', errorMessage);
+        results.push(`⚠️  Failed to add all components: ${errorMessage}`);
       }
 
       return {
@@ -4623,14 +4631,29 @@ ${quickStartBlock}`;
       await fs.access(path.join(projectPath, 'package.json'));
       validationResults.push('✅ package.json exists');
 
-      // next.config.ts is owned by the Next.js app — flat at projectPath in
+      // next.config is owned by the Next.js app — flat at projectPath in
       // `monorepo: 'none'`, but at apps/web in monorepo modes. Use
       // getAppPath so the existence check resolves to the right location.
+      // Accept any of the three Next-supported extensions (.ts/.mjs/.js) —
+      // shadcn-led scaffolding ships .mjs, the legacy create-next-app path
+      // produces .ts.
       const appPath = getAppPath(config, projectPath);
-      const nextConfigPath = path.join(appPath, 'next.config.ts');
-      await fs.access(nextConfigPath);
-      const nextConfigDisplay = path.relative(projectPath, nextConfigPath) || 'next.config.ts';
-      validationResults.push(`✅ next.config.ts exists (${nextConfigDisplay})`);
+      const nextConfigCandidates = ['next.config.ts', 'next.config.mjs', 'next.config.js'];
+      let nextConfigFound: string | null = null;
+      for (const candidate of nextConfigCandidates) {
+        const candidatePath = path.join(appPath, candidate);
+        if (existsSync(candidatePath)) {
+          nextConfigFound = candidatePath;
+          break;
+        }
+      }
+      if (!nextConfigFound) {
+        throw new Error(
+          `next.config.{ts,mjs,js} not found at ${path.relative(projectPath, appPath) || '<projectRoot>'}`
+        );
+      }
+      const nextConfigDisplay = path.relative(projectPath, nextConfigFound) || path.basename(nextConfigFound);
+      validationResults.push(`✅ ${path.basename(nextConfigFound)} exists (${nextConfigDisplay})`);
 
       // Workspace TypeScript config (the workspace base in monorepo modes).
       await fs.access(path.join(projectPath, 'tsconfig.json'));

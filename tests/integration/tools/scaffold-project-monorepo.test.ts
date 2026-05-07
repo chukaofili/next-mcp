@@ -450,14 +450,15 @@ describe('scaffold_project tool — monorepo:full', () => {
     const uiPkg = JSON.parse(await fs.readFile(path.join(uiDir, 'package.json'), 'utf-8'));
     expect(uiPkg.name).toBe(`@${projectName}/ui`);
 
-    // The `ui:add` maintenance script must invoke shadcn through the
-    // package manager's runner (e.g. `pnpm dlx`). A bare
-    // `shadcn@latest add` would try to execute a literal binary that
-    // doesn't exist on PATH.
-    expect(uiPkg.scripts['ui:add']).toBeDefined();
-    expect(uiPkg.scripts['ui:add']).not.toMatch(/^shadcn@latest\b/);
-    expect(uiPkg.scripts['ui:add']).toContain('shadcn@latest add');
-    expect(uiPkg.scripts['ui:add']).toMatch(/(pnpm dlx|yarn dlx|bunx|npx)\s+shadcn@latest/);
+    // R1: shadcn's monorepo init emits packages/ui with its own
+    // lint/format/typecheck scripts. The pre-R1 `ui:add` convenience
+    // script (a wrapper around `shadcn add` from packages/ui) is not
+    // emitted by shadcn — users invoke `shadcn add` directly via dlx
+    // through the apps/web entry point post-R1, with the cross-workspace
+    // alias routing in components.json sending primitives to packages/ui.
+    expect(uiPkg.scripts).toBeDefined();
+    expect(typeof uiPkg.scripts.lint).toBe('string');
+    expect(typeof uiPkg.scripts.typecheck).toBe('string');
 
     // apps/web carries `@<project>/ui: workspace:*` so the rewritten
     // shadcn imports in generate_base_components (and any user code)
