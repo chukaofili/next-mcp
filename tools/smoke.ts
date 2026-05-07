@@ -157,7 +157,13 @@ function buildPresets(): Preset[] {
           // Tier 2a: generate_base_components must route into apps/web/.
           'apps/web/src/app/page.tsx',
         ],
-        absent: [],
+        absent: [
+          // B5 regression catch — create-next-app --use-pnpm leaves these
+          // shadowing files at the app level; scaffold_project must delete
+          // them post-subprocess. See smoke-v2 §4.0 + design doc §6.4.
+          'apps/web/pnpm-workspace.yaml',
+          'apps/web/pnpm-lock.yaml',
+        ],
       },
     },
     {
@@ -178,6 +184,11 @@ function buildPresets(): Preset[] {
         absent: [
           // rpc:'none' so packages/orpc must NOT be emitted.
           'packages/orpc',
+          // B5 regression catch — see full-everything-on for rationale.
+          // npm doesn't emit these today, but the fix is unconditional;
+          // future-proof against any scaffold-tool switch.
+          'apps/web/pnpm-workspace.yaml',
+          'apps/web/pnpm-lock.yaml',
         ],
       },
     },
@@ -201,6 +212,10 @@ function buildPresets(): Preset[] {
           'packages/auth',
           'packages/ui',
           'packages/orpc',
+          // B5 regression catch — see full-everything-on for rationale.
+          // bun doesn't emit these today, but assertion future-proofs.
+          'apps/web/pnpm-workspace.yaml',
+          'apps/web/pnpm-lock.yaml',
         ],
       },
     },
@@ -216,6 +231,11 @@ function buildPresets(): Preset[] {
         absent: [
           // Minimal mode emits NO packages/* directory at all.
           'packages',
+          // B5 regression catch — minimal + pnpm IS the canonical case
+          // create-next-app --use-pnpm exhibits the leftover-file bug.
+          // See full-everything-on for rationale.
+          'apps/web/pnpm-workspace.yaml',
+          'apps/web/pnpm-lock.yaml',
         ],
       },
     },

@@ -82,6 +82,41 @@ describe('scaffold_project tool — monorepo:minimal', () => {
     expect(nextConfigContent).not.toBeNull();
     expect(nextConfigContent!).toMatch(/output:\s*['"]standalone['"]/);
   }, 120000);
+
+  it('deletes create-next-app workspace leftovers in apps/web (B5 regression)', async () => {
+    // create-next-app --use-pnpm leaves an apps/web/pnpm-workspace.yaml
+    // (containing only `ignoredBuiltDependencies: [sharp, unrs-resolver]`)
+    // and an apps/web/pnpm-lock.yaml. Both shadow the real workspace one
+    // level up, breaking every later `pnpm <add|install>` from inside
+    // apps/web with ERR_PNPM_WORKSPACE_PKG_NOT_FOUND. scaffoldProject must
+    // delete both files in monorepo modes after create-next-app returns.
+    // See docs/plans/2026-05-05-monorepo-smoke-test.md → B5 + design doc
+    // §6.4 for rationale; the assertion here mirrors smoke-v2 §4.0.
+    const projectName = 'b5-regression';
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'minimal',
+        database: 'none',
+        orm: 'none',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+
+    const result = await client.callTool('scaffold_project', {
+      config,
+      targetPath: tempDir,
+    });
+
+    expect(client.isSuccess(result)).toBe(true);
+
+    const appPath = path.join(tempDir, projectName, 'apps', 'web');
+    expect(await fileExists(path.join(appPath, 'pnpm-workspace.yaml'))).toBe(false);
+    expect(await fileExists(path.join(appPath, 'pnpm-lock.yaml'))).toBe(false);
+  }, 120000);
 });
 
 describe('scaffold_project tool — monorepo:full', () => {
