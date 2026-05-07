@@ -704,6 +704,13 @@ The smoke is "green" when:
 
 ## 9. Findings
 
+> **2026-05-07 onward:** per-run findings live in a separate file —
+> see [`2026-05-07-monorepo-smoke-findings.md`](./2026-05-07-monorepo-smoke-findings.md).
+> Keeping the procedure (this doc) and the per-run record (that doc)
+> apart so smoke-v2 stays a clean spec across multiple runs. The
+> template below is preserved for reference; do not append new
+> findings here.
+
 > Fill this in **during the run**, one subsection per variant.
 > Empty bullets are fine — leave them as a record that the variant
 > was attempted and passed.

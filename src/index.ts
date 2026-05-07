@@ -1718,9 +1718,7 @@ export class NextMCPServer {
         const ok = typeof verdict === 'boolean' ? verdict : verdict.ok;
         if (!ok) {
           const reason =
-            typeof verdict === 'object' && verdict.ok === false
-              ? verdict.reason
-              : 'verify predicate returned false';
+            typeof verdict === 'object' && verdict.ok === false ? verdict.reason : 'verify predicate returned false';
           logger.warn(`${commandLabel} exit 0 but verify failed: ${reason}`);
           return { success: false, output: outputStr, reason };
         }
@@ -2254,8 +2252,11 @@ export class NextMCPServer {
     if (fixtureRoot) {
       await copyDirectory(fixtureRoot, projectPath);
     } else {
+      const packageManager = config.architecture.packageManager;
+
+      const shadcnRunner = getShadcnRunner(packageManager);
       const shadcnInitCommand =
-        `pnpm dlx shadcn@latest init --preset b0 --template next ` +
+        `${shadcnRunner} shadcn@latest init --preset b0 --template next ` +
         `--monorepo --pointer --silent --name ${projectName} --cwd ${parentDir}`;
       const result = this.execCommand(shadcnInitCommand, parentDir, 'shadcn init (monorepo)');
       if (!result.success) {
@@ -4450,11 +4451,8 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
         // for mongoose it short-circuits true (schema-less ORM).
         const schemaCmd = this.getAuthSchemaCommand(config);
         const schemaCwd = this.getAuthSchemaCwd(config, projectPath);
-        const schemaResult = this.execCommand(
-          schemaCmd,
-          schemaCwd,
-          'auth schema generation',
-          () => verifyAuthSchemaGenerated(config, projectPath)
+        const schemaResult = this.execCommand(schemaCmd, schemaCwd, 'auth schema generation', () =>
+          verifyAuthSchemaGenerated(config, projectPath)
         );
         schemaGenerated = schemaResult.success;
         if (!schemaGenerated) {
