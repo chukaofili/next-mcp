@@ -1,20 +1,31 @@
-import { PrismaClient } from './.prisma/client';
+// TODO: This is a client template for postgres, but we should support mysql, sqlite, and mongodb as well. We can either add more client templates or make this one more flexible by reading the provider from the schema.prisma datasource and instantiating the appropriate adapter based on that.
+import { PrismaPg } from "@prisma/adapter-pg"
 
-if (!process.env.DATABASE_URL) {
-  throw new Error('DATABASE_URL environment variable is not set.');
+import { PrismaClient } from "./.prisma/client.js"
+
+export type CreatePrismaOpts = {
+  databaseUrl: string
+  nodeEnv?: string
 }
 
-// Dialect-agnostic client. The bundled Prisma engine reads
-// `provider`/`url` from the schema.prisma datasource (set by
-// `prisma init --datasource-provider <dialect>` during scaffolding),
-// so the same client.ts works for postgres, mysql, sqlite, and
-// mongodb. If you need a driver adapter (e.g. `@prisma/adapter-pg`
-// for postgres throughput), instantiate it here and pass via
-// `new PrismaClient({ adapter })`.
-const globalForPrisma = global as unknown as { prisma: PrismaClient };
+type GlobalWithPrisma = typeof globalThis & { __prisma?: PrismaClient }
 
-export const prisma = globalForPrisma.prisma ?? new PrismaClient();
+export const createPrismaClient = (opts: CreatePrismaOpts): PrismaClient => {
+  const globalForPrisma = globalThis as GlobalWithPrisma
 
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+  if (globalForPrisma.__prisma) {
+    return globalForPrisma.__prisma
+  }
 
-export default prisma;
+  const connectionString = opts.databaseUrl
+  const schema =
+    new URL(connectionString).searchParams.get("schema") ?? "public"
+  const adapter = new PrismaPg({ connectionString }, { schema })
+  const client = new PrismaClient({ adapter })
+
+  if (opts.nodeEnv !== "production") {
+    globalForPrisma.__prisma = client
+  }
+
+  return client
+}

@@ -1,0 +1,9 @@
+import { createAuth } from '../packages/auth/src/server';
+import { createPrismaClient } from '../packages/db/src/client';
+
+const db = createPrismaClient({
+  databaseUrl: process.env.DATABASE_URL!,
+  nodeEnv: process.env.NODE_ENV,
+});
+
+export const auth = createAuth({ db });
