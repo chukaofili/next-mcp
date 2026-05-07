@@ -2118,6 +2118,163 @@ export class NextMCPServer {
     }
   }
 
+  /**
+   * Scaffold a `uiLibrary: 'shadcn'` + `monorepo: 'full' | 'minimal'` project
+   * by delegating to `shadcn@latest init --monorepo`, then applying the
+   * augmentation pipeline (rename → catalog → pin alignment → typescript-config
+   * swap → flat→src/ layout fixup → root tweaks → conditional packages).
+   *
+   * shadcn produces a complete pnpm-shaped monorepo skeleton (root files,
+   * apps/web, packages/ui, packages/eslint-config, packages/typescript-config)
+   * in one shot — eliminating B5 by construction (no rogue
+   * apps/web/pnpm-workspace.yaml is ever created), eliminating B2 (shadcn's
+   * CLI owns its own --monorepo contract), and producing the cross-workspace
+   * tailwind.css link that the v1 manual emission did not achieve.
+   *
+   * Refs: docs/plans/2026-05-07-monorepo-shadcn-refactor-design.md §6.2,
+   * docs/plans/2026-05-07-r1-spike-results.md (patch sketch + open-question
+   * resolutions). Currently dead code — wired in by dispatch in
+   * {@link scaffoldProject} once integration tests have been refreshed.
+   */
+  private async scaffoldViaShadcnMonorepo(config: ProjectConfig, projectPath: string): Promise<void> {
+    const projectName = config.name!;
+    const parentDir = path.dirname(projectPath);
+    const appPath = path.join(projectPath, 'apps/web');
+    const pm = config.architecture.packageManager;
+
+    await fs.mkdir(parentDir, { recursive: true });
+
+    // 1. shadcn init — pnpm dlx is used regardless of the user's package
+    // manager because shadcn always emits pnpm-shaped output; we convert
+    // post-init for non-pnpm. `--name` makes shadcn create
+    // `<parentDir>/<projectName>/` as a subdir (verified empirically in
+    // Phase 0; see spike-results §8.1).
+    const shadcnInitCommand =
+      `pnpm dlx shadcn@latest init --preset b0 --template next ` +
+      `--monorepo --pointer --silent --name ${projectName} --cwd ${parentDir}`;
+    const result = this.execCommand(shadcnInitCommand, parentDir, 'shadcn init (monorepo)');
+    if (!result.success) {
+      throw new Error(`[shadcn init failed]: ${result.reason ?? 'check logs'}`);
+    }
+    await fs.access(projectPath);
+
+    // 2. Project-scope rename (substring + apps/web name fixup).
+    await renameWorkspaceScope(projectPath, projectName);
+
+    // 3. Catalog block — pnpm-only. For non-pnpm the per-package catalog:
+    // refs are substituted with literal versions by copyPackageTemplate
+    // (see step 11 below).
+    if (pm === 'pnpm') {
+      await appendCatalogBlock(projectPath);
+    }
+
+    // 4. Pin alignment (packageManager / engines / typescript).
+    await alignPins(projectPath, pm);
+
+    // 5. Replace shadcn's typescript-config base.json/nextjs.json/react-library.json
+    // with next-mcp's templates (collapses the original "B8" diagnostic by
+    // removing shadcn's restrictive `lib` clamp).
+    await swapTypescriptConfig(projectPath);
+
+    // 6. Layout fixup — option (a) per §8.2: move shadcn's flat
+    // apps/web/{app,components,hooks,lib} under apps/web/src/... so all
+    // existing path resolvers and emit-into-src/ tools work unchanged.
+    await moveAppsWebFlatToSrc(appPath);
+
+    // 7. Convert workspace shape for non-pnpm: drop pnpm-workspace.yaml,
+    // add `workspaces: ["apps/*", "packages/*"]` to the root package.json
+    // (npm/yarn classic). `alignPins` already removed the packageManager
+    // pin and engines.pnpm.
+    if (pm !== 'pnpm') {
+      await fs.rm(path.join(projectPath, 'pnpm-workspace.yaml'), { force: true });
+      const rootPkgPath = path.join(projectPath, 'package.json');
+      const rootPkg = JSON.parse(await fs.readFile(rootPkgPath, 'utf-8'));
+      rootPkg.workspaces = ['apps/*', 'packages/*'];
+      await fs.writeFile(rootPkgPath, JSON.stringify(rootPkg, null, 2) + '\n');
+    }
+
+    // 8. .env, .env.example, .env.local at the workspace root.
+    await this.ensureEnvExample(projectPath);
+
+    // 9. Docker scripts on root package.json.
+    await addDockerScripts(projectPath, projectName);
+
+    // 10. Patch shadcn's apps/web/next.config.mjs to add `output: 'standalone'`
+    // (required by next-mcp's monorepo Dockerfile).
+    await patchNextConfigMjs(appPath);
+
+    // 11. Conditional packages: db / auth / orpc. shadcn already ships
+    // packages/{ui,eslint-config,typescript-config}; we add only the
+    // per-feature packages here. Reuses the existing copyPackageTemplate
+    // (which applies <projectName> substitution and substituteCatalog for
+    // non-pnpm).
+    const { orm } = config.architecture;
+    if (hasDbPackageEmitted(config)) {
+      const subdir = ORM_PACKAGE_SUBDIR[orm];
+      if (!subdir) throw new Error(`No packages/db template subdir for orm: ${orm}`);
+      await this.copyPackageTemplate(config, projectPath, 'db', subdir);
+      await this.patchDbWorkspacePackageJson(config, projectPath);
+    }
+    if (hasAuthPackageEmitted(config)) {
+      await this.copyPackageTemplate(config, projectPath, 'auth');
+    }
+    // packages/ui: shadcn already emitted it; just wire the workspace
+    // dep on apps/web (idempotent — shadcn already wrote the dep, the
+    // wire helper double-checks and triggers a reinstall when needed).
+    if (hasUiPackageEmitted(config)) {
+      await this.wireAppsWebToUiPackage(config, projectPath);
+    }
+    if (hasOrpcPackageEmitted(config)) {
+      await this.copyPackageTemplate(config, projectPath, 'orpc');
+      await this.wireAppsWebToOrpcPackage(config, projectPath);
+    }
+  }
+
+  /**
+   * Scaffold a `uiLibrary: 'shadcn'` + `monorepo: 'none'` (flat) project by
+   * delegating to `shadcn@latest init --no-monorepo`. Single-package output
+   * — no `@workspace/` scope, no pnpm-workspace.yaml, no packages/. The
+   * augmentation surface is much smaller than the monorepo helper:
+   * layout fixup, pin alignment, docker scripts, .env files, next.config patch.
+   *
+   * Refs: design doc §6.3, spike-results §8.6.
+   */
+  private async scaffoldViaShadcnFlat(config: ProjectConfig, projectPath: string): Promise<void> {
+    const projectName = config.name!;
+    const parentDir = path.dirname(projectPath);
+    const pm = config.architecture.packageManager;
+
+    await fs.mkdir(parentDir, { recursive: true });
+
+    // 1. shadcn init --no-monorepo. Same subdir-creation semantics as the
+    // monorepo path.
+    const shadcnInitCommand =
+      `pnpm dlx shadcn@latest init --preset b0 --template next ` +
+      `--no-monorepo --pointer --silent --name ${projectName} --cwd ${parentDir}`;
+    const result = this.execCommand(shadcnInitCommand, parentDir, 'shadcn init (flat)');
+    if (!result.success) {
+      throw new Error(`[shadcn init failed]: ${result.reason ?? 'check logs'}`);
+    }
+    await fs.access(projectPath);
+
+    // 2. Layout fixup — flat→src/ for parity with non-shadcn flat path
+    // (which uses create-next-app's --src-dir).
+    await moveAppsWebFlatToSrc(projectPath);
+
+    // 3. Pin alignment (shadcn flat omits `packageManager` and `engines`;
+    // `alignPins` adds them for pnpm and is a no-op for non-pnpm).
+    await alignPins(projectPath, pm);
+
+    // 4. Add docker scripts to flat root package.json.
+    await addDockerScripts(projectPath, projectName);
+
+    // 5. .env files at the project root.
+    await this.ensureEnvExample(projectPath);
+
+    // 6. Patch next.config.mjs.
+    await patchNextConfigMjs(projectPath);
+  }
+
   private buildCreateNextAppCommand(config: ProjectConfig, appDirName = `./${config.name}`): string {
     const packageRunner = this.getPackageRunnerDlx(config.architecture.packageManager);
     const flags = [`${packageRunner} ${CREATE_NEXT_APP_VERSION}`, appDirName];
