@@ -1,5 +1,15 @@
 # R1 Phase 0 Spike — Results & Decision
 
+> **Status (2026-05-07): Phase 4 implemented per the spike's go decision.**
+> Landed in commits `755bd3a..eda5d71` on `feat/upgrade-packages` (R1
+> commits 1–4 of 5). The patch sketch in this doc is the implementation
+> outline that actually shipped, with one deliberate divergence:
+> §8.2 layout chose option (a) (`flat → src/` post-init move) for
+> blast-radius reasons rather than the spike-recommended option (b)
+> (template sweep) — see the design doc's §8.2 inline note for
+> rationale. All other open questions resolved per the recommendations
+> here.
+>
 > Phase 0 derisking spike for R1 (the monorepo+shadcn scaffolding refactor).
 > Source spec: [`2026-05-07-monorepo-shadcn-refactor-design.md`](./2026-05-07-monorepo-shadcn-refactor-design.md).
 > Companion procedure (post-R1): [`2026-05-07-monorepo-smoke-test-v2.md`](./2026-05-07-monorepo-smoke-test-v2.md).

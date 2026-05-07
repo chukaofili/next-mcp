@@ -1,5 +1,16 @@
 # Monorepo + shadcn Scaffolding Refactor — Design Doc
 
+> **Status (2026-05-07): Phase 4 shipped on `feat/upgrade-packages`.**
+> See commits `755bd3a..eda5d71` (R1 commits 1–4 of 5). The Phase 0
+> spike's go decision — captured in
+> [`2026-05-07-r1-spike-results.md`](./2026-05-07-r1-spike-results.md) —
+> validated the architecture; Phase 4 implements it. Also landed:
+> Phase 1 (B5 fix, `61d6fde`), Phase 2 (B6 hardening + auth schema-gen
+> verify hook, `d728828`), Phase 3 (B1 dotenv-cli via dlx, `0a584b7`).
+> Inline notes flagged "**Phase 4 landed:**" and "**Phase 0 spike
+> correction:**" mark where the implementation diverged from this
+> doc's pre-implementation guesses.
+>
 > Plan to replace next-mcp's current `create-next-app`-driven monorepo
 > scaffolding with delegation to `shadcn@latest init --monorepo`. Surfaced
 > by the 2026-05-07 manual smoke run on `feat/upgrade-packages` (HEAD
@@ -678,6 +689,17 @@ templates and code references from `apps/web/src/...` to `apps/web/...`.
 but cleaner and the result is more idiomatic. Tracker for *which*
 files/templates need the sweep should be generated as part of Phase 0.
 
+> **Phase 4 landed: option (a)**, overriding the spike-results
+> recommendation of (b). Reason: blast radius. Option (a) is a single
+> mechanical post-init move (`apps/web/{app,components,hooks,lib}` →
+> `apps/web/src/...`) that leaves every existing path resolver and
+> emit-into-`src/` template untouched. Option (b) would have required
+> touching `getAppPath`, `getAuthFilePaths`, `generateNextJSCustomCode`,
+> and the privacy/terms templates in lockstep. The move pass is
+> implemented as `moveAppsWebFlatToSrc` in `src/index.ts` (idempotent;
+> patches `apps/web/tsconfig.json` `paths` and
+> `apps/web/components.json` `tailwind.css` accordingly).
+
 ### 8.3 Version-pin policy
 
 shadcn's monorepo scaffold pins:
@@ -730,6 +752,14 @@ isn't really minimal anymore.
 **Recommendation:** (a) initially, with a changelog note. If user
 feedback flags the behavioral change, revisit.
 
+> **Phase 4 landed: option (a)** as recommended. `monorepo: 'minimal' +
+> uiLibrary: 'shadcn'` produces shadcn's full skeleton (apps/web +
+> packages/ui + packages/eslint-config + packages/typescript-config)
+> with no per-feature db/auth/orpc packages. The smoke v2 doc's Variant
+> C tests `monorepo: 'minimal' + uiLibrary: 'none'`, which keeps Path B
+> semantics (apps/web only, no packages/) — that's still validated by
+> the existing smoke variant.
+
 ### 8.5 How do we guard against shadcn CLI breaking changes?
 
 R1 puts shadcn's CLI on the critical path. shadcn already changed
@@ -750,6 +780,15 @@ this refactor).
 
 **Recommendation:** pin to `shadcn@<known-good>`, plus the periodic CI
 check. Bump deliberately.
+
+> **Phase 4 landed: deferred.** scaffoldViaShadcnMonorepo /
+> scaffoldViaShadcnFlat invoke `pnpm dlx shadcn@latest init …`
+> (unpinned) for now. Pinning is mechanically a one-line change
+> (`shadcn@latest` → `shadcn@<version>`); deferred so the smoke matrix
+> can drift its expectations alongside shadcn's evolving b0 preset
+> without a tight version coupling. Track via a periodic CI smoke run
+> that catches regressions. Revisit if shadcn ships a breaking change
+> that affects the augmentation pipeline.
 
 ### 8.6 What about npm / yarn / bun for the package manager?
 

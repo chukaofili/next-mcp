@@ -1,5 +1,13 @@
 # Monorepo Support — End-to-End Smoke Test v2
 
+> **Status (2026-05-07): R1 has shipped on `feat/upgrade-packages`
+> (commits `755bd3a..eda5d71`).** Path A (shadcn-led) is now the
+> codebase's actual flow when `uiLibrary === 'shadcn'`. Path B
+> (non-shadcn fallback) keeps its v1 shape with the B5 cleanup applied.
+> The smoke driver (`pnpm run smoke`) and the integration suite both
+> exercise this; the manual procedure below stays the canonical
+> install/build/docker validation path.
+>
 > **Forward-looking procedure** — authored against the post-R1 scaffolding
 > architecture described in
 > [`2026-05-07-monorepo-shadcn-refactor-design.md`](./2026-05-07-monorepo-shadcn-refactor-design.md).
