@@ -2616,7 +2616,17 @@ class NextMCPServer {
       // to initialize shadcn/ui and install all components
 
       const appPath = getAppPath(config, projectPath);
-      const useShadcn = config.architecture.uiLibrary === 'shadcn';
+      // `useShadcn` gates emitting `import { Button } from '@/components/ui/button'`
+      // and skipping the local fallback Button component. That import only
+      // resolves once `setup_shadcn` has run its `shadcn add` calls, which
+      // are themselves gated on `!skipInstall`. Pairing
+      // `uiLibrary: 'shadcn' + skipInstall: true` would emit an
+      // unresolvable import; fall back to the local Button under that
+      // combo so the generated project compiles. Users can re-run
+      // `setup_shadcn` after `<pm> install` and swap the imports
+      // themselves if they want the shadcn variant.
+      const useShadcn =
+        config.architecture.uiLibrary === 'shadcn' && !config.architecture.skipInstall;
 
       // Update the existing page.tsx with our custom content using Tailwind CSS
       const pageTsx = `${useShadcn ? "import { Button } from '@/components/ui/button';\n\n" : ''}export default function Home() {
@@ -2786,6 +2796,18 @@ export { Button };
 
       if (useShadcn) {
         components.push('- Using shadcn/ui Button component (call setup_shadcn tool to install)');
+      } else if (
+        config.architecture.uiLibrary === 'shadcn' &&
+        config.architecture.skipInstall
+      ) {
+        // shadcn was requested but skipInstall forced the local-Button
+        // fallback. Surface the manual recovery so users know to swap to
+        // shadcn imports after installing.
+        components.push(
+          `- Created local Button fallback (uiLibrary: 'shadcn' + skipInstall: true).`,
+          `  After running \`${config.architecture.packageManager} install\` and \`setup_shadcn\`,`,
+          `  swap the import in src/app/page.tsx to \`@/components/ui/button\`.`
+        );
       } else {
         components.push('- Created reusable Button component with Tailwind CSS');
       }
@@ -3193,7 +3215,7 @@ export const db = drizzle(pool, { schema });`;
    * Walk is scoped to `apps/web/src` and `apps/web/app` (if present). We do not
    * descend into `node_modules`, `.next`, `.prisma`, or `public`.
    */
-  private async wireAppsWebToDbPackage(_config: ProjectConfig, projectPath: string): Promise<string> {
+  private async wireAppsWebToDbPackage(config: ProjectConfig, projectPath: string): Promise<string> {
     const dbPkgName = await wireAppsWebToWorkspacePackage(
       projectPath,
       'db',
@@ -3211,7 +3233,44 @@ export const db = drizzle(pool, { schema });`;
       }
     }
 
+    // Re-link workspace deps. scaffold_project ran `<pm> install` BEFORE
+    // setup_database, so `apps/web/node_modules` doesn't yet contain the
+    // `@<project>/db` workspace symlink we just appended to its
+    // `dependencies`. Without this rerun, the next `validate_project`,
+    // `dev`, or `build` would fail with "Cannot find module
+    // @<project>/db". skipInstall users opt out of all installs and get
+    // the manual-follow-up message in the success response.
+    await this.reinstallWorkspaceDeps(config, projectPath, '@<project>/db');
+
     return dbPkgName;
+  }
+
+  /**
+   * Re-runs `<pm> install` from the workspace root after a wire helper
+   * mutates `apps/web/package.json`. Skipped under `skipInstall: true` —
+   * those callers explicitly opted out of any package-manager I/O.
+   * Failure is logged but not thrown: the wiring already succeeded
+   * on disk, and re-running install is a recoverable state for the user.
+   */
+  private async reinstallWorkspaceDeps(
+    config: ProjectConfig,
+    projectPath: string,
+    addedDepLabel: string
+  ): Promise<void> {
+    if (config.architecture.skipInstall) return;
+    const pm = config.architecture.packageManager;
+    const result = this.execCommand(
+      `${pm} install`,
+      projectPath,
+      `install workspace deps after wiring ${addedDepLabel}`
+    );
+    if (!result.success) {
+      logger.warn(
+        `[reinstallWorkspaceDeps]: ${pm} install after wiring ${addedDepLabel} ` +
+          `failed — apps/web/node_modules may be missing the new workspace ` +
+          `symlink. Run \`${pm} install\` from the project root to recover.`
+      );
+    }
   }
 
   /**
@@ -3236,7 +3295,7 @@ export const db = drizzle(pool, { schema });`;
    * user-facing instructions.
    */
   private async wireAppsWebToAuthPackage(
-    _config: ProjectConfig,
+    config: ProjectConfig,
     projectPath: string
   ): Promise<string> {
     const authPkgName = await wireAppsWebToWorkspacePackage(
@@ -3271,6 +3330,12 @@ export const db = drizzle(pool, { schema });`;
         ]);
       }
     }
+
+    // Re-link workspace deps — see the matching call in
+    // wireAppsWebToDbPackage for the rationale. Without this rerun,
+    // `@<project>/auth` imports in apps/web cannot be resolved at build
+    // time even though the workspace dep entry is on disk.
+    await this.reinstallWorkspaceDeps(config, projectPath, '@<project>/auth');
 
     return authPkgName;
   }

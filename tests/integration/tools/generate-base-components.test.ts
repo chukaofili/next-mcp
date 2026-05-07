@@ -1,3 +1,4 @@
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -49,7 +50,13 @@ describe('generate_base_components tool', () => {
     expect(text).toContain('Created reusable Button component with Tailwind CSS');
   });
 
-  it('should handle shadcn configuration', async () => {
+  it('falls back to local Button under shadcn + skipInstall and surfaces follow-up', async () => {
+    // Pairing `uiLibrary: 'shadcn'` with `skipInstall: true` (the test
+    // default) used to emit `import { Button } from '@/components/ui/button'`
+    // even though setup_shadcn skipped the registry install — the file
+    // never existed, so the project couldn't build. The fix gates
+    // `useShadcn` on `!skipInstall` and falls back to the local Button
+    // component, surfacing manual recovery in the success message.
     const projectName = `base-components-test_${Date.now()}`;
     const projectPath = path.join(tempDir, projectName);
 
@@ -68,9 +75,16 @@ describe('generate_base_components tool', () => {
 
     expect(client.isSuccess(result)).toBe(true);
 
-    const text = client.getTextContent(result);
-    expect(text).toBeDefined();
-    expect(text).toContain('Using shadcn/ui Button');
+    const text = client.getTextContent(result) ?? '';
+    expect(text).toContain('Created local Button fallback');
+    expect(text).toContain("uiLibrary: 'shadcn' + skipInstall: true");
+    expect(text).toContain('setup_shadcn');
+
+    // page.tsx must NOT import @/components/ui/button (registry never ran).
+    const pageContent = await fs.readFile(path.join(projectPath, 'src/app/page.tsx'), 'utf-8');
+    expect(pageContent).not.toContain("from '@/components/ui/button'");
+    // The local fallback Button IS written so the project compiles.
+    expect(await fileExists(path.join(projectPath, 'src/components/ui/button.tsx'))).toBe(true);
   });
 
   it('should generate components for auth when configured', async () => {
@@ -191,8 +205,11 @@ describe('generate_base_components tool', () => {
     expect(await fileExists(path.join(appPath, 'src/app/page.tsx'))).toBe(true);
     expect(await fileExists(path.join(appPath, 'src/app/api/health/route.ts'))).toBe(true);
 
-    // Custom Button is skipped under shadcn.
-    expect(await fileExists(path.join(appPath, 'src/components/ui/button.tsx'))).toBe(false);
+    // Under shadcn + skipInstall, the registry-add never runs so the
+    // local Button fallback IS written (otherwise the page.tsx import
+    // would be unresolvable). The shadcn-import path runs only when
+    // `setup_shadcn` will actually execute (skipInstall: false).
+    expect(await fileExists(path.join(appPath, 'src/components/ui/button.tsx'))).toBe(true);
 
     // No stray top-level src/ tree in monorepo mode.
     expect(await fileExists(path.join(projectPath, 'src'))).toBe(false);
