@@ -43,9 +43,14 @@ RUN __CACHE_MOUNT__ __PM_INSTALL__
 
 COPY --from=deps /app/out/full/ .
 
-# Copy any .env* files (requires at least one, e.g. .env.example, in $PACKAGE_PATH).
-# Rename .env.${BUILD_ENV} to .env.production so Next.js bakes the right values into the build.
-COPY $PACKAGE_PATH/.env* ./$PACKAGE_PATH/
+# Copy any .env* files from the workspace root into the app dir.
+# In monorepo mode, setup_database/setup_authentication write `.env`,
+# `.env.example`, and `.env.local` at the workspace root (not apps/web), so
+# the COPY must source from `.` (the build context root) for Next.js to bake
+# the right values during `turbo build`. Requires at least one `.env*` to
+# match — `.env.example` is always emitted at the root by setup_database.
+# Rename .env.${BUILD_ENV} to .env.production so Next.js picks it up.
+COPY .env* ./$PACKAGE_PATH/
 RUN if [ -f ./$PACKAGE_PATH/.env.${BUILD_ENV} ]; then \
       cp ./$PACKAGE_PATH/.env.${BUILD_ENV} ./$PACKAGE_PATH/.env.production; \
     fi

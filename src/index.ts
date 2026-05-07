@@ -857,7 +857,7 @@ export function substituteMigrateDockerfilePlaceholders(
       const schemaDir = getMigrateDrizzleSchemaDir(config);
       const outDir = getMigrateDrizzleOutDir(config);
       migrateCopy = [
-        `COPY package.json ${lockfile}* pnpm-workspace.yaml* ./`,
+        `COPY package.json ${lockfile}* ./`,
         `COPY ${configPath} ./${configPath}`,
         `COPY ${schemaDir} ./${schemaDir}`,
         `COPY ${outDir} ./${outDir}`,
@@ -879,12 +879,10 @@ export function substituteMigrateDockerfilePlaceholders(
       // Flat mode: keep the legacy targeted COPY pattern. `prisma.config.ts*`
       // glob handles the case where the file doesn't exist.
       //
-      // Note: `pnpm-workspace.yaml*` is a no-op glob in flat mode (the file is
-      // never emitted there) and remains for any PM. We keep the line — rather
-      // than gate it on `pm === 'pnpm'` — so the COPY shape stays uniform
-      // across PMs; the `*` makes it a safe match-zero on disk.
+      // Flat scaffolds never emit `pnpm-workspace.yaml`, so we don't list it
+      // here — the classic builder fails on a glob that matches zero files.
       migrateCopy = [
-        `COPY package.json ${lockfile}* pnpm-workspace.yaml* ./`,
+        `COPY package.json ${lockfile}* ./`,
         `COPY ${schemaHostPath} ./${schemaHostPath}`,
         'COPY prisma.config.ts* ./',
       ].join('\n');
@@ -1743,6 +1741,13 @@ class NextMCPServer {
       );
       await fs.writeFile(path.join(projectPath, 'pnpm-workspace.yaml'), workspaceTpl);
     }
+
+    // 6. .env.example at the workspace root. setup_database/setup_authentication
+    // also write to the workspace root, but they're config-gated; this guarantees
+    // at least one `.env*` file exists at the root for `Dockerfile.monorepo`'s
+    // `COPY .env* ./$PACKAGE_PATH/` step to succeed even when database/auth are
+    // both 'none'. Idempotent — overwrites only when missing.
+    await this.ensureEnvExample(projectPath);
   }
 
   /**
