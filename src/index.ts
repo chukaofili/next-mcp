@@ -541,6 +541,247 @@ export function formatExecDiagnostic(result: {
 }
 
 /**
+ * Augmentation primitives for the shadcn-led monorepo scaffold (R1 / Phase 4).
+ * Each is a pure file-system operation against an already-shadcn-init'd
+ * project. Composed by {@link NextMCPServer#scaffoldViaShadcnMonorepo} and
+ * {@link NextMCPServer#scaffoldViaShadcnFlat}; tested directly against
+ * temp-dir fixtures in `tests/unit/shadcn-init-augmentations.test.ts`.
+ *
+ * Refs: docs/plans/2026-05-07-monorepo-shadcn-refactor-design.md §6.2,
+ * docs/plans/2026-05-07-r1-spike-results.md (the patch sketch + §8.1/§8.3
+ * corrections from Phase 0).
+ */
+
+const RENAME_SCAN_EXTENSIONS = new Set(['.json', '.ts', '.tsx', '.js', '.mjs', '.md', '.yaml', '.yml']);
+const RENAME_SKIP_DIRS = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'coverage']);
+const RENAME_SKIP_FILES = new Set(['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lock', 'bun.lockb']);
+
+/**
+ * Project-scoped rename pass: rewrites the literal `@workspace/` substring
+ * to `@<projectName>/` across all source/config files in the project tree,
+ * AND patches `apps/web/package.json.name` from the unscoped `"web"`
+ * (shadcn's emitted default) to `"@<projectName>/web"`. Both edits are
+ * required: the substring rewrite handles every `@workspace/...` reference,
+ * but `apps/web/package.json.name === "web"` lacks the `@workspace/`
+ * substring, so a literal sweep alone misses it. See spike-results §8.1
+ * for the empirical findings driving this shape.
+ *
+ * Skips `node_modules/`, `.git/`, lockfiles, and other build artefacts.
+ * Idempotent — re-running on a project where the rename already happened
+ * is a no-op.
+ */
+export async function renameWorkspaceScope(projectPath: string, projectName: string): Promise<void> {
+  const oldScope = '@workspace/';
+  const newScope = `@${projectName}/`;
+
+  async function walk(dir: string): Promise<void> {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (RENAME_SKIP_DIRS.has(entry.name)) continue;
+        await walk(path.join(dir, entry.name));
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (RENAME_SKIP_FILES.has(entry.name)) continue;
+      const ext = path.extname(entry.name);
+      if (!RENAME_SCAN_EXTENSIONS.has(ext)) continue;
+
+      const filePath = path.join(dir, entry.name);
+      const content = await fs.readFile(filePath, 'utf-8');
+      if (!content.includes(oldScope)) continue;
+      await fs.writeFile(filePath, content.split(oldScope).join(newScope));
+    }
+  }
+
+  await walk(projectPath);
+
+  // Apps/web/package.json.name fixup. shadcn emits `name: "web"` (unscoped),
+  // so the substring rewrite above does not touch it.
+  const appPkgPath = path.join(projectPath, 'apps/web/package.json');
+  try {
+    const raw = await fs.readFile(appPkgPath, 'utf-8');
+    const pkg = JSON.parse(raw);
+    const desiredName = `@${projectName}/web`;
+    if (pkg.name !== desiredName) {
+      pkg.name = desiredName;
+      await fs.writeFile(appPkgPath, JSON.stringify(pkg, null, 2) + '\n');
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    // No apps/web/package.json yet (e.g. flat-mode caller invoked this
+    // helper for monorepo-shape rewrites only) — fine to skip.
+  }
+}
+
+/**
+ * Append the catalog: block (mirroring {@link CATALOG_VERSIONS}) to the
+ * shadcn-emitted `pnpm-workspace.yaml`. shadcn ships only `packages: [...]`;
+ * the catalog block is next-mcp's contribution for shared dep pinning.
+ *
+ * Idempotent — if a `catalog:` header is already present, returns without
+ * touching the file.
+ */
+export async function appendCatalogBlock(projectPath: string): Promise<void> {
+  const filePath = path.join(projectPath, 'pnpm-workspace.yaml');
+  const current = await fs.readFile(filePath, 'utf-8');
+  if (/^catalog:/m.test(current)) return; // already done
+
+  const lines: string[] = [];
+  lines.push('');
+  lines.push('catalog:');
+  for (const [key, value] of Object.entries(CATALOG_VERSIONS)) {
+    // Quote keys that need it (anything starting with @ or containing /).
+    const k = /^[a-z0-9_-]+$/i.test(key) ? key : `'${key}'`;
+    lines.push(`  ${k}: ${value}`);
+  }
+  const next = current.replace(/\s*$/, '\n') + lines.join('\n') + '\n';
+  await fs.writeFile(filePath, next);
+}
+
+/**
+ * Pin alignment pass — applied after the rename pass. shadcn's monorepo
+ * scaffold pins `pnpm@9.15.9`, `node>=20`, and `typescript: 5.9.3`;
+ * next-mcp's policy is `pnpm@10.18.0`, `node>=24`, and `typescript: ^6`
+ * (see CATALOG_VERSIONS). Without this pass the typescript pin diverges
+ * from the catalog and `tsc` resolves the older version (Phase 0 spike
+ * §8.3 finding).
+ *
+ * For non-pnpm package managers the `packageManager` field is removed
+ * (it locks Corepack to pnpm) and `engines.pnpm` is dropped — the
+ * `workspaces` field handling lives elsewhere (see scaffoldViaShadcnMonorepo).
+ */
+export async function alignPins(projectPath: string, packageManager: PackageManager): Promise<void> {
+  const filePath = path.join(projectPath, 'package.json');
+  const pkg = JSON.parse(await fs.readFile(filePath, 'utf-8'));
+
+  pkg.engines = { ...(pkg.engines ?? {}), node: '>=24' };
+
+  if (packageManager === 'pnpm') {
+    pkg.packageManager = 'pnpm@10.18.0';
+    pkg.engines.pnpm = '>=10';
+  } else {
+    delete pkg.packageManager;
+    delete pkg.engines.pnpm;
+  }
+
+  pkg.devDependencies = { ...(pkg.devDependencies ?? {}) };
+  if (typeof pkg.devDependencies.typescript === 'string') {
+    pkg.devDependencies.typescript = CATALOG_VERSIONS.typescript;
+  }
+
+  await fs.writeFile(filePath, JSON.stringify(pkg, null, 2) + '\n');
+}
+
+/**
+ * Replace shadcn's `packages/typescript-config/{base,nextjs,react-library}.json`
+ * with next-mcp's own templates. shadcn's `base.json` clamps `lib` to
+ * `["es2022", "DOM", "DOM.Iterable"]`, which suppresses node-globals
+ * resolution for non-Next packages (`process` is undefined under that
+ * lib set). next-mcp's base.json doesn't clamp `lib`, so the swap
+ * resolves typecheck across all packages without per-package patches.
+ * See spike-results "B8 withdrawn" note for the bisect that surfaced
+ * this.
+ */
+export async function swapTypescriptConfig(projectPath: string): Promise<void> {
+  const tscDir = path.join(projectPath, 'packages/typescript-config');
+  const templatesDir = path.join(__dirname, 'templates/packages/typescript-config');
+  for (const name of ['base.json', 'nextjs.json', 'react-library.json']) {
+    const src = path.join(templatesDir, name);
+    const dest = path.join(tscDir, name);
+    const content = await fs.readFile(src, 'utf-8');
+    await fs.writeFile(dest, content);
+  }
+}
+
+/**
+ * Layout fixup (§8.2 option (a)): move shadcn's flat
+ * `apps/web/{app,components,hooks,lib}` under `apps/web/src/...`, then
+ * patch `apps/web/tsconfig.json` `paths` (`@/*` from `["./*"]` to
+ * `["./src/*"]`) and `apps/web/components.json` `tailwind.css` (one
+ * deeper relative depth). Choosing option (a) over (b) keeps every
+ * existing template and path resolver in next-mcp working unchanged —
+ * the trade-off is one mechanical move pass, no template sweep.
+ *
+ * Idempotent — if `apps/web/src/app` already exists, the move is skipped.
+ */
+export async function moveAppsWebFlatToSrc(appPath: string): Promise<void> {
+  const srcDir = path.join(appPath, 'src');
+  const folders = ['app', 'components', 'hooks', 'lib'];
+
+  // Already migrated?
+  if (existsSync(path.join(srcDir, 'app'))) return;
+
+  await fs.mkdir(srcDir, { recursive: true });
+  for (const folder of folders) {
+    const from = path.join(appPath, folder);
+    if (!existsSync(from)) continue;
+    const to = path.join(srcDir, folder);
+    await fs.rename(from, to);
+  }
+
+  // Patch apps/web/tsconfig.json `paths` mapping.
+  const tscPath = path.join(appPath, 'tsconfig.json');
+  if (existsSync(tscPath)) {
+    const tsc = JSON.parse(await fs.readFile(tscPath, 'utf-8'));
+    if (tsc.compilerOptions?.paths?.['@/*']) {
+      tsc.compilerOptions.paths['@/*'] = ['./src/*'];
+      await fs.writeFile(tscPath, JSON.stringify(tsc, null, 2) + '\n');
+    }
+  }
+
+  // Patch apps/web/components.json `tailwind.css` to account for the
+  // extra `src/` level in the relative path.
+  const cjPath = path.join(appPath, 'components.json');
+  if (existsSync(cjPath)) {
+    const cj = JSON.parse(await fs.readFile(cjPath, 'utf-8'));
+    if (typeof cj.tailwind?.css === 'string' && cj.tailwind.css.startsWith('../../')) {
+      cj.tailwind.css = `../${cj.tailwind.css}`;
+      await fs.writeFile(cjPath, JSON.stringify(cj, null, 2) + '\n');
+    }
+  }
+}
+
+/**
+ * Add docker:* scripts to the workspace-root package.json. Mirrors the
+ * block previously emitted inline by `scaffoldMonorepoRoot` (lines
+ * 1543-1549 pre-R1). Project name is interpolated into the image tag.
+ */
+export async function addDockerScripts(projectPath: string, projectName: string): Promise<void> {
+  const filePath = path.join(projectPath, 'package.json');
+  const pkg = JSON.parse(await fs.readFile(filePath, 'utf-8'));
+  pkg.scripts = {
+    ...(pkg.scripts ?? {}),
+    'docker:build': `docker build -t ${projectName} .`,
+    'docker:run': `docker run -p 3000:3000 ${projectName}`,
+    'docker:dev:up': 'docker-compose -f docker-compose.yml up',
+    'docker:dev:down': 'docker-compose -f docker-compose.yml down',
+  };
+  await fs.writeFile(filePath, JSON.stringify(pkg, null, 2) + '\n');
+}
+
+/**
+ * Patch shadcn's emitted `apps/web/next.config.mjs` to add
+ * `output: 'standalone'` (required by next-mcp's monorepo Dockerfile,
+ * which expects `apps/web/.next/standalone/`). The shadcn-emitted
+ * config does not include `output`, so this is purely additive.
+ *
+ * Idempotent — if an `output:` field is already present, the file is
+ * left untouched.
+ */
+export async function patchNextConfigMjs(appPath: string): Promise<void> {
+  const filePath = path.join(appPath, 'next.config.mjs');
+  if (!existsSync(filePath)) return;
+  const content = await fs.readFile(filePath, 'utf-8');
+  if (/output\s*:\s*['"]standalone['"]/.test(content)) return;
+
+  // Insert `output: "standalone",` as the first key in the config object.
+  // The shape emitted by shadcn is a plain `const nextConfig = { ... }`.
+  const next = content.replace(/const nextConfig\s*=\s*\{/, `const nextConfig = {\n  output: "standalone",`);
+  await fs.writeFile(filePath, next);
+}
+
+/**
  * Top-level export of the package-runner-dlx command for a given package
  * manager. Mirrors {@link NextMCPServer#getPackageRunnerDlx} (instance
  * method) so non-class call sites (helpers like {@link getAuthGenerateScript})
