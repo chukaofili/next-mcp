@@ -1,26 +1,14 @@
-import { AuthView } from "@daveyplate/better-auth-ui";
-import { authViewPaths } from "@daveyplate/better-auth-ui/server";
+import { Auth } from "@/components/auth/auth";
 import Link from "next/link";
 
 /**
- * provides the following auth paths:
- * /auth/sign-in – Sign in via email/password and social providers
- * /auth/sign-up – New account registration
- * /auth/magic-link – Email login without a password
- * /auth/forgot-password – Trigger email to reset forgotten password
- * /auth/two-factor – Two-factor authentication
- * /auth/recover-account – Recover account via backup code
- * /auth/reset-password – Set new password after receiving reset link
- * /auth/sign-out – Log the user out of the application
- * /auth/callback – Internal route to handle Auth callbacks
- * /auth/accept-invitation – Accept an invitation to an organization
+ * Auth views provided by the shadcn-registry install of better-auth-ui:
+ * /auth/sign-in, /auth/sign-up, /auth/forgot-password,
+ * /auth/reset-password, /auth/sign-out
+ *
+ * Plugin-introduced views (e.g. /auth/magic-link) are also resolved
+ * by <Auth />'s internal router when the matching plugin is registered.
  */
-
-export const dynamicParams = false;
-
-export function generateStaticParams() {
-  return Object.values(authViewPaths).map((path) => ({ path }));
-}
 
 interface AuthPageProps {
   params: Promise<{ path: string }>;
@@ -31,9 +19,9 @@ export default async function AuthPage({ params }: AuthPageProps) {
   return (
     <main className="flex min-h-screen items-center justify-center">
       <div className="container flex grow flex-col items-center justify-center self-center p-4 md:p-6">
-        <AuthView path={path} />
+        <Auth path={path} />
 
-        {!["callback", "sign-out"].includes(path) && (
+        {!["sign-out"].includes(path) && (
           <div className="my-4">
             <p className="w-3xs text-center text-muted-foreground text-xs">
               By continuing, you agree to our{" "}

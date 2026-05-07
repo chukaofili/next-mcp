@@ -1,28 +1,50 @@
 import { betterAuth } from "better-auth";
+import { prismaAdapter } from "better-auth/adapters/prisma"
+import type { PrismaClient } from "@smoke-full/db"
 
 __ADAPTER_IMPORT__
 
-export const auth = betterAuth({
-  database: __DATABASE_CONFIG__,
-  emailAndPassword: {
-    enabled: true,
-  },
-  session: {
-    cookieCache: {
+export const createBetterAuth = (db: PrismaClient) =>
+  betterAuth({
+     database: __DATABASE_CONFIG__,
+    emailAndPassword: {
       enabled: true,
-      maxAge: 5 * 60,
     },
-    expiresIn: 60 * 60 * 24 * 7, // 7 days
-    updateAge: 60 * 60 * 24, // 1 day (every 1 day the session expiration is updated)
-  },
-  socialProviders: {
-    // Uncomment and configure OAuth providers as needed
-    // google: {
-    //   prompt: "select_account", 
-    //   clientId: process.env.GOOGLE_CLIENT_ID as string,
-    //   clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
-    // },
-  },
-});
+    session: {
+      cookieCache: {
+        enabled: true,
+        maxAge: 5 * 60,
+      },
+      expiresIn: 60 * 60 * 24 * 7, // 7 days
+      updateAge: 60 * 60 * 24, // 1 day (every 1 day the session expiration is updated)
+    },
+    socialProviders: {
+      // Uncomment and configure OAuth providers as needed
+      // google: {
+      //   prompt: "select_account",
+      //   clientId: process.env.GOOGLE_CLIENT_ID as string,
+      //   clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
+      // },
+    },
+  })
 
-export type Session = typeof auth.$Infer.Session;
+/**
+ * The fully-typed auth instance type.
+ * Use this for type inference instead of `ReturnType<typeof betterAuth>`.
+ */
+export type Auth = ReturnType<typeof createBetterAuth>
+
+let authInstance: Auth | null = null
+
+export const createAuth = (deps: { db: PrismaClient }): Auth => {
+  if (authInstance) return authInstance
+
+  authInstance = createBetterAuth(deps.db)
+
+  return authInstance
+}
+
+export const destroyAuthInstance = async (): Promise<void> => {
+  authInstance = null
+}
+

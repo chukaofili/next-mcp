@@ -1,27 +1,30 @@
-"use client";
+'use client';
 
-import { AuthUIProvider } from "@daveyplate/better-auth-ui";
-import { authClient } from "@/lib/auth-client";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { AuthProvider as BetterAuthUIProvider } from '@/components/auth/auth-provider';
+import { authClient } from '__AUTH_CLIENT_IMPORT__';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
+/**
+ * Project-specific wrapper around the shadcn-registry-installed AuthProvider
+ * (see `src/components/auth/auth-provider.tsx`). Wires up the better-auth
+ * client, Next.js routing, and Link component, then re-exports as
+ * `AuthProvider` for use in the root layout.
+ */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   return (
-    <AuthUIProvider
+    <BetterAuthUIProvider
       authClient={authClient}
       navigate={router.push}
       replace={router.replace}
       onSessionChange={() => {
-        // Clear router cache (protected routes)
         router.refresh();
       }}
-      nameRequired
-      emailVerification
       Link={Link}
     >
       {children}
-    </AuthUIProvider>
+    </BetterAuthUIProvider>
   );
 }

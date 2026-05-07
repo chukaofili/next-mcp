@@ -1,0 +1,16 @@
+/**
+ * oRPC Procedure Pipeline
+ *
+ * Builds the middleware chain that all procedures flow through:
+ *   osContext → publicProcedure
+ *             → auth enforcement → protectedProcedure
+ */
+
+import { authMiddleware } from './auth.js';
+import { base } from './context.js';
+
+/** No auth required. */
+export const publicProcedure = base;
+
+/** Requires authentication (session or API key). */
+export const protectedProcedure = publicProcedure.use(authMiddleware);

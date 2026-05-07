@@ -1,6 +1,6 @@
 # @chukaofili/next-mcp
 
-A Model Context Protocol (MCP) server for scaffolding production-ready Next.js applications with Docker support, authentication, database integration, and more.
+Scaffold production-ready Next.js apps (flat or workspace) with Docker, auth, db, and shadcn/ui — driven via MCP.
 
 [![npm version](https://badge.fury.io/js/%40chukaofili%2Fnext-mcp.svg)](https://www.npmjs.com/package/@chukaofili/next-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -14,6 +14,11 @@ A Model Context Protocol (MCP) server for scaffolding production-ready Next.js a
 - **State Management**: Optional Zustand or Redux integration
 - **Testing**: Built-in support for Vitest, Jest, or Playwright
 - **Docker Support**: Production-ready Dockerfile and docker-compose.yml generation
+- **Monorepo modes**: Flat, `minimal` (apps/web + workspace root), or `full` (apps/web + `packages/{db,auth,ui,orpc,eslint-config,typescript-config}`)
+- **RPC layer**: Optional oRPC integration (full-mode only) — emits `packages/orpc` with router, middleware, and procedure scaffolding
+- **Migrate Dockerfile**: Templated `Dockerfile.migrate` covers both Prisma (`migrate deploy`) and Drizzle (`drizzle-kit migrate`) — run via `docker compose run --rm migrate`
+- **Schema-validated configuration**: Illegal combinations (better-auth without a database, drizzle with mongodb, oRPC without full-mode, etc.) are rejected at config-parse time with actionable errors
+- **Headless smoke driver**: `pnpm run smoke` runs 5 preset configs through the full tool sequence in ~6s — CI signal on every PR
 
 ## Installation
 
@@ -60,16 +65,28 @@ Add to your Cursor configuration file (`~/.cursor/mcp.json`):
 
 Create a complete Next.js project with your specified configuration.
 
-**Key Configuration Options:**
+**Key Configuration Options** (defaults shown):
 
-- `typescript` (default: `true`): Enable TypeScript
-- `database`: `none`, `postgres`, `mysql`, `mongodb`, `sqlite`
-- `orm`: `none`, `prisma`, `drizzle`, `mongoose`
-- `auth`: `none`, `better-auth`
-- `uiLibrary`: `none`, `shadcn`
-- `stateManagement`: `none`, `zustand`, `redux`
-- `testing`: `none`, `jest`, `vitest`, `playwright`
-- `packageManager`: `npm`, `pnpm`, `yarn`, `bun`
+- `typescript` — `true`. Enable TypeScript.
+- `reactCompiler` — `false`. Enable the experimental React Compiler.
+- `skipInstall` — `false`. Skip package-manager install (useful in CI).
+- `packageManager` — `pnpm`. One of `npm`, `pnpm`, `yarn`, `bun`.
+- `database` — `postgres`. One of `none`, `postgres`, `mysql`, `mongodb`, `sqlite`.
+- `orm` — `prisma`. One of `none`, `prisma`, `drizzle`, `mongoose`.
+- `auth` — `better-auth`. One of `none`, `better-auth`.
+- `uiLibrary` — `shadcn`. One of `none`, `shadcn`.
+- `stateManagement` — `none`. One of `none`, `zustand`, `redux`.
+- `testing` — `none`. One of `none`, `jest`, `vitest`, `playwright`.
+- `monorepo` — `none`. One of `none` (flat), `minimal` (workspace + `apps/web`), `full` (workspace + opinionated `packages/*`).
+- `rpc` — `none`. One of `none`, `orpc`. `orpc` requires `monorepo: 'full'`.
+
+**Full-mode emission gates.** In `monorepo: 'full'`, the `packages/*` directories appear conditionally:
+
+- `packages/db` — when `database !== 'none'` and `orm !== 'none'`
+- `packages/auth` — when `auth === 'better-auth'` (and a db package exists)
+- `packages/ui` — when `uiLibrary === 'shadcn'`
+- `packages/orpc` — when `rpc === 'orpc'`
+- `packages/eslint-config`, `packages/typescript-config` — always emitted in full mode
 
 **Example:**
 
@@ -78,11 +95,13 @@ Create a complete Next.js project with your specified configuration.
   "config": {
     "name": "my-awesome-app",
     "architecture": {
+      "monorepo": "full",
       "typescript": true,
       "database": "postgres",
       "orm": "prisma",
       "auth": "better-auth",
       "uiLibrary": "shadcn",
+      "rpc": "orpc",
       "stateManagement": "zustand",
       "testing": "vitest"
     }
@@ -93,43 +112,51 @@ Create a complete Next.js project with your specified configuration.
 
 ### Other Tools
 
-- **generate_dockerfile**: Generate production-ready Docker configuration
-- **setup_shadcn**: Initialize shadcn/ui with all components
-- **generate_base_components**: Generate essential React components and layouts
-- **setup_database**: Configure database connection and migrations
-- **setup_authentication**: Configure better-auth with login/signup pages
-- **validate_project**: Run comprehensive validation checks
-- **generate_readme**: Generate comprehensive project documentation
+- **generate_dockerfile** — Generate production-ready Docker configuration. Selects between flat-mode `Dockerfile` and `Dockerfile.monorepo` (turbo-prune multi-stage build) based on `monorepo`. Emits `Dockerfile.migrate` for prisma + drizzle.
+- **setup_shadcn** — Initialize shadcn/ui with all components. In `monorepo: 'full' + uiLibrary: 'shadcn'`, runs `shadcn init` in both `apps/web` and `packages/ui`.
+- **generate_base_components** — Generate essential React components and layouts (routed through `apps/web` in monorepo modes).
+- **setup_database** — Configure database connection and migrations. In full mode (with a db + orm), routes sources into `packages/db`.
+- **setup_authentication** — Configure better-auth with login/signup pages. In full mode, routes server config into `packages/auth` and wires `apps/web` against it as a `workspace:*` dep.
+- **validate_project** — Run comprehensive validation checks.
+- **generate_readme** — Generate comprehensive project documentation.
+
+### Schema Constraints
+
+`ProjectConfigSchema` enforces three cross-field rules at config-parse time. Violations surface as Zod errors before any tool work begins.
+
+- **better-auth requires a database.** Setting `auth: 'better-auth'` with `database: 'none'` is rejected with: _"Better Auth requires a database. Set architecture.database to one of: postgres, mysql, mongodb, sqlite."_
+- **ORM/database compatibility.** `mongoose` only pairs with `mongodb`; `drizzle` excludes `mongodb`; `prisma` accepts all four. The error message names the offending pair and lists the valid databases for the chosen ORM (e.g. _"Invalid combination: orm 'drizzle' does not support database 'mongodb'. Valid databases for drizzle: postgres, mysql, sqlite"_).
+- **oRPC requires full mode.** Setting `rpc: 'orpc'` with `monorepo !== 'full'` is rejected with: _"rpc: 'orpc' requires monorepo: 'full'"_.
 
 ## Example Workflow
 
-1. **Create the project:**
+A typical full-mode flow exercises all eight tools in sequence:
 
-   ```text
-   "Use next-mcp to scaffold a new Next.js project called 'my-app' with PostgreSQL, Prisma, and better-auth"
-   ```
-
-2. **Add Docker support:**
-
-   ```text
-   "Generate Dockerfile and docker-compose.yml for the project"
-   ```
-
-3. **Set up UI components:**
-   ```text
-   "Initialize shadcn/ui and generate base components"
-   ```
+1. **Scaffold the workspace.** _"Use next-mcp to scaffold a project named 'my-app' with `monorepo: 'full'`, postgres + prisma, better-auth, shadcn, and orpc."_
+2. **Wire the database package.** _"Run setup_database against the project."_ — emits `packages/db/{prisma,src}` and adds `@my-app/db: workspace:*` to `apps/web/package.json`.
+3. **Wire authentication.** _"Run setup_authentication."_ — emits `packages/auth/src/{server,client}.ts` and login/signup routes under `apps/web/src/app`.
+4. **Initialize shadcn/ui.** _"Run setup_shadcn."_ — initializes `apps/web` and `packages/ui`, installs all components into `packages/ui`.
+5. **Generate Docker assets.** _"Run generate_dockerfile."_ — emits `Dockerfile.monorepo`, `Dockerfile.migrate`, `docker-compose.yml`, and `.dockerignore`.
+6. **Generate base components.** _"Run generate_base_components."_ — pages and layouts under `apps/web/src/app`.
+7. **Generate the README.** _"Run generate_readme."_
+8. **Validate.** _"Run validate_project."_
 
 ## Development
 
-### Build and Test
+### Build, test, smoke
 
 ```bash
 # Build
 pnpm build
 
-# Run tests
+# Run tests (vitest)
 pnpm test
+
+# Run all five smoke presets (~6s total, CI-safe)
+pnpm smoke
+
+# Run a single preset
+pnpm smoke variant-d-flat-regression
 
 # Run with MCP Inspector
 pnpm inspector
@@ -139,20 +166,22 @@ pnpm lint
 pnpm format
 ```
 
+The smoke driver (`tools/smoke.ts`) drives the MCP server over stdio for five preset configs (flat, minimal, full × 3 variants) running the canonical 8-tool sequence end-to-end. It runs on every PR via CI.
+
 ### Project Structure
 
 ```text
 next-mcp/
 ├── src/
-│   ├── index.ts              # Main MCP server
-│   └── templates/            # Project templates
-│       ├── auth/
-│       ├── database/
-│       └── docker/
+│   ├── index.ts              # MCP server (single-file; ProjectConfigSchema, helpers, NextMCPServer class)
+│   └── templates/            # Project templates (auth, database, docker, packages, root files)
+├── tools/
+│   └── smoke.ts              # Headless smoke driver (5 presets, runs in CI)
 ├── tests/
-│   ├── unit/
-│   └── integration/
-└── dist/                     # Compiled output
+│   ├── unit/                 # Pure-function tests
+│   └── integration/          # End-to-end tool tests via MCPTestClient
+└── docs/
+    └── plans/                # Design docs, implementation plans, smoke procedure, fix punch list
 ```
 
 ## Environment Variables
@@ -191,6 +220,8 @@ tail -f ~/.next-mcp/next-mcp-test.log
 2. Verify the project is built (`pnpm build` if running locally)
 3. Ensure Node.js >= 24 is installed
 4. Check logs in `~/.next-mcp/next-mcp.log`
+
+If MCP transport seems off but you want to verify generation works, `pnpm smoke` is the fastest path — it bypasses any client-side wiring and runs the server directly over stdio.
 
 ## Contributing
 

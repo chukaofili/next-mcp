@@ -23,36 +23,40 @@
     "test:coverage": "vitest run --coverage",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
-    "lint": "eslint src/**/*.ts tests/**/*.ts",
-    "format": "prettier --write src/**/*.ts tests/**/*.ts",
+    "smoke": "tsx tools/smoke.ts",
+    "refresh-shadcn-fixtures": "bash tools/refresh-shadcn-fixtures.sh",
+    "lint": "eslint src/**/*.ts tests/**/*.ts tools/**/*.ts",
+    "format": "prettier --write src/**/*.ts tests/**/*.ts tools/**/*.ts",
     "prebuild": "pnpm run lint && pnpm clean",
     "postbuild": "chmod +x dist/index.js && cp -r src/templates dist/templates",
     "pretest": "pnpm run build",
-    "pretest:integration": "pnpm run build"
+    "pretest:integration": "pnpm run build",
+    "presmoke": "pnpm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.20.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "unique-names-generator": "^4.7.1",
-    "winston": "^3.18.3",
-    "zod": "^4.1.12"
+    "winston": "^3.19.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@eslint/css": "^0.13.0",
-    "@eslint/js": "^9.37.0",
-    "@eslint/json": "^0.13.2",
-    "@eslint/markdown": "^7.4.0",
-    "@ianvs/prettier-plugin-sort-imports": "^4.7.0",
+    "@eslint/css": "^1.2.0",
+    "@eslint/js": "^10.0.1",
+    "@eslint/json": "^1.2.0",
+    "@eslint/markdown": "^8.0.1",
+    "@ianvs/prettier-plugin-sort-imports": "^4.7.1",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^24.7.2",
-    "@vitest/coverage-v8": "4.0.3",
-    "@vitest/ui": "^4.0.3",
-    "eslint": "^9.37.0",
-    "globals": "^16.4.0",
-    "prettier": "^3.6.2",
-    "shadcn": "^3.5.0",
-    "typescript": "^5",
-    "typescript-eslint": "^8.46.2",
-    "vitest": "^4.0.3"
+    "@types/node": "^25.6.0",
+    "@vitest/coverage-v8": "^4.1.5",
+    "@vitest/ui": "^4.1.5",
+    "eslint": "^10.3.0",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.3",
+    "shadcn": "^4.7.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.2",
+    "vitest": "^4.1.5"
   },
   "files": [
     "dist/**/*",
@@ -90,5 +94,5 @@
     "url": "https://github.com/chukaofili/next-mcp/issues"
   },
   "homepage": "https://github.com/chukaofili/next-mcp#readme",
-  "packageManager": "pnpm@10.24.0+sha512.01ff8ae71b4419903b65c60fb2dc9d34cf8bb6e06d03bde112ef38f7a34d6904c424ba66bea5cdcf12890230bf39f9580473140ed9c946fef328b6e5238a345a"
+  "packageManager": "pnpm@10.33.3+sha512.a19744364a7e248b92657a4ca5973f9354d21caf982579674b1c539f32c7420c47138ad8b1254df07aba9bc782d9b3029e3db34d5dbff974326eb74dac8ff489"
 }

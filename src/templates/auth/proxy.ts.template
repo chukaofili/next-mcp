@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { getSessionCookie } from "better-auth/cookies";
+import { getSessionCookie } from "__BETTER_AUTH_COOKIES_IMPORT__";
 
 /**
  * Proxy for Route Protection

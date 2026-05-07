@@ -42,22 +42,44 @@ describe('ProjectConfig', () => {
   });
 
   it('should support all database options', () => {
-    const databases = ['none', 'postgres', 'mysql', 'mongodb', 'sqlite'] as const;
+    // For each database, pair with an ORM that supports it (and disable auth
+    // so the better-auth refine doesn't bite on database:'none').
+    const cases: Array<{
+      database: 'none' | 'postgres' | 'mysql' | 'mongodb' | 'sqlite';
+      orm: 'none' | 'prisma' | 'drizzle' | 'mongoose';
+    }> = [
+      { database: 'none', orm: 'none' },
+      { database: 'postgres', orm: 'prisma' },
+      { database: 'mysql', orm: 'prisma' },
+      { database: 'mongodb', orm: 'mongoose' },
+      { database: 'sqlite', orm: 'drizzle' },
+    ];
 
-    databases.forEach((db) => {
+    cases.forEach(({ database, orm }) => {
       const config = createMockConfig({
-        architecture: { database: db },
+        architecture: { database, orm, auth: database === 'none' ? 'none' : 'better-auth' },
       });
-      expect(config.architecture.database).toBe(db);
+      expect(config.architecture.database).toBe(database);
     });
   });
 
   it('should support all ORM options', () => {
-    const orms = ['none', 'prisma', 'drizzle', 'mongoose'] as const;
+    // Pair each ORM with a compatible database. `none` ORM is compatible with
+    // any database; the others need a specific one (and a non-`none` database
+    // also satisfies the better-auth refine without disabling auth).
+    const cases: Array<{
+      orm: 'none' | 'prisma' | 'drizzle' | 'mongoose';
+      database: 'none' | 'postgres' | 'mysql' | 'mongodb' | 'sqlite';
+    }> = [
+      { orm: 'none', database: 'postgres' },
+      { orm: 'prisma', database: 'postgres' },
+      { orm: 'drizzle', database: 'postgres' },
+      { orm: 'mongoose', database: 'mongodb' },
+    ];
 
-    orms.forEach((orm) => {
+    cases.forEach(({ orm, database }) => {
       const config = createMockConfig({
-        architecture: { orm },
+        architecture: { orm, database },
       });
       expect(config.architecture.orm).toBe(orm);
     });
@@ -243,5 +265,58 @@ describe('ProjectConfigSchema Zod Validation', () => {
     };
 
     expect(() => ProjectConfigSchema.parse(invalidConfig)).toThrow(ZodError);
+  });
+});
+
+describe('ProjectConfigSchema — monorepo & rpc', () => {
+  it('defaults monorepo to "none" and rpc to "none"', () => {
+    const c = ProjectConfigSchema.parse({ name: 'x', architecture: {} });
+    expect(c.architecture.monorepo).toBe('none');
+    expect(c.architecture.rpc).toBe('none');
+  });
+
+  it('accepts valid combinations', () => {
+    expect(() =>
+      ProjectConfigSchema.parse({
+        name: 'x',
+        architecture: { monorepo: 'full', rpc: 'orpc' },
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects rpc:orpc without monorepo:full', () => {
+    expect(() =>
+      ProjectConfigSchema.parse({
+        name: 'x',
+        architecture: { monorepo: 'minimal', rpc: 'orpc' },
+      })
+    ).toThrow(/rpc.*orpc.*monorepo.*full/i);
+  });
+
+  it('rejects rpc:orpc with monorepo:none too (audit 3a)', () => {
+    // Audit gap-fill 3a: the previous test only covers `monorepo: 'minimal'`.
+    // The schema's refine() rejects ANY non-`full` value. Without this test,
+    // a future change that special-cased `minimal` (e.g. an inverted boolean)
+    // would silently allow `none + orpc`, which generates an unbuildable
+    // packages/orpc dep tree.
+    expect(() =>
+      ProjectConfigSchema.parse({
+        name: 'x',
+        architecture: { monorepo: 'none', rpc: 'orpc' },
+      })
+    ).toThrow(/rpc.*orpc.*monorepo.*full/i);
+  });
+
+  it('rejects rpc:orpc when monorepo defaults to "none" (no monorepo set)', () => {
+    // Defense-in-depth: the default for `monorepo` is `'none'`, so an input
+    // that only sets rpc:orpc (relying on defaults for monorepo) must still
+    // be rejected. This pins the interaction between the default and the
+    // refine() — if either ever drifts, this test catches it.
+    expect(() =>
+      ProjectConfigSchema.parse({
+        name: 'x',
+        architecture: { rpc: 'orpc' },
+      })
+    ).toThrow(/rpc.*orpc.*monorepo.*full/i);
   });
 });

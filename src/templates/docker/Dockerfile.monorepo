@@ -1,0 +1,82 @@
+FROM __BASE_IMAGE__ AS base
+__PM_PATH_SETUP__
+RUN __COREPACK_SETUP__
+
+
+# Install dependencies only when needed
+FROM base AS deps
+ARG PACKAGE="@__PROJECT_NAME__/web"
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY . .
+RUN __PM_DLX__ turbo@^2 prune $PACKAGE --docker
+
+# Build the application from the pruned subgraph
+FROM base AS builder
+ARG PACKAGE="@__PROJECT_NAME__/web"
+ARG PACKAGE_PATH="apps/web"
+ARG BUILD_ENV
+ARG TURBO_TEAM
+ARG TURBO_TOKEN
+# Build-time public envs from docker-compose `args:`. Undeclared build args
+# are silently dropped by Docker, so without these ARGs Next.js would bake
+# empty values for `NEXT_PUBLIC_*` even when compose passes them. A dummy
+# DATABASE_URL keeps `prisma generate` (and any other build-time consumers)
+# happy without leaking real credentials into the layer cache.
+ARG NEXT_PUBLIC_BETTER_AUTH_URL
+ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ARG DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
+RUN apk add --no-cache libc6-compat
+ENV BUILD_ENV=${BUILD_ENV:-production}
+ENV TURBO_TEAM=$TURBO_TEAM
+ENV TURBO_TOKEN=$TURBO_TOKEN
+ENV NEXT_PUBLIC_BETTER_AUTH_URL=$NEXT_PUBLIC_BETTER_AUTH_URL
+ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ENV DATABASE_URL=$DATABASE_URL
+ENV CI=true
+WORKDIR /app
+
+# First install the dependencies (as they change less often)
+COPY --from=deps /app/out/json/ .
+COPY --from=deps /app/out/__LOCKFILE__ ./__LOCKFILE__
+RUN __CACHE_MOUNT__ __PM_INSTALL__
+
+COPY --from=deps /app/out/full/ .
+
+# Copy any .env* files from the workspace root into the app dir.
+# In monorepo mode, setup_database/setup_authentication write `.env`,
+# `.env.example`, and `.env.local` at the workspace root (not apps/web), so
+# the COPY must source from `.` (the build context root) for Next.js to bake
+# the right values during `turbo build`. Requires at least one `.env*` to
+# match — `.env.example` is always emitted at the root by setup_database.
+# Rename .env.${BUILD_ENV} to .env.production so Next.js picks it up.
+COPY .env* ./$PACKAGE_PATH/
+RUN if [ -f ./$PACKAGE_PATH/.env.${BUILD_ENV} ]; then \
+      cp ./$PACKAGE_PATH/.env.${BUILD_ENV} ./$PACKAGE_PATH/.env.production; \
+    fi
+
+RUN __PM_RUN__ turbo build --filter=$PACKAGE...
+
+# Production image
+FROM base AS runner
+ARG PACKAGE_PATH="apps/web"
+ENV PACKAGE_PATH=$PACKAGE_PATH
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+WORKDIR /app
+
+# Don't run production as root
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+USER nextjs
+
+# Standalone output is self-contained; runtime tree only.
+COPY --from=builder --chown=nextjs:nodejs /app/$PACKAGE_PATH/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/$PACKAGE_PATH/.next/static ./$PACKAGE_PATH/.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/$PACKAGE_PATH/public ./$PACKAGE_PATH/public
+
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["sh", "-c", "node ${PACKAGE_PATH}/server.js"]

@@ -26,6 +26,12 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
 
+      # `variant-b-full-bun-sqlite-drizzle` shells out to `bun create next-app`
+      # (see tools/smoke.ts). The runner doesn't ship with bun, so install it
+      # here before `pnpm run smoke` runs.
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -40,3 +46,6 @@ jobs:
 
       - name: Run integration tests
         run: pnpm run test:integration
+
+      - name: Run smoke driver (skipInstall)
+        run: pnpm run smoke

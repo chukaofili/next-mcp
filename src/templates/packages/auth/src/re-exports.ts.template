@@ -1,0 +1,8 @@
+// Curated re-exports of better-auth helpers consumed from `apps/web`.
+// Centralizing them here keeps `apps/web` dependent on this package only —
+// it never has to declare `better-auth` directly. Add new exports here
+// rather than installing better-auth in another workspace.
+
+export { getSessionCookie, getCookieCache } from 'better-auth/cookies';
+export { toNextJsHandler } from 'better-auth/next-js';
+export { fromNodeHeaders, toNodeHandler } from 'better-auth/node';

@@ -1,0 +1,12 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+catalog:
+  '@better-auth/api-key': ^1
+  '@types/node': ^25
+  better-auth: ^1
+  dotenv: ^17
+  eslint: ^10
+  typescript: ^6
+  vitest: ^4
