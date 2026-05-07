@@ -31,13 +31,13 @@
     "db:push": "prisma db push"
   },
   "dependencies": {
-    "@prisma/client": "^6"
+    "@prisma/client": "^7"
   },
   "devDependencies": {
     "@<projectName>/eslint-config": "workspace:*",
     "@<projectName>/typescript-config": "workspace:*",
     "@types/node": "catalog:",
-    "prisma": "^6",
+    "prisma": "^7",
     "typescript": "catalog:"
   }
 }
