@@ -27,7 +27,7 @@
  *   1 — at least one preset failed (post-condition or tool error)
  *   2 — argument error (unknown preset name)
  */
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,11 +40,27 @@ import { ProjectConfigSchema, type ProjectConfig } from '../src/schema.ts';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+interface NoResidualSubstring {
+  /** Human-readable name for failure messages (e.g. 'R1 rename invariant'). */
+  label: string;
+  /** Literal substring that MUST NOT appear in any scanned file. */
+  substring: string;
+  /** File extensions to scan (with leading dot, e.g. '.json', '.ts'). */
+  extensions: string[];
+}
+
 interface PostConditions {
   /** Files/dirs that MUST exist after the tool sequence runs. */
   exists: string[];
   /** Files/dirs that MUST NOT exist (gating regressions). */
   absent: string[];
+  /**
+   * Content-grep invariants. Each entry asserts no file under the matching
+   * extensions contains its literal substring. Skips `node_modules`, `.git`,
+   * and lockfiles. The canonical caller is the R1 rename invariant — see
+   * `R1_RENAME_INVARIANT` and smoke-v2 §4.0.
+   */
+  noResidualSubstrings?: NoResidualSubstring[];
 }
 
 interface Preset {
@@ -52,6 +68,41 @@ interface Preset {
   config: ProjectConfig;
   postConditions: PostConditions;
 }
+
+/**
+ * R1 rename invariant: after `scaffoldViaShadcnMonorepo` runs the rename
+ * augmentation pass, the literal `@workspace/` substring must not survive
+ * anywhere in the generated tree. This is the load-bearing regression catch
+ * from smoke-v2 §4.0 — without it, a refactor that silently drops the
+ * rename would still pass file-existence post-conditions (the files would
+ * just carry the wrong scope inside).
+ *
+ * Path A only (Path B / non-shadcn variants never have `@workspace/` to
+ * rewrite). Applied to `full-everything-on`, `variant-a-full-npm`, and
+ * `variant-d-flat-regression`. Variant B (full + bun + drizzle, no shadcn
+ * UI) and Variant C (minimal, no shadcn UI) opt out by config.
+ */
+const R1_RENAME_INVARIANT: NoResidualSubstring = {
+  label: 'R1 rename invariant',
+  substring: '@workspace/',
+  extensions: ['.json', '.ts', '.tsx', '.js', '.mjs', '.md', '.yaml', '.yml'],
+};
+
+const RESIDUAL_SCAN_SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  '.next',
+  'dist',
+  'build',
+  'coverage',
+]);
+const RESIDUAL_SCAN_SKIP_FILES = new Set([
+  'pnpm-lock.yaml',
+  'package-lock.json',
+  'yarn.lock',
+  'bun.lock',
+  'bun.lockb',
+]);
 
 /**
  * Build the five preset configs. Each config is run through
@@ -164,6 +215,7 @@ function buildPresets(): Preset[] {
           'apps/web/pnpm-workspace.yaml',
           'apps/web/pnpm-lock.yaml',
         ],
+        noResidualSubstrings: [R1_RENAME_INVARIANT],
       },
     },
     {
@@ -190,6 +242,7 @@ function buildPresets(): Preset[] {
           'apps/web/pnpm-workspace.yaml',
           'apps/web/pnpm-lock.yaml',
         ],
+        noResidualSubstrings: [R1_RENAME_INVARIANT],
       },
     },
     {
@@ -259,6 +312,7 @@ function buildPresets(): Preset[] {
           // workspace declaration. Asserting its absence would catch a
           // create-next-app behaviour we have no business policing.
         ],
+        noResidualSubstrings: [R1_RENAME_INVARIANT],
       },
     },
   ];
@@ -284,6 +338,44 @@ async function pathExists(p: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Recursively scan `root` for any file matching `invariant.extensions` whose
+ * contents contain `invariant.substring`. Returns the relative path to the
+ * first hit, or `null` if the tree is clean. Skips `node_modules`, `.git`,
+ * and lockfiles.
+ *
+ * Verified empirically: returns `null` against a renamed scaffold (R1 path),
+ * returns `README.md` against an un-renamed shadcn output (raw fixture).
+ */
+async function findResidualSubstring(
+  root: string,
+  invariant: NoResidualSubstring
+): Promise<string | null> {
+  const allowedExt = new Set(invariant.extensions);
+  async function walk(dir: string): Promise<string | null> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (RESIDUAL_SCAN_SKIP_DIRS.has(entry.name)) continue;
+        const hit = await walk(path.join(dir, entry.name));
+        if (hit) return hit;
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (RESIDUAL_SCAN_SKIP_FILES.has(entry.name)) continue;
+      const ext = path.extname(entry.name);
+      if (!allowedExt.has(ext)) continue;
+      const filePath = path.join(dir, entry.name);
+      const content = await readFile(filePath, 'utf-8');
+      if (content.includes(invariant.substring)) {
+        return path.relative(root, filePath);
+      }
+    }
+    return null;
+  }
+  return walk(root);
 }
 
 const TOOL_SEQUENCE = [
@@ -342,6 +434,16 @@ async function runPreset(
       const abs = path.join(projectPath, rel);
       if (await pathExists(abs)) {
         return { ok: false, reason: `expected file/dir present (should be absent): ${rel}` };
+      }
+    }
+    // Post-conditions: content-grep invariants (e.g. R1 rename).
+    for (const invariant of preset.postConditions.noResidualSubstrings ?? []) {
+      const hit = await findResidualSubstring(projectPath, invariant);
+      if (hit) {
+        return {
+          ok: false,
+          reason: `${invariant.label} regression: substring "${invariant.substring}" found in ${hit}`,
+        };
       }
     }
 
