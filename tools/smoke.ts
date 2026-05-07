@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-import { ProjectConfigSchema, type ProjectConfig } from '../src/index.ts';
+import { ProjectConfigSchema, type ProjectConfig } from '../src/schema.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
