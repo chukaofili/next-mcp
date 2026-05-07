@@ -550,47 +550,64 @@ R1.
 
 ### Phase 0 — derisking / spike (1 session)
 
+> **Phase 0 landed.** Spike captured in
+> [`2026-05-07-r1-spike-results.md`](./2026-05-07-r1-spike-results.md);
+> outcome was a written GO for Phase 4. §8.1 verified empirically
+> (`--name` does not rewrite the `@workspace/` scope — rename pass
+> needed). Reference scaffold preserved at `/tmp/test-2`.
+
 **Goal:** validate R1's premise end-to-end against a real run, on a
 single config (everything-on full, pnpm). No code changes yet.
 
-- [ ] Reproduce `/tmp/test-2`-style scaffold with `--cwd` set and
+- [x] Reproduce `/tmp/test-2`-style scaffold with `--cwd` set and
       verify exact output structure matches §5.
-- [ ] Run the project-scoped rename pass *manually* (sed sweep) on the
+- [x] Run the project-scoped rename pass *manually* (sed sweep) on the
       shadcn-scaffolded output, then add db/auth/orpc/docker layers
       manually following the augmentation list in §6.2.
-- [ ] Run `pnpm install`, `pnpm typecheck`, `pnpm build`,
+- [x] Run `pnpm install`, `pnpm typecheck`, `pnpm build`,
       `docker build .`, `docker compose run --rm migrate` end-to-end.
-- [ ] Outcome: a written go/no-go decision. If no-go, document why
+- [x] Outcome: a written go/no-go decision. If no-go, document why
       (with reference to the specific augmentation that broke), and
-      fall back to "B5 fix only" (§6.4).
-- [ ] Verify `--name` exact behavior — does it rename only the project
+      fall back to "B5 fix only" (§6.4). *Decision: GO.*
+- [x] Verify `--name` exact behavior — does it rename only the project
       directory, or also the root `package.json` `name` / package scope?
       shadcn docs say "the name for the new project" — empirically
-      check.
+      check. *Result: directory + root `name` only; scope stays
+      `@workspace/`. Rename pass required.*
 
 ### Phase 1 — non-shadcn B5 fix (1 small PR, do first)
 
+> **Phase 1 landed:** commit `61d6fde` (`fix(scaffold): B5
+> workspace-leftover cleanup`).
+
 **Goal:** unblock all non-shadcn paths regardless of R1's outcome.
 
-- [ ] Add the `fs.rm` cleanup of `apps/web/pnpm-workspace.yaml` +
+- [x] Add the `fs.rm` cleanup of `apps/web/pnpm-workspace.yaml` +
       `apps/web/pnpm-lock.yaml` after `create-next-app` returns in
       monorepo modes (`scaffoldProject` in `src/index.ts:1417-1425`).
-- [ ] Update CI smoke driver (`tools/smoke.ts`) to assert these files
+- [x] Update CI smoke driver (`tools/smoke.ts`) to assert these files
       do NOT exist after scaffold. Catches regressions of B5 forever.
-- [ ] Land independently of R1.
+- [x] Land independently of R1.
 
 ### Phase 2 — execCommand hardening (B6) — independent (1 PR)
 
-- [ ] Add output-verification to `execCommand` (or via a wrapping
+> **Phase 2 landed:** commit `d728828` (`fix(execCommand): B6
+> stderr + verify hook + schema-gen verify`).
+
+- [x] Add output-verification to `execCommand` (or via a wrapping
       helper). Surface stderr in MCP response when failures slip through.
-- [ ] Audit existing call sites and add output-expectation predicates
+- [x] Audit existing call sites and add output-expectation predicates
       where useful (especially `setup_authentication` step 4.9 and the
       auth schema-gen).
-- [ ] Land independently of R1.
+- [x] Land independently of R1.
 
 ### Phase 3 — `dotenv-cli` for prisma path (B1) — independent (1 small PR)
 
-- [ ] Either wire `dotenv-cli` as a workspace devDep on the prisma
+> **Phase 3 landed:** commit `0a584b7` (`fix(auth): B1 dotenv-cli
+> via dlx`). Chose option (b) — `getAuthSchemaCommand` invokes
+> `<pm-dlx> dotenv-cli` rather than depending on a binary on PATH.
+
+- [x] Either wire `dotenv-cli` as a workspace devDep on the prisma
       path too (extend `getAuthGenerateScript`-gated branch at
       `src/index.ts:1528-1534`), OR rewrite `getAuthSchemaCommand`
       (`src/index.ts:3467-3473`) to invoke `<pm-dlx> dotenv-cli`
@@ -599,34 +616,38 @@ single config (everything-on full, pnpm). No code changes yet.
 
 ### Phase 4 — R1 implementation (the main refactor)
 
+> **Phase 4 landed:** commits `755bd3a..eda5d71` (R1 commits 1–4 of
+> 5) + docs banner `90f47ad` (5/5). Implementation outline matches
+> the spike-results §8 patch sketch with the §8.2 deliberate
+> divergence (option (a), not (b)) — see the inline note in §8.2.
+
 Pre-req: Phase 0 spike landed go.
 
-- [ ] Add `scaffoldViaShadcnMonorepo(config, projectPath)` and
+- [x] Add `scaffoldViaShadcnMonorepo(config, projectPath)` and
       `scaffoldViaShadcnFlat(config, projectPath)` per §6.2 and §6.3.
-- [ ] Add the rename helper (`@workspace/*` → `@<projectName>/*`).
+- [x] Add the rename helper (`@workspace/*` → `@<projectName>/*`).
       Make it recursive and idempotent (re-running should be a no-op).
-- [ ] Wire dispatch in `scaffoldProject` per §6.1.
-- [ ] Move the existing post-scaffold logic
+      *(Implemented as `renameWorkspaceScope` in `src/index.ts`.)*
+- [x] Wire dispatch in `scaffoldProject` per §6.1.
+- [x] Move the existing post-scaffold logic
       (`updateGitignore`/`createDirectoryStructure`/`updatePackageJson`/
       `generateNextJSCustomCode`/`patchDbWorkspacePackageJson`) into
       the shared `augmentScaffold` step. Most of it stays as-is.
-- [ ] Decide on `apps/web/src/` vs flat layout (§8.2). If keeping `src/`:
-      add a layout-fixup pass in shadcn-init augmentation that moves
-      shadcn-emitted `apps/web/{app,components,hooks,lib}` under
-      `apps/web/src/`, then updates the path mapping in
-      `apps/web/tsconfig.json` accordingly. If switching to flat: do
-      a sweep across `src/templates/*` to update path references.
-- [ ] Decide on version-pin policy (§8.3). Apply.
-- [ ] Decide what "minimal" means in this new world (§8.4). For now,
-      treat minimal as "full but with packages/db, packages/auth,
-      packages/orpc all gated off" — shadcn's full skeleton is the
-      base, augment less. This is a behavioral change worth flagging
-      in the changelog.
-- [ ] Delete obsoleted templates (§4.4 list) — root `package.json`,
+- [x] Decide on `apps/web/src/` vs flat layout (§8.2). *Landed
+      option (a) — `moveAppsWebFlatToSrc` post-init. See §8.2 inline
+      note for blast-radius rationale.*
+- [x] Decide on version-pin policy (§8.3). Apply. *Landed option (b)
+      — post-scaffold pin-bump via `alignPins`.*
+- [x] Decide what "minimal" means in this new world (§8.4). *Landed
+      option (a) — shadcn full skeleton minus per-feature
+      db/auth/orpc packages.*
+- [x] Delete obsoleted templates (§4.4 list) — root `package.json`,
       `pnpm-workspace.yaml`, `tsconfig.json`, `turbo.json`,
       `.gitignore`, and the `packages/eslint-config/`,
       `packages/typescript-config/`, `packages/ui/` template subtrees
       (where shadcn now provides equivalent / better content).
+      *(Done in R1 commits 3/5 + 4/5; `buildShadcnInitCommand`
+      removed in `eda5d71`.)*
 
 ### Phase 5 — test surface update
 

@@ -1,32 +1,39 @@
 # Monorepo Support — End-to-End Smoke Test v2
 
-> **Status (2026-05-07): R1 has shipped on `feat/upgrade-packages`
-> (commits `755bd3a..eda5d71`).** Path A (shadcn-led) is now the
+> **Status (2026-05-07): R1 + Phases 5/6 shipped on `feat/upgrade-packages`.**
+> R1 commits `755bd3a..eda5d71` + docs banner `90f47ad`; Phase 5
+> (test-suite fixture bypass) `77e8dac`; Phase 6 (smoke driver R1
+> rename invariant) `12a5090`. Path A (shadcn-led) is now the
 > codebase's actual flow when `uiLibrary === 'shadcn'`. Path B
 > (non-shadcn fallback) keeps its v1 shape with the B5 cleanup applied.
 > The smoke driver (`pnpm run smoke`) and the integration suite both
 > exercise this; the manual procedure below stays the canonical
 > install/build/docker validation path.
 >
-> **Forward-looking procedure** — authored against the post-R1 scaffolding
-> architecture described in
-> [`2026-05-07-monorepo-shadcn-refactor-design.md`](./2026-05-07-monorepo-shadcn-refactor-design.md).
-> Several invariants below depend on decisions still open in the design
-> doc's §8 (e.g. apps/web flat-layout vs `src/`, `monorepo: 'minimal'`
-> semantics). Those are flagged inline with **§8.X** anchors — when each
-> decision lands, update the corresponding assertion in lockstep.
+> **Decisions landed (no longer conditional):** §8.1 rename pass
+> behavior (verified empirically — `--name` does not rewrite the
+> `@workspace/` scope), §8.2 layout (option (a) — `apps/web/src/`),
+> §8.3 version-pin policy (option (b) — post-scaffold pin-bump),
+> §8.4 minimal mode (option (a) — shadcn full skeleton minus
+> per-feature packages). §8.5 (shadcn version pinning) is the only
+> design-doc §8 question still open; the smoke matrix tracks shadcn
+> drift in lieu of a hard pin. See the design doc's §8 inline notes
+> for full rationale.
 >
-> Run this by hand before merging the R1 PR into `main`. CI does not
-> execute this — it requires a Docker daemon, network access for the
-> shadcn registry plus the `better-auth-ui` registry, and several
-> minutes of `pnpm install` + `docker build` time per variant.
+> Run this by hand before merging `feat/upgrade-packages` into `main`.
+> CI does not execute this — it requires a Docker daemon, network
+> access for the shadcn registry plus the `better-auth-ui` registry,
+> and several minutes of `pnpm install` + `docker build` time per
+> variant. The headless smoke driver (`pnpm run smoke`) covers the
+> generation half (skipInstall: true) on every PR; this manual
+> procedure is the install/build/docker pass it cannot run headlessly.
 >
 > **Companion docs:**
 > - v1 procedure (pre-R1) lives at
 >   [`2026-05-05-monorepo-smoke-test.md`](./2026-05-05-monorepo-smoke-test.md).
 >   Kept for audit trail. Findings from the 2026-05-07 v1 run are the
 >   source data for this v2 rewrite — see appendix A for what changed.
-> - Implementation plan and open design questions:
+> - Implementation plan and design decisions:
 >   [`2026-05-07-monorepo-shadcn-refactor-design.md`](./2026-05-07-monorepo-shadcn-refactor-design.md).
 > - Out-of-scope follow-ups (yarn variant, `--full` smoke driver flag):
 >   [`2026-05-06-recommended-fixes.md`](./2026-05-06-recommended-fixes.md).
@@ -59,8 +66,8 @@ test** of:
 - the shadcn-led scaffold actually building under turbo + standalone +
   Docker
 - the augmentation passes (project-scope rename, catalog substitution
-  for non-pnpm, pin alignment, layout fixup if §8.2 lands as
-  `apps/web/src/`) producing a coherent workspace
+  for non-pnpm, pin alignment, `apps/web/src/` layout fixup via
+  `moveAppsWebFlatToSrc`) producing a coherent workspace
 - the better-auth CLI working against the new schema cwd
 - the templated `Dockerfile.migrate` (Group K + OoS-2) actually building
   and `docker compose run --rm migrate` succeeding for each monorepo
@@ -191,6 +198,14 @@ failure here is a blocker — stop, capture it, and file a follow-up.
 These guard against the v1-era bugs B1/B2/B3/B5. Failures here are
 **critical regressions** of the R1 work.
 
+**Note:** as of commit `12a5090`, the third check (no surviving
+`@workspace/` substrings) is enforced programmatically by
+`tools/smoke.ts` — `R1_RENAME_INVARIANT` is applied to
+`full-everything-on`, `variant-a-full-npm`, and
+`variant-d-flat-regression`. CI catches it on every PR. The
+shell-grep equivalent below is kept here so a manual smoke run can
+verify it directly without depending on the headless driver.
+
 ```sh
 cd /tmp/next-mcp-smoke/smoke-full
 
@@ -259,20 +274,22 @@ inside it. Expect 60–120s on a warm cache.
 
 **`apps/web/` invariants:**
 
-- **Layout — depends on §8.2 decision:**
-  - If §8.2 lands "flat" (recommended): `apps/web/app/...`,
-    `apps/web/components/`, `apps/web/hooks/`, `apps/web/lib/` (all
-    starting empty with `.gitkeep`), `apps/web/components/theme-provider.tsx`,
-    `apps/web/components.json`, `apps/web/eslint.config.js`,
-    `apps/web/postcss.config.mjs`, `apps/web/next.config.mjs` (or
-    `.ts`).
-  - If §8.2 lands "src/": same files but under `apps/web/src/...`,
-    with `apps/web/tsconfig.json` `paths` updated to `["./src/*"]`
-    and `apps/web/components.json` `tailwind.css` adjusted.
+- **Layout (§8.2 landed option (a) — `src/`):** files emitted under
+  `apps/web/src/{app,components,hooks,lib}/...` after
+  `moveAppsWebFlatToSrc` runs. Empty subdirs (`components/`, `hooks/`,
+  `lib/`) carry `.gitkeep`. `apps/web/components/theme-provider.tsx`
+  also moves under `src/`. Workspace-root configs stay flat:
+  `apps/web/components.json`, `apps/web/eslint.config.js`,
+  `apps/web/postcss.config.mjs`, `apps/web/next.config.mjs` (or
+  `.ts`). `apps/web/tsconfig.json` `paths.@/*` is `["./src/*"]` and
+  `apps/web/components.json` `tailwind.css` resolves to
+  `../../packages/ui/src/styles/globals.css` (one extra level up
+  vs flat).
 - `apps/web/package.json`:
-  - `name === "@smoke-full/web"` (rename from `@workspace/web` if
-    §8.1's verification shows shadcn doesn't already do this with
-    `--name`).
+  - `name === "@smoke-full/web"`. `--name` does NOT rewrite the
+    `@workspace/` scope (verified empirically — see spike-results
+    §8.1 / design doc §8.1); the rename pass is what changes
+    `@workspace/web` → `@smoke-full/web`.
   - `dependencies` contains `@smoke-full/ui: workspace:*`,
     `@smoke-full/db: workspace:*`, `@smoke-full/auth: workspace:*`,
     `@smoke-full/orpc: workspace:*`.
@@ -283,14 +300,14 @@ inside it. Expect 60–120s on a warm cache.
     (`@/components`, `@/hooks`, `@/lib` — or `#components` etc. if
     the package.json#imports approach is used; check whichever shadcn
     emits).
-  - `tailwind.css` points at the *shared* design-system stylesheet
-    (`../../packages/ui/src/styles/globals.css` for flat layout, or
-    deeper for src/ layout). **This is the cross-workspace
-    design-system link v1 didn't achieve.**
+  - `tailwind.css === "../../packages/ui/src/styles/globals.css"`.
+    **This is the cross-workspace design-system link v1 didn't
+    achieve.**
 - `apps/web/tsconfig.json`:
   - `extends` includes `@smoke-full/typescript-config/nextjs.json`.
-  - `paths` includes both the local `@/*` mapping and
-    `@smoke-full/ui/*` mapping pointing at `../../packages/ui/src/*`.
+  - `paths` includes both the local `@/*` mapping (post-`src/` move
+    points at `./src/*`) and `@smoke-full/ui/*` pointing at
+    `../../packages/ui/src/*`.
 
 **`packages/ui/` invariants** (shadcn-emitted, R1-rename-augmented):
 
@@ -358,16 +375,17 @@ R1 makes two changes here:
 - `apps/web/package.json` `dependencies` contains
   `"@smoke-full/auth": "workspace:*"`.
 - **B3 regression catch**: better-auth-ui registry components actually
-  on disk:
-  - `apps/web/.../components/auth/auth.tsx`
-  - `apps/web/.../components/auth/auth-provider.tsx`
-  - `apps/web/.../components/auth/settings/settings.tsx`
-  - `apps/web/.../components/auth/user/user-button.tsx`
-  - (path prefix `apps/web/src/` or `apps/web/` per §8.2)
+  on disk under `apps/web/src/components/auth/...` (§8.2 landed `src/`):
+  - `apps/web/src/components/auth/auth.tsx`
+  - `apps/web/src/components/auth/auth-provider.tsx`
+  - `apps/web/src/components/auth/settings/settings.tsx`
+  - `apps/web/src/components/auth/user/user-button.tsx`
 - The better-auth CLI ran with cwd `projectPath` (workspace root) for
-  schema-gen and `packages/db` for migrations (per §8.5 of the design
-  doc — note this corrects the v1 doc's incorrect cwd assertion).
-  Verify by checking the tool's log output OR by checking that
+  schema-gen and `packages/db` for migrations. (Verified in source —
+  `getAuthSchemaCwd` always returns `projectPath` post-R1; see
+  `src/index.ts:4095`. This corrects the v1 doc's incorrect cwd
+  assertion that pointed schema-gen at `packages/auth`.) Verify by
+  checking the tool's log output OR by checking that
   `packages/db/prisma/schema.prisma` now contains better-auth tables
   (`User`, `Session`, `Account`, `Verification`).
 - Tool response message reads "✅ Database schema and migrations have
@@ -394,11 +412,10 @@ to ~5–10s.
   - `packages/ui/src/hooks/use-mobile.ts` exists.
   - `packages/ui/src/lib/utils.ts` already existed from
     scaffold_project — should be untouched here.
-  - `apps/web/src/components/ui/` (or `apps/web/components/ui/`,
-    per §8.2) does NOT have shadcn primitives — they live in
-    packages/ui. (V1 had them in apps/web because of the local-alias
-    fallback during the manual-recovery path; R1's cross-workspace
-    aliases route them to packages/ui by design.)
+  - `apps/web/src/components/ui/` does NOT have shadcn primitives —
+    they live in `packages/ui`. (V1 had them in apps/web because of
+    the local-alias fallback during the manual-recovery path; R1's
+    cross-workspace aliases route them to `packages/ui` by design.)
 - Idempotency: re-running `setup_shadcn` should be a near-no-op (most
   files marked "skipped" by shadcn — files might be identical).
 
@@ -450,7 +467,8 @@ Same invariants as v1.
 Same invariants as v1.
 
 - Reports `next.config.{ts,mjs}` found at `apps/web/next.config.*`
-  (root path adjusts per §8.2).
+  (workspace-root config — the `src/` move only relocates `app/`,
+  `components/`, `hooks/`, `lib/`).
 - Reports the workspace files present (`pnpm-workspace.yaml`,
   `turbo.json`).
 - Reports each emitted `packages/*` directory.
@@ -570,14 +588,11 @@ shadcn's scaffold).
 
 ### Variant C — Minimal + pnpm (no db, no auth, no shadcn)
 
-**§8.4 decision-dependent.** Per the design doc's recommendation (§8.4
-option a), `monorepo: 'minimal'` with `uiLibrary: 'shadcn'` becomes
-"shadcn full skeleton minus the per-feature db/auth/orpc packages".
-With `uiLibrary: 'none'`, minimal stays close to v1's semantic
-(apps/web only).
-
-This variant tests `uiLibrary: 'none'` to keep it fast and
-non-shadcn:
+§8.4 landed option (a): `monorepo: 'minimal'` with
+`uiLibrary: 'shadcn'` produces shadcn's full skeleton minus the
+per-feature db/auth/orpc packages. With `uiLibrary: 'none'`, minimal
+stays close to v1's semantic (apps/web only). This variant tests
+`uiLibrary: 'none'` to keep it fast and non-shadcn:
 
 ```diff
 - "monorepo": "full",
@@ -596,10 +611,6 @@ non-shadcn:
 
 This is **Path B (non-shadcn fallback)**. Confirm: only `apps/web/`
 and root workspace files exist; no `packages/` directory at all.
-
-If §8.4 lands with a different decision, **also add a Variant C'**
-that tests `monorepo: 'minimal'` with `uiLibrary: 'shadcn'` to exercise
-that specific shape.
 
 ### Variant D — Flat (`monorepo: 'none'`) regression
 
@@ -623,21 +634,21 @@ is the regression baseline — if anything here behaves differently from
 
 ## 7. Known limitations / where to capture findings
 
-- **shadcn CLI version pinned in R1** (per design doc §8.5). The
-  `init`/`add` invocations target a known-good version (e.g.
-  `shadcn@^4.7.0`), not `@latest`. If shadcn ships a CLI breaking
-  change that affects our augmentation contract, the smoke catches it
-  here before users do.
-
-- **§8.x decisions to settle in lockstep with R1.** Each open question
-  in the design doc maps to specific assertions in §4 of this smoke.
-  Update the assertions when each decision lands so the smoke stays
-  truthful.
+- **shadcn CLI version pinning is deferred** (design doc §8.5). The
+  `init`/`add` invocations currently target `shadcn@latest` rather
+  than a pinned version, so this smoke is the periodic check that
+  catches shadcn drift. Pinning is mechanically a one-line change
+  (`shadcn@latest` → `shadcn@<version>`) and tracked as a follow-up.
+  If a smoke run flags an augmentation regression caused by shadcn,
+  pin in lockstep with the fix and refresh the committed fixtures
+  via `pnpm run refresh-shadcn-fixtures`.
 
 - **R1's augmentation passes are the load-bearing custom code.** The
   rename pass especially — a single missed callsite would surface as
   a typecheck or build failure in §5. The §4.0 universal regression
-  catch's grep is the canonical "no `@workspace/`" assertion.
+  catch's grep is the canonical "no `@workspace/`" assertion;
+  `tools/smoke.ts`'s `R1_RENAME_INVARIANT` enforces the same
+  invariant programmatically (see commit `12a5090`).
 
 - **Auto-rerun-friendly:** all tools should be idempotent. A re-run of
   the full §3 procedure on an existing smoke directory should produce
@@ -645,28 +656,40 @@ is the regression baseline — if anything here behaves differently from
   Verify by running §3 twice in succession and diffing — only
   `node_modules/` and `pnpm-lock.yaml` should change between runs.
 
-- **Headless smoke driver** — `tools/smoke.ts` (Tier 5a, refreshed in
-  R1 Phase 5) drives the MCP server over stdio for all five preset
-  configs in seconds. CI runs it on every PR. The manual install /
-  build / docker pass (§5 + the migrate end-to-end) is still done by
-  hand. A `--full` flag for the driver to chain `<pm> install` +
-  `<pm> build` is a future extension, tracked in
-  `2026-05-06-recommended-fixes.md`.
+- **Headless smoke driver** — `tools/smoke.ts` (Tier 5a, R1 Phase 5/6
+  refresh) drives the MCP server over stdio for all five preset
+  configs in seconds. CI runs it on every PR. As of Phase 5
+  (`77e8dac`), the integration test suite consumes committed shadcn
+  fixtures at `tests/fixtures/shadcn-{monorepo,flat}-init/` via
+  `vitest`'s globalSetup, dropping wall-time from ~168s to ~22s.
+  The smoke driver is intentionally untouched by the fixture work —
+  it always invokes a real `pnpm dlx shadcn@latest init` as the
+  canonical runtime check. The manual install / build / docker pass
+  (§5 + the migrate end-to-end) is still done by hand. A `--full`
+  flag for the driver to chain `<pm> install` + `<pm> build` is a
+  future extension, tracked in `2026-05-06-recommended-fixes.md`.
 
 - **Out-of-scope follow-ups.** Tier 5b (yarn variant), the `--full`
   smoke flag, and the recommended-fixes Tiers 2-6 + OoS-1/OoS-2 land
-  separately. R1 (this smoke's gating refactor) is the merge-blocker.
+  separately. R1 + Phases 5/6 (this smoke's gating refactor) are
+  shipped; the manual install/build/docker pass is the only
+  remaining merge-gate.
 
 ## 8. Acceptance criteria
 
 The smoke is "green" when:
 
 - All six smoke configs (everything-on full + variants A, B, C, D-shadcn,
-  D-non-shadcn) scaffold cleanly without errors from any tool.
+  D-non-shadcn) scaffold cleanly without errors from any tool. Five
+  of these (full + A + B + C + D-shadcn) are exercised headlessly by
+  `pnpm run smoke` on every PR; D-non-shadcn (Path B flat) is
+  manual-only here.
 - The §4.0 universal regression catches all pass on every variant
   (no rogue `apps/web/pnpm-workspace.yaml`, no `@workspace/...`
   strings on Path A variants, workspace recognition works from
-  apps/web).
+  apps/web). The rename catch is enforced programmatically by
+  `R1_RENAME_INVARIANT` in `tools/smoke.ts` for the three Path A
+  presets it covers; the manual sweep here covers the rest.
 - `setup_authentication` returns the success-with-auto-applied
   message, NOT the "Manual setup required" fallback (B1 confirmed
   fixed).
@@ -776,9 +799,11 @@ For readers cross-referencing
 - **Variant D** is now run twice — once shadcn (Path A flat dispatch),
   once non-shadcn (Path B flat dispatch). v1 only ran the non-shadcn
   flat case.
-- **Variant C** assertion rewritten depending on design doc §8.4
-  decision; recommendation for Variant C' if §8.4 lands a non-(a)
-  option.
+- **Variant C** asserts `monorepo: 'minimal' + uiLibrary: 'none'`
+  (Path B). §8.4 landed option (a) — `monorepo: 'minimal' +
+  uiLibrary: 'shadcn'` produces shadcn's full skeleton minus the
+  per-feature db/auth/orpc packages — but the smoke variant tests the
+  Path B shape because that's where the regression risk lives.
 
 ### Acceptance criteria (§8)
 
