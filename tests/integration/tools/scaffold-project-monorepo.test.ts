@@ -423,6 +423,15 @@ describe('scaffold_project tool — monorepo:full', () => {
     expect(uiPkg.scripts['ui:add']).not.toMatch(/^shadcn@latest\b/);
     expect(uiPkg.scripts['ui:add']).toContain('shadcn@latest add');
     expect(uiPkg.scripts['ui:add']).toMatch(/(pnpm dlx|yarn dlx|bunx|npx)\s+shadcn@latest/);
+
+    // apps/web carries `@<project>/ui: workspace:*` so the rewritten
+    // shadcn imports in generate_base_components (and any user code)
+    // resolve through the workspace package — without this dep the
+    // generated app couldn't reach packages/ui at all.
+    const appPkg = JSON.parse(
+      await fs.readFile(path.join(projectPath, 'apps', 'web', 'package.json'), 'utf-8')
+    );
+    expect(appPkg.dependencies?.[`@${projectName}/ui`]).toBe('workspace:*');
   }, 120000);
 
   it('full mode + orpc generates packages/orpc with router and middleware', async () => {
@@ -472,6 +481,38 @@ describe('scaffold_project tool — monorepo:full', () => {
     expect(orpcPkg.scripts.test).toBeUndefined();
     expect(orpcPkg.scripts['test:integration']).toBeUndefined();
     expect(orpcPkg.devDependencies?.vitest).toBeUndefined();
+
+    // apps/web is wired to the orpc workspace + has a callable RPC route.
+    // Without these, `rpc: 'orpc'` would scaffold an unreachable package
+    // and the user would see no RPC endpoint at runtime.
+    const appPkg = JSON.parse(
+      await fs.readFile(path.join(projectPath, 'apps', 'web', 'package.json'), 'utf-8')
+    );
+    expect(appPkg.dependencies?.[`@${projectName}/orpc`]).toBe('workspace:*');
+    expect(appPkg.dependencies?.['@orpc/server']).toBeDefined();
+
+    const routePath = path.join(
+      projectPath,
+      'apps',
+      'web',
+      'src',
+      'app',
+      'api',
+      'rpc',
+      '[[...rest]]',
+      'route.ts'
+    );
+    expect(await fileExists(routePath)).toBe(true);
+    const routeContent = await fs.readFile(routePath, 'utf-8');
+    // Imports the router from the workspace package (not a relative
+    // path), uses the RPCHandler from @orpc/server/fetch, and exposes
+    // GET/POST so Next.js dispatches both verbs.
+    expect(routeContent).toContain(`from '@${projectName}/orpc'`);
+    expect(routeContent).toContain("from '@orpc/server/fetch'");
+    expect(routeContent).toContain('export const GET = handle');
+    expect(routeContent).toContain('export const POST = handle');
+    // Placeholder must be substituted, not leaked.
+    expect(routeContent).not.toContain('__ORPC_PACKAGE_IMPORT__');
   }, 120000);
 
   it('full mode + database:postgres + orm:none does NOT emit packages/db', async () => {

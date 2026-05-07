@@ -214,4 +214,45 @@ describe('generate_base_components tool', () => {
     // No stray top-level src/ tree in monorepo mode.
     expect(await fileExists(path.join(projectPath, 'src'))).toBe(false);
   }, 120000);
+
+  it('full + shadcn (skipInstall: false) imports Button from @<project>/ui/components', async () => {
+    // In `monorepo: 'full' + uiLibrary: 'shadcn'`, the shared shadcn
+    // components live in `packages/ui` (populated by setup_shadcn).
+    // generate_base_components must import the Button from the
+    // workspace package's `./components/*` subpath export, not from
+    // the apps/web local `@/components/ui/button`. Without this the
+    // page.tsx would resolve to a non-existent file in apps/web.
+    //
+    // We use the recorder to skip the actual `<pm> install` and
+    // `shadcn add` invocations; the import target is what we assert.
+    const projectName = `base-components-ui-import_${Date.now()}`;
+    const projectPath = path.join(tempDir, projectName);
+    const appPath = path.join(projectPath, 'apps/web');
+
+    const config = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        database: 'none',
+        orm: 'none',
+        auth: 'none',
+        uiLibrary: 'shadcn',
+        testing: 'none',
+        skipInstall: false,
+      },
+    });
+    await client.callTool('scaffold_project', { config, targetPath: tempDir });
+
+    const result = await client.callTool('generate_base_components', {
+      config,
+      projectPath,
+    });
+    expect(client.isSuccess(result)).toBe(true);
+
+    const pageContent = await fs.readFile(path.join(appPath, 'src/app/page.tsx'), 'utf-8');
+    // Imports through the workspace package — NOT the local
+    // `@/components/ui/button` alias.
+    expect(pageContent).toContain(`from '@${projectName}/ui/components/button'`);
+    expect(pageContent).not.toContain("from '@/components/ui/button'");
+  }, 120000);
 });

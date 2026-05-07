@@ -107,6 +107,12 @@ const PACKAGE_VERSIONS = {
   dotenv: '^17',
   'dotenv-cli': '^9',
   '@types/node': '^25',
+
+  // RPC — apps/web's `/api/rpc/[[...rest]]/route.ts` imports
+  // `RPCHandler` from `@orpc/server/fetch`, so apps/web needs
+  // `@orpc/server` declared even though `packages/orpc` carries it
+  // for its own router/middleware code.
+  '@orpc/server': '^1',
 } as const;
 
 export const CATALOG_VERSIONS: Record<string, string> = {
@@ -1879,11 +1885,22 @@ class NextMCPServer {
     // ui (D5)
     if (hasUiPackageEmitted(config)) {
       await this.copyPackageTemplate(config, projectPath, 'ui');
+      // Workspace-dep wiring runs here; the actual `shadcn init` +
+      // `shadcn add` happens later in setup_shadcn (it shells out to
+      // the network, so we only do it when the user explicitly
+      // invokes that tool). The wire helper makes apps/web's
+      // `@<project>/ui` import target resolvable as soon as
+      // setup_shadcn populates packages/ui.
+      await this.wireAppsWebToUiPackage(config, projectPath);
     }
 
     // orpc (D6)
     if (hasOrpcPackageEmitted(config)) {
       await this.copyPackageTemplate(config, projectPath, 'orpc');
+      // Wire workspace dep + emit the catch-all RPC route handler in
+      // apps/web. Without this, `rpc: 'orpc'` was a no-op feature flag
+      // — the package landed on disk but no Next.js route exposed it.
+      await this.wireAppsWebToOrpcPackage(config, projectPath);
     }
   }
 
@@ -2628,8 +2645,19 @@ class NextMCPServer {
       const useShadcn =
         config.architecture.uiLibrary === 'shadcn' && !config.architecture.skipInstall;
 
+      // Resolve the shadcn import target. In `monorepo: 'full'` the
+      // shared shadcn components live in `packages/ui`; apps/web reaches
+      // them via the workspace package's `./components/*` subpath
+      // export (declared in packages/ui/package.json). In other modes
+      // (or when packages/ui isn't emitted) the components live in
+      // apps/web itself, so the legacy `@/components/ui/*` alias
+      // resolves locally.
+      const shadcnButtonImport = hasUiPackageEmitted(config)
+        ? `@${config.name}/ui/components/button`
+        : '@/components/ui/button';
+
       // Update the existing page.tsx with our custom content using Tailwind CSS
-      const pageTsx = `${useShadcn ? "import { Button } from '@/components/ui/button';\n\n" : ''}export default function Home() {
+      const pageTsx = `${useShadcn ? `import { Button } from '${shadcnButtonImport}';\n\n` : ''}export default function Home() {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-8">
       <div className="max-w-4xl mx-auto text-center">
@@ -3338,6 +3366,97 @@ export const db = drizzle(pool, { schema });`;
     await this.reinstallWorkspaceDeps(config, projectPath, '@<project>/auth');
 
     return authPkgName;
+  }
+
+  /**
+   * Wire `apps/web` to consume the `packages/orpc` workspace package
+   * (Group D6). Three effects:
+   *
+   *   1. Workspace-dep wiring: append `<orpcPkgName>: 'workspace:*'` to
+   *      `apps/web/package.json` (via the shared
+   *      {@link wireAppsWebToWorkspacePackage} helper).
+   *   2. Add `@orpc/server` as a direct dep on apps/web's package.json so
+   *      the route handler's `@orpc/server/fetch` import resolves under
+   *      strict pnpm. `@orpc/server` is also declared on packages/orpc
+   *      for the router/middleware code; both workspaces consume it
+   *      independently.
+   *   3. Emit `apps/web/src/app/api/rpc/[[...rest]]/route.ts` from the
+   *      `templates/orpc/route.ts.template`. The template's
+   *      `__ORPC_PACKAGE_IMPORT__` placeholder is substituted with
+   *      `<orpcPkgName>` so the handler imports the router from the
+   *      workspace package. Without this route, a project scaffolded
+   *      with `rpc: 'orpc'` has no callable RPC endpoint.
+   *
+   * Skipped when the orpc package wasn't emitted (the gate matches
+   * {@link hasOrpcPackageEmitted}).
+   */
+  private async wireAppsWebToOrpcPackage(
+    config: ProjectConfig,
+    projectPath: string
+  ): Promise<string> {
+    const orpcPkgName = await wireAppsWebToWorkspacePackage(
+      projectPath,
+      'orpc',
+      "Did generateFullModePackages run with rpc: 'orpc'?"
+    );
+
+    // Add @orpc/server to apps/web for the RPCHandler import.
+    const appPath = path.join(projectPath, 'apps/web');
+    const appPkgPath = path.join(appPath, 'package.json');
+    if (existsSync(appPkgPath)) {
+      const appPkg = JSON.parse(await fs.readFile(appPkgPath, 'utf-8'));
+      appPkg.dependencies = appPkg.dependencies || {};
+      if (appPkg.dependencies['@orpc/server'] !== PACKAGE_VERSIONS['@orpc/server']) {
+        appPkg.dependencies['@orpc/server'] = PACKAGE_VERSIONS['@orpc/server'];
+        await fs.writeFile(appPkgPath, JSON.stringify(appPkg, null, 2) + '\n');
+        logger.info(`Added @orpc/server: ${PACKAGE_VERSIONS['@orpc/server']} to apps/web/package.json`);
+      }
+    }
+
+    // Emit the catch-all RPC route handler.
+    const routeDir = path.join(appPath, 'src/app/api/rpc/[[...rest]]');
+    await fs.mkdir(routeDir, { recursive: true });
+    const routeTemplate = await fs.readFile(
+      path.join(__dirname, 'templates/orpc/route.ts.template'),
+      'utf-8'
+    );
+    const routeContent = routeTemplate.replaceAll('__ORPC_PACKAGE_IMPORT__', orpcPkgName);
+    await fs.writeFile(path.join(routeDir, 'route.ts'), routeContent);
+    logger.info(`Emitted apps/web/src/app/api/rpc/[[...rest]]/route.ts wired to ${orpcPkgName}`);
+
+    await this.reinstallWorkspaceDeps(config, projectPath, '@<project>/orpc + @orpc/server');
+
+    return orpcPkgName;
+  }
+
+  /**
+   * Wire `apps/web` to consume the `packages/ui` workspace package
+   * (Group D5). Two effects:
+   *
+   *   1. Workspace-dep wiring: append `<uiPkgName>: 'workspace:*'` to
+   *      `apps/web/package.json`. Without this, the rewritten imports
+   *      in {@link generateBaseComponents} and any user-written
+   *      consumer would not resolve under strict pnpm.
+   *   2. Re-link `apps/web/node_modules` so the new symlink takes
+   *      effect (skipped under skipInstall).
+   *
+   * The actual import-rewrite from `@/components/ui/*` to
+   * `<uiPkgName>/components/*` is handled by {@link generateBaseComponents}
+   * for its own page.tsx, not here — user-written imports stay on
+   * `@/components/ui/*` (which still resolves to the apps/web local
+   * copy that `setup_shadcn` populates).
+   */
+  private async wireAppsWebToUiPackage(
+    config: ProjectConfig,
+    projectPath: string
+  ): Promise<string> {
+    const uiPkgName = await wireAppsWebToWorkspacePackage(
+      projectPath,
+      'ui',
+      "Did setup_shadcn run with monorepo: 'full' + uiLibrary: 'shadcn'?"
+    );
+    await this.reinstallWorkspaceDeps(config, projectPath, '@<project>/ui');
+    return uiPkgName;
   }
 
   /**
