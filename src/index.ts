@@ -854,15 +854,6 @@ export function getShadcnRunner(packageManager: PackageManager): string {
   }
 }
 
-export function buildShadcnInitCommand(
-  packageManager: PackageManager,
-  monorepoMode: 'none' | 'minimal' | 'full'
-): string {
-  const runner = getShadcnRunner(packageManager);
-  const monorepoFlag = monorepoMode !== 'none' ? ' --monorepo' : '';
-  return `${runner} shadcn@latest init --preset b0 --template next${monorepoFlag} --pointer`;
-}
-
 export function substituteProjectName(content: string, projectName: string): string {
   return content.replaceAll('<projectName>', projectName).replaceAll('__PROJECT_NAME__', projectName);
 }

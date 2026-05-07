@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { buildShadcnInitCommand, filteredWorkspaceCommand, formatExecDiagnostic, getAppPath, getAuthConfigRelPath, getAuthGenerateScript, getAuthSchemaOutputRelPath, getShadcnRunner, packageRunnerDlx, rewriteImportsInTree, runScriptCommand, substituteCatalog, substituteDockerfilePlaceholders, substituteProjectName, verifyAuthSchemaGenerated } from '../../src/index.js';
+import { filteredWorkspaceCommand, formatExecDiagnostic, getAppPath, getAuthConfigRelPath, getAuthGenerateScript, getAuthSchemaOutputRelPath, getShadcnRunner, packageRunnerDlx, rewriteImportsInTree, runScriptCommand, substituteCatalog, substituteDockerfilePlaceholders, substituteProjectName, verifyAuthSchemaGenerated } from '../../src/index.js';
 import type { ProjectConfig } from '../../src/index.js';
 import {
   cleanupTempDir,
@@ -174,33 +174,6 @@ describe('getShadcnRunner', () => {
   });
 });
 
-describe('buildShadcnInitCommand', () => {
-  it('flat (monorepo:none) — pnpm', () => {
-    expect(buildShadcnInitCommand('pnpm', 'none')).toBe(
-      'pnpm dlx shadcn@latest init --preset b0 --template next --pointer'
-    );
-  });
-  it('monorepo:minimal — npm', () => {
-    expect(buildShadcnInitCommand('npm', 'minimal')).toBe(
-      'npx shadcn@latest init --preset b0 --template next --monorepo --pointer'
-    );
-  });
-  it('monorepo:full — yarn', () => {
-    expect(buildShadcnInitCommand('yarn', 'full')).toBe(
-      'yarn dlx shadcn@latest init --preset b0 --template next --monorepo --pointer'
-    );
-  });
-  it('monorepo:minimal — bun (uses --bun runner)', () => {
-    expect(buildShadcnInitCommand('bun', 'minimal')).toBe(
-      'bunx --bun shadcn@latest init --preset b0 --template next --monorepo --pointer'
-    );
-  });
-  it('monorepo:none — bun', () => {
-    expect(buildShadcnInitCommand('bun', 'none')).toBe(
-      'bunx --bun shadcn@latest init --preset b0 --template next --pointer'
-    );
-  });
-});
 
 describe('substituteProjectName', () => {
   it('replaces <projectName> placeholder', () => {
