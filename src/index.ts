@@ -3465,21 +3465,28 @@ const db = new Database("./dev.db");`,
    * Schema-gen command for the new better-auth CLI (`auth@latest`). Always
    * runs from the project root (see {@link getAuthSchemaCwd}) so paths are
    * project-relative — the same shape works for flat, minimal, and full
-   * modes, and matches the persistent `auth:generate` script wired into the
-   * project root `package.json` (see {@link getAuthGenerateScript}).
+   * modes.
    *
    * For drizzle, `--output` points at the dedicated `schema/auth.ts` file
    * (the auth tables are isolated from user-defined tables; the drizzle
    * schema barrel re-exports both). For prisma, the auth CLI rewrites
    * `schema.prisma` in-place via the prisma datasource it finds in the
    * config, so no `--output` is passed.
+   *
+   * Invokes `dotenv-cli` via dlx so it works regardless of whether
+   * `dotenv-cli` is wired as a workspace devDep. The persistent
+   * `auth:generate` script (see {@link getAuthGenerateScript}) still uses
+   * the bare `dotenv` binary because it pairs with a `dotenv-cli` devDep —
+   * but this runtime call fires on every better-auth path (including
+   * prisma, where no devDep is wired), so it cannot rely on a global
+   * `dotenv` binary on PATH. Refs: smoke v1 finding B1.
    */
   private getAuthSchemaCommand(config: ProjectConfig): string {
     const dlx = this.getPackageRunnerDlx(config.architecture.packageManager);
     const configRelPath = getAuthConfigRelPath(config);
     const outputRel = getAuthSchemaOutputRelPath(config);
     const outputArg = outputRel ? ` --output ${outputRel}` : '';
-    return `dotenv -e .env -- ${dlx} auth@latest generate -y --config ${configRelPath}${outputArg}`;
+    return `${dlx} dotenv-cli -e .env -- ${dlx} auth@latest generate -y --config ${configRelPath}${outputArg}`;
   }
 
   private getAuthMigrationCommand(config: ProjectConfig): string {
@@ -3495,8 +3502,11 @@ const db = new Database("./dev.db");`,
       return `${packageRunner} drizzle-kit generate && ${packageRunner} drizzle-kit migrate`;
     }
 
+    // Same B1 reasoning as getAuthSchemaCommand — invoke dotenv-cli via dlx
+    // so the auth@latest migrate path doesn't require a global `dotenv`
+    // binary on PATH.
     const configRelPath = getAuthConfigRelPath(config);
-    return `dotenv -e .env -- ${dlx} auth@latest migrate -y --config ${configRelPath}`;
+    return `${dlx} dotenv-cli -e .env -- ${dlx} auth@latest migrate -y --config ${configRelPath}`;
   }
 
   /**

@@ -884,6 +884,73 @@ describe('setup_authentication tool — shadcn-registry install', () => {
       await failingRecorder.disconnect();
     }
   }, 180000);
+
+  it('schema-gen command invokes <pm-dlx> dotenv-cli, not bare dotenv (B1 fix)', async () => {
+    // B1 (smoke v1): the auth schema-gen subprocess is invoked at
+    // setup_authentication time on every better-auth path, including
+    // prisma. Its old shape was `dotenv -e .env -- <pm-dlx> auth@latest
+    // generate ...` which relies on a `dotenv` binary on PATH. That
+    // binary only exists when `dotenv-cli` is wired as a workspace devDep
+    // — which only happens for the drizzle path
+    // (`getAuthGenerateScript`-gated). On the prisma path the subprocess
+    // failed silently (`dotenv: command not found`), `execCommand`
+    // reported success: false, and the tool fell through to the
+    // "Manual setup required" branch without isError: true.
+    //
+    // Fix: rewrite the runtime command to invoke `<pm-dlx> dotenv-cli`
+    // so dlx fetches dotenv-cli on demand — works on every path
+    // regardless of the persistent devDep wiring. This test asserts
+    // the recorded command shape on the prisma path.
+    const projectName = 'auth-schema-gen-shape';
+    const projectPath = path.join(tempDir, projectName);
+
+    const scaffoldConfig = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        packageManager: 'pnpm',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: true,
+      },
+    });
+    expect(scaffolder.isSuccess(await scaffolder.callTool('scaffold_project', { config: scaffoldConfig, targetPath: tempDir }))).toBe(true);
+
+    await fs.writeFile(recordPath, '');
+
+    const authConfig = createMockConfig({
+      name: projectName,
+      architecture: {
+        monorepo: 'full',
+        packageManager: 'pnpm',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'better-auth',
+        uiLibrary: 'none',
+        testing: 'none',
+        skipInstall: false,
+      },
+    });
+    const result = await recorder.callTool('setup_authentication', { config: authConfig, projectPath });
+    expect(recorder.isSuccess(result)).toBe(true);
+
+    const recorded = (await fs.readFile(recordPath, 'utf-8'))
+      .split('\n')
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as { command: string; cwd: string; label: string });
+
+    const schemaGen = recorded.find((r) => r.label === 'auth schema generation');
+    expect(schemaGen).toBeDefined();
+    // New shape: `<pm-dlx> dotenv-cli -e .env -- <pm-dlx> auth@latest ...`
+    expect(schemaGen!.command).toBe(
+      'pnpm dlx dotenv-cli -e .env -- pnpm dlx auth@latest generate -y --config packages/auth/src/server.ts'
+    );
+    // Old shape that relied on a global `dotenv` binary must NOT recur.
+    expect(schemaGen!.command).not.toMatch(/^dotenv\s/);
+  }, 180000);
 });
 
 describe('setup_authentication tool — skipInstall split', () => {
