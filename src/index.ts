@@ -512,6 +512,49 @@ export function packageRunnerDlx(pm: PackageManager): string {
   }
 }
 
+/**
+ * Per-package-manager invocation for an npm script in package.json.
+ * pnpm/yarn accept the bare script name (`pnpm dev`); npm and bun
+ * require the explicit `run` keyword (`npm run dev`, `bun run dev`).
+ *
+ * Used everywhere the README/AGENTS docs and user-facing instructions
+ * print copy-paste commands — interpolating `${pm} dev` directly would
+ * emit `npm dev` / `bun dev`, which both error out.
+ */
+export function runScriptCommand(pm: PackageManager, script: string): string {
+  return pm === 'npm' || pm === 'bun' ? `${pm} run ${script}` : `${pm} ${script}`;
+}
+
+/**
+ * Per-package-manager invocation for running a script against a single
+ * workspace package. Each package manager has its own filter syntax:
+ *   - pnpm: `pnpm --filter <pkg> <script>`
+ *   - bun:  `bun --filter <pkg> run <script>`
+ *   - yarn: `yarn workspace <pkg> <script>`
+ *   - npm:  `npm run <script> --workspace=<pkg>`
+ *
+ * Hoisted to module scope so generateReadme/generateAgentsMd can share
+ * the same shape — drift between the two docs would surface as
+ * conflicting copy-paste commands in the same generated project.
+ */
+export function filteredWorkspaceCommand(
+  pm: PackageManager,
+  workspace: string,
+  script: string
+): string {
+  switch (pm) {
+    case 'pnpm':
+      return `pnpm --filter ${workspace} ${script}`;
+    case 'bun':
+      return `bun --filter ${workspace} run ${script}`;
+    case 'yarn':
+      return `yarn workspace ${workspace} ${script}`;
+    case 'npm':
+    default:
+      return `npm run ${script} --workspace=${workspace}`;
+  }
+}
+
 export function getShadcnRunner(packageManager: PackageManager): string {
   switch (packageManager) {
     case 'pnpm':
@@ -4157,6 +4200,13 @@ ${quickStartBlock}`;
       const prismaInDbPackage = hasDbPackage && architecture.orm === 'prisma';
       const prismaExec = pm === 'npm' ? 'npx' : `${pm} exec`;
 
+      // Bind the module-level helpers to this pm so the template strings
+      // below stay readable (avoids `runScriptCommand(pm, 'dev')` repeated
+      // inline).
+      const runScript = (script: string): string => runScriptCommand(pm, script);
+      const filteredScript = (workspace: string, script: string): string =>
+        filteredWorkspaceCommand(pm, workspace, script);
+
       // Generate features list based on configuration
       const features = [];
       features.push('App Router for modern routing and layouts');
@@ -4306,7 +4356,7 @@ docker compose run --rm migrate
 
 Run tests with:
 \`\`\`bash
-${pm} test
+${runScript('test')}
 \`\`\`
 ${
   architecture.testing === 'vitest'
@@ -4385,7 +4435,7 @@ ${architecture.database !== 'none' && architecture.database !== 'sqlite' ? '- Do
 ${databaseSetup}
 5. Run the development server:
    \`\`\`bash
-   ${pm} dev
+   ${runScript('dev')}
    \`\`\`
 
 6. Open [http://localhost:3000](http://localhost:3000) to see your application
@@ -4473,11 +4523,17 @@ ${hasDbPackage ? `│   ├── packages/db/               # Database client +
 │   └── packages/typescript-config/ # Shared TypeScript config
 `
     : ''
-}├── pnpm-workspace.yaml            # Workspace definition
-├── turbo.json                     # Turborepo task pipeline
+}${
+  // pnpm declares workspaces in `pnpm-workspace.yaml`; npm/yarn/bun
+  // declare them in the root `package.json`'s `workspaces` field
+  // (which scaffoldMonorepoRoot writes for non-pnpm). Listing
+  // `pnpm-workspace.yaml` for those projects would point readers at
+  // a file that doesn't exist.
+  pm === 'pnpm' ? '├── pnpm-workspace.yaml            # Workspace definition\n' : ''
+}├── turbo.json                     # Turborepo task pipeline
 ├── docker-compose.yml             # Docker Compose configuration
 ├── Dockerfile                     # Docker configuration
-├── package.json                   # Workspace root scripts (Turbo runners)
+├── package.json                   # Workspace root${pm === 'pnpm' ? ' scripts (Turbo runners)' : ' (workspaces field + Turbo runners)'}
 └── tsconfig.json                  # Workspace TypeScript config (base)`
     : `${config.name}/
 ├── src/
@@ -4525,38 +4581,38 @@ ${
     ? `
 Run from the workspace root — these delegate to Turborepo, which fans out to every workspace:
 
-- \`${pm} dev\` - Start the dev server for every workspace (Turbo \`dev\`)
-- \`${pm} build\` - Build every workspace (Turbo \`build\`)
-- \`${pm} lint\` - Run ESLint across all workspaces
-- \`${pm} run typecheck\` - Run TypeScript type checking across all workspaces
-${architecture.testing !== 'none' ? `- \`${pm} test\` - Run tests across all workspaces\n` : ''}- \`${pm} run pipeline\` - Run \`build\`, \`lint\`, and \`test\` together (Turbo)
+- \`${runScript('dev')}\` - Start the dev server for every workspace (Turbo \`dev\`)
+- \`${runScript('build')}\` - Build every workspace (Turbo \`build\`)
+- \`${runScript('lint')}\` - Run ESLint across all workspaces
+- \`${runScript('typecheck')}\` - Run TypeScript type checking across all workspaces
+${architecture.testing !== 'none' ? `- \`${runScript('test')}\` - Run tests across all workspaces\n` : ''}- \`${runScript('pipeline')}\` - Run \`build\`, \`lint\`, and \`test\` together (Turbo)
 
-To target a single workspace, use ${pm === 'pnpm' ? `pnpm's \`--filter\`` : 'a workspace filter'} flag, for example:
+To target a single workspace, use ${pm === 'pnpm' ? `pnpm's \`--filter\` flag` : pm === 'yarn' ? `yarn's \`workspace\` command` : pm === 'bun' ? `bun's \`--filter\` flag` : `npm's \`--workspace\` flag`}, for example:
 
-- \`${pm} --filter @${config.name}/web dev\` - Start dev for apps/web only
-- \`${pm} --filter @${config.name}/web build\` - Build apps/web only
+- \`${filteredScript(`@${config.name}/web`, 'dev')}\` - Start dev for apps/web only
+- \`${filteredScript(`@${config.name}/web`, 'build')}\` - Build apps/web only
 ${
   architecture.database !== 'none'
-    ? `- \`${pm} run docker:dev:up\` - Start database with Docker Compose (workspace root)
-- \`${pm} run docker:dev:down\` - Stop database
+    ? `- \`${runScript('docker:dev:up')}\` - Start database with Docker Compose (workspace root)
+- \`${runScript('docker:dev:down')}\` - Stop database
 `
     : ''
-}- \`${pm} run docker:build\` - Build Docker image
-- \`${pm} run docker:run\` - Run Docker container`
+}- \`${runScript('docker:build')}\` - Build Docker image
+- \`${runScript('docker:run')}\` - Run Docker container`
     : `
-- \`${pm} dev\` - Start development server (with Turbopack)
-- \`${pm} build\` - Build for production
-- \`${pm} start\` - Start production server
-- \`${pm} lint\` - Run ESLint
-- \`${pm} run type-check\` - Run TypeScript type checking
-${architecture.testing !== 'none' ? `- \`${pm} test\` - Run tests\n` : ''}${
+- \`${runScript('dev')}\` - Start development server (with Turbopack)
+- \`${runScript('build')}\` - Build for production
+- \`${runScript('start')}\` - Start production server
+- \`${runScript('lint')}\` - Run ESLint
+- \`${runScript('type-check')}\` - Run TypeScript type checking
+${architecture.testing !== 'none' ? `- \`${runScript('test')}\` - Run tests\n` : ''}${
         architecture.database !== 'none'
-          ? `- \`${pm} run docker:dev:up\` - Start database with Docker Compose
-- \`${pm} run docker:dev:down\` - Stop database
+          ? `- \`${runScript('docker:dev:up')}\` - Start database with Docker Compose
+- \`${runScript('docker:dev:down')}\` - Stop database
 `
           : ''
-      }- \`${pm} run docker:build\` - Build Docker image
-- \`${pm} run docker:run\` - Run Docker container`
+      }- \`${runScript('docker:build')}\` - Build Docker image
+- \`${runScript('docker:run')}\` - Run Docker container`
 }
 
 ## Environment Variables
@@ -4748,14 +4804,20 @@ Generated with [Next.js MCP Server](https://github.com/anthropics/next-mcp)
 
 ${layoutLines.join('\n')}
 
-The workspace is wired through \`pnpm-workspace.yaml\` (or the equivalent \`workspaces\` field) and \`turbo.json\` — \`build\`, \`lint\`, and \`typecheck\` at the root fan out to every workspace.
+The workspace is wired through ${pm === 'pnpm' ? '`pnpm-workspace.yaml`' : 'the root `package.json`\'s `workspaces` field'} and \`turbo.json\` — \`build\`, \`lint\`, and \`typecheck\` at the root fan out to every workspace.
 `;
     }
 
     // Commands block — root-level scripts, plus per-workspace filter examples.
+    // Per-pm script invocation (`pnpm dev` vs `npm run dev`) and workspace
+    // filter syntax (`--filter` for pnpm/bun, `--workspace=` for npm,
+    // `yarn workspace` for yarn) — without these the docs would print
+    // commands that error out for non-pnpm projects.
+    const runScript = (script: string): string => runScriptCommand(pm, script);
+    const filteredScript = (workspace: string, script: string): string =>
+      filteredWorkspaceCommand(pm, workspace, script);
     let commandsBlock = '';
     if (isMonorepo) {
-      const filterFlag = pm === 'pnpm' ? '--filter' : '--filter';
       commandsBlock = `
 ## Commands
 
@@ -4763,18 +4825,18 @@ Run from the workspace root — these delegate to Turborepo, which fans out acro
 
 \`\`\`bash
 ${pm} install                        # Install dependencies for all workspaces
-${pm} dev                            # Run dev for every workspace
-${pm} build                          # Build every workspace
-${pm} lint                           # Lint every workspace
-${pm} run typecheck                  # Type-check every workspace
-${architecture.testing !== 'none' ? `${pm} test                           # Run tests across workspaces\n` : ''}${pm} run pipeline                   # Run \`build\`, \`lint\`, and \`test\` together (Turbo)
+${runScript('dev')}                            # Run dev for every workspace
+${runScript('build')}                          # Build every workspace
+${runScript('lint')}                           # Lint every workspace
+${runScript('typecheck')}                      # Type-check every workspace
+${architecture.testing !== 'none' ? `${runScript('test')}                           # Run tests across workspaces\n` : ''}${runScript('pipeline')}                       # Run \`build\`, \`lint\`, and \`test\` together (Turbo)
 \`\`\`
 
-To target a single workspace, use ${pm}'s ${filterFlag} flag:
+To target a single workspace:
 
 \`\`\`bash
-${pm} ${filterFlag} @${config.name}/web dev       # Dev for apps/web only
-${pm} ${filterFlag} @${config.name}/web build     # Build apps/web only
+${filteredScript(`@${config.name}/web`, 'dev')}       # Dev for apps/web only
+${filteredScript(`@${config.name}/web`, 'build')}     # Build apps/web only
 \`\`\`
 `;
     } else {
@@ -4783,12 +4845,12 @@ ${pm} ${filterFlag} @${config.name}/web build     # Build apps/web only
 
 \`\`\`bash
 ${pm} install            # Install dependencies
-${pm} dev                # Start the dev server (Turbopack)
-${pm} build              # Build for production
-${pm} start              # Start the production server
-${pm} lint               # Run ESLint
-${pm} run type-check     # Run TypeScript type checking
-${architecture.testing !== 'none' ? `${pm} test               # Run tests\n` : ''}\`\`\`
+${runScript('dev')}                # Start the dev server (Turbopack)
+${runScript('build')}              # Build for production
+${runScript('start')}              # Start the production server
+${runScript('lint')}               # Run ESLint
+${runScript('type-check')}         # Run TypeScript type checking
+${architecture.testing !== 'none' ? `${runScript('test')}               # Run tests\n` : ''}\`\`\`
 `;
     }
 
@@ -4887,7 +4949,7 @@ ${architecture.testing !== 'none' ? `${pm} test               # Run tests\n` : '
       testingBlock = `
 ## Testing
 
-Tests run with \`${pm} test\`${architecture.testing === 'vitest' ? ' (Vitest)' : architecture.testing === 'jest' ? ' (Jest)' : architecture.testing === 'playwright' ? ' (Playwright)' : ''}. Test files live alongside the code they cover (see ${testsLocation}).
+Tests run with \`${runScript('test')}\`${architecture.testing === 'vitest' ? ' (Vitest)' : architecture.testing === 'jest' ? ' (Jest)' : architecture.testing === 'playwright' ? ' (Playwright)' : ''}. Test files live alongside the code they cover (see ${testsLocation}).
 `;
     }
 

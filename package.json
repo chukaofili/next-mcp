@@ -29,7 +29,8 @@
     "prebuild": "pnpm run lint && pnpm clean",
     "postbuild": "chmod +x dist/index.js && cp -r src/templates dist/templates",
     "pretest": "pnpm run build",
-    "pretest:integration": "pnpm run build"
+    "pretest:integration": "pnpm run build",
+    "presmoke": "pnpm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { buildShadcnInitCommand, getAppPath, getAuthConfigRelPath, getAuthGenerateScript, getAuthSchemaOutputRelPath, getShadcnRunner, packageRunnerDlx, rewriteImportsInTree, substituteCatalog, substituteDockerfilePlaceholders, substituteProjectName } from '../../src/index.js';
+import { buildShadcnInitCommand, filteredWorkspaceCommand, getAppPath, getAuthConfigRelPath, getAuthGenerateScript, getAuthSchemaOutputRelPath, getShadcnRunner, packageRunnerDlx, rewriteImportsInTree, runScriptCommand, substituteCatalog, substituteDockerfilePlaceholders, substituteProjectName } from '../../src/index.js';
 import type { ProjectConfig } from '../../src/index.js';
 import {
   cleanupTempDir,
@@ -536,6 +536,34 @@ describe('packageRunnerDlx', () => {
     expect(packageRunnerDlx('yarn')).toBe('yarn dlx');
     expect(packageRunnerDlx('bun')).toBe('bunx --bun');
     expect(packageRunnerDlx('npm')).toBe('npx');
+  });
+});
+
+describe('runScriptCommand', () => {
+  // pnpm/yarn accept the bare script name; npm/bun require `run`.
+  it('uses bare script name for pnpm and yarn', () => {
+    expect(runScriptCommand('pnpm', 'dev')).toBe('pnpm dev');
+    expect(runScriptCommand('yarn', 'build')).toBe('yarn build');
+  });
+
+  it('inserts `run` for npm and bun', () => {
+    expect(runScriptCommand('npm', 'dev')).toBe('npm run dev');
+    expect(runScriptCommand('bun', 'build')).toBe('bun run build');
+  });
+});
+
+describe('filteredWorkspaceCommand', () => {
+  it('uses pnpm --filter shape for pnpm', () => {
+    expect(filteredWorkspaceCommand('pnpm', '@my/web', 'dev')).toBe('pnpm --filter @my/web dev');
+  });
+  it('uses bun --filter ... run shape for bun', () => {
+    expect(filteredWorkspaceCommand('bun', '@my/web', 'build')).toBe('bun --filter @my/web run build');
+  });
+  it('uses yarn workspace shape for yarn', () => {
+    expect(filteredWorkspaceCommand('yarn', '@my/web', 'lint')).toBe('yarn workspace @my/web lint');
+  });
+  it('uses npm --workspace= shape for npm', () => {
+    expect(filteredWorkspaceCommand('npm', '@my/web', 'test')).toBe('npm run test --workspace=@my/web');
   });
 });
 
