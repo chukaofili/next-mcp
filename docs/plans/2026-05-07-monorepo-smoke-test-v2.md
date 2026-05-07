@@ -29,14 +29,17 @@
 > procedure is the install/build/docker pass it cannot run headlessly.
 >
 > **Companion docs:**
-> - v1 procedure (pre-R1) lives at
->   [`2026-05-05-monorepo-smoke-test.md`](./2026-05-05-monorepo-smoke-test.md).
->   Kept for audit trail. Findings from the 2026-05-07 v1 run are the
->   source data for this v2 rewrite — see appendix A for what changed.
-> - Implementation plan and design decisions:
->   [`2026-05-07-monorepo-shadcn-refactor-design.md`](./2026-05-07-monorepo-shadcn-refactor-design.md).
-> - Out-of-scope follow-ups (yarn variant, `--full` smoke driver flag):
->   [`2026-05-06-recommended-fixes.md`](./2026-05-06-recommended-fixes.md).
+> - Per-run findings: [`2026-05-07-monorepo-smoke-findings.md`](./2026-05-07-monorepo-smoke-findings.md)
+>   — what was discovered when this procedure was last run. Single
+>   source of truth across the smoke-pause window.
+> - Handoff after the 2026-05-07 run paused for source-side fixes:
+>   [`2026-05-07-handoff-after-smoke-pause.md`](./2026-05-07-handoff-after-smoke-pause.md).
+>   Categorized fix order + validation plan for the next session.
+> - Next-session prompt: [`start-here.md`](./start-here.md).
+> - Pre-pause history (v1 procedure, R1 design, recommended-fixes,
+>   spike-results, refactor prompt, monorepo-support handoff/design/
+>   implementation): see [`./archive/`](./archive/). Linked there for
+>   audit trail; not used to drive new work.
 
 ## 1. Purpose
 
@@ -667,7 +670,7 @@ is the regression baseline — if anything here behaves differently from
   canonical runtime check. The manual install / build / docker pass
   (§5 + the migrate end-to-end) is still done by hand. A `--full`
   flag for the driver to chain `<pm> install` + `<pm> build` is a
-  future extension, tracked in `2026-05-06-recommended-fixes.md`.
+  future extension, tracked in `archive/2026-05-06-recommended-fixes.md`.
 
 - **Out-of-scope follow-ups.** Tier 5b (yarn variant), the `--full`
   smoke flag, and the recommended-fixes Tiers 2-6 + OoS-1/OoS-2 land
@@ -697,7 +700,7 @@ The smoke is "green" when:
   AND `docker compose run --rm migrate` with no manual fixes.
 - All exercised package managers' lockfiles install (variants A and B
   exercise npm and bun; the everything-on smoke covers pnpm; yarn is
-  not in the smoke matrix — tracked in `2026-05-06-recommended-fixes.md`
+  not in the smoke matrix — tracked in `archive/2026-05-06-recommended-fixes.md`
   Tier 5b).
 - Findings (if any) are recorded below and filed as separate follow-up
   tickets / issues.
@@ -768,7 +771,7 @@ The smoke is "green" when:
 ## Appendix A — What changed from v1
 
 For readers cross-referencing
-[`2026-05-05-monorepo-smoke-test.md`](./2026-05-05-monorepo-smoke-test.md):
+[`archive/2026-05-05-monorepo-smoke-test.md`](./archive/2026-05-05-monorepo-smoke-test.md):
 
 ### Procedure (§3)
 
