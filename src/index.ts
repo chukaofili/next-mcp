@@ -540,6 +540,32 @@ export function formatExecDiagnostic(result: {
   return `\n${lines.join('\n')}\n`;
 }
 
+const FIXTURE_COPY_SKIP_DIRS = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'coverage']);
+const FIXTURE_COPY_SKIP_FILES = new Set(['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lock', 'bun.lockb']);
+
+/**
+ * Recursive directory copy used by `scaffoldViaShadcn{Monorepo,Flat}` when the
+ * `NEXT_MCP_SHADCN_*_FIXTURE` env vars point at a committed fixture (see
+ * `tests/global-setup.ts`). Skips `node_modules`, `.git`, lockfiles, and other
+ * build artefacts so the resulting tree is the same shape the fixture-refresh
+ * script wrote (those dirs are excluded by the rsync there too — this is
+ * defence-in-depth).
+ */
+async function copyDirectory(src: string, dest: string): Promise<void> {
+  await fs.mkdir(dest, { recursive: true });
+  const entries = await fs.readdir(src, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      if (FIXTURE_COPY_SKIP_DIRS.has(entry.name)) continue;
+      await copyDirectory(path.join(src, entry.name), path.join(dest, entry.name));
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (FIXTURE_COPY_SKIP_FILES.has(entry.name)) continue;
+    await fs.copyFile(path.join(src, entry.name), path.join(dest, entry.name));
+  }
+}
+
 /**
  * Augmentation primitives for the shadcn-led monorepo scaffold (R1 / Phase 4).
  * Each is a pure file-system operation against an already-shadcn-init'd
@@ -2177,14 +2203,41 @@ export class NextMCPServer {
     // post-init for non-pnpm. `--name` makes shadcn create
     // `<parentDir>/<projectName>/` as a subdir (verified empirically in
     // Phase 0; see spike-results §8.1).
-    const shadcnInitCommand =
-      `pnpm dlx shadcn@latest init --preset b0 --template next ` +
-      `--monorepo --pointer --silent --name ${projectName} --cwd ${parentDir}`;
-    const result = this.execCommand(shadcnInitCommand, parentDir, 'shadcn init (monorepo)');
-    if (!result.success) {
-      throw new Error(`[shadcn init failed]: ${result.reason ?? 'check logs'}`);
+    //
+    // Test-suite bypass: when `NEXT_MCP_SHADCN_MONOREPO_FIXTURE` points at a
+    // committed fixture (see `tests/global-setup.ts`), copy from disk
+    // instead of paying the ~12-18s live-init cost per test. The fixture is
+    // a verbatim shadcn output snapshot; the rest of the augmentation
+    // pipeline (rename, catalog, alignPins, …) runs unchanged so the
+    // resulting tree matches a live-init run modulo the rootPkg.name
+    // retarget below.
+    const fixtureRoot = process.env.NEXT_MCP_SHADCN_MONOREPO_FIXTURE;
+    if (fixtureRoot) {
+      await copyDirectory(fixtureRoot, projectPath);
+    } else {
+      const shadcnInitCommand =
+        `pnpm dlx shadcn@latest init --preset b0 --template next ` +
+        `--monorepo --pointer --silent --name ${projectName} --cwd ${parentDir}`;
+      const result = this.execCommand(shadcnInitCommand, parentDir, 'shadcn init (monorepo)');
+      if (!result.success) {
+        throw new Error(`[shadcn init failed]: ${result.reason ?? 'check logs'}`);
+      }
     }
     await fs.access(projectPath);
+
+    // 1a. rootPkg.name retarget — unconditional for both live-init and
+    // fixture-copy. Live init's `--name <projectName>` already produces the
+    // right value; fixture copy carries the snapshot's name (e.g. `test-2`).
+    // Doing this before the rename pass keeps `renameWorkspaceScope` focused
+    // on `@workspace/` substrings (rootPkg.name is unscoped).
+    {
+      const rootPkgPath = path.join(projectPath, 'package.json');
+      const rootPkg = JSON.parse(await fs.readFile(rootPkgPath, 'utf-8'));
+      if (rootPkg.name !== projectName) {
+        rootPkg.name = projectName;
+        await fs.writeFile(rootPkgPath, JSON.stringify(rootPkg, null, 2) + '\n');
+      }
+    }
 
     // 2. Project-scope rename (substring + apps/web name fixup).
     await renameWorkspaceScope(projectPath, projectName);
@@ -2275,15 +2328,33 @@ export class NextMCPServer {
     await fs.mkdir(parentDir, { recursive: true });
 
     // 1. shadcn init --no-monorepo. Same subdir-creation semantics as the
-    // monorepo path.
-    const shadcnInitCommand =
-      `pnpm dlx shadcn@latest init --preset b0 --template next ` +
-      `--no-monorepo --pointer --silent --name ${projectName} --cwd ${parentDir}`;
-    const result = this.execCommand(shadcnInitCommand, parentDir, 'shadcn init (flat)');
-    if (!result.success) {
-      throw new Error(`[shadcn init failed]: ${result.reason ?? 'check logs'}`);
+    // monorepo path. Same fixture bypass as `scaffoldViaShadcnMonorepo`
+    // (env: `NEXT_MCP_SHADCN_FLAT_FIXTURE`) — see the comment there for
+    // rationale.
+    const fixtureRoot = process.env.NEXT_MCP_SHADCN_FLAT_FIXTURE;
+    if (fixtureRoot) {
+      await copyDirectory(fixtureRoot, projectPath);
+    } else {
+      const shadcnInitCommand =
+        `pnpm dlx shadcn@latest init --preset b0 --template next ` +
+        `--no-monorepo --pointer --silent --name ${projectName} --cwd ${parentDir}`;
+      const result = this.execCommand(shadcnInitCommand, parentDir, 'shadcn init (flat)');
+      if (!result.success) {
+        throw new Error(`[shadcn init failed]: ${result.reason ?? 'check logs'}`);
+      }
     }
     await fs.access(projectPath);
+
+    // 1a. rootPkg.name retarget — unconditional for both live-init and
+    // fixture-copy (mirrors `scaffoldViaShadcnMonorepo`).
+    {
+      const rootPkgPath = path.join(projectPath, 'package.json');
+      const rootPkg = JSON.parse(await fs.readFile(rootPkgPath, 'utf-8'));
+      if (rootPkg.name !== projectName) {
+        rootPkg.name = projectName;
+        await fs.writeFile(rootPkgPath, JSON.stringify(rootPkg, null, 2) + '\n');
+      }
+    }
 
     // 2. Layout fixup — flat→src/ for parity with non-shadcn flat path
     // (which uses create-next-app's --src-dir).

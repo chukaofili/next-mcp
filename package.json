@@ -24,6 +24,7 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "smoke": "tsx tools/smoke.ts",
+    "refresh-shadcn-fixtures": "bash tools/refresh-shadcn-fixtures.sh",
     "lint": "eslint src/**/*.ts tests/**/*.ts tools/**/*.ts",
     "format": "prettier --write src/**/*.ts tests/**/*.ts tools/**/*.ts",
     "prebuild": "pnpm run lint && pnpm clean",
