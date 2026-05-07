@@ -1,15 +1,28 @@
 # Monorepo + shadcn Scaffolding Refactor — Design Doc
 
-> **Status (2026-05-07): Phase 4 shipped on `feat/upgrade-packages`.**
-> See commits `755bd3a..eda5d71` (R1 commits 1–4 of 5). The Phase 0
-> spike's go decision — captured in
-> [`2026-05-07-r1-spike-results.md`](./2026-05-07-r1-spike-results.md) —
-> validated the architecture; Phase 4 implements it. Also landed:
-> Phase 1 (B5 fix, `61d6fde`), Phase 2 (B6 hardening + auth schema-gen
-> verify hook, `d728828`), Phase 3 (B1 dotenv-cli via dlx, `0a584b7`).
-> Inline notes flagged "**Phase 4 landed:**" and "**Phase 0 spike
-> correction:**" mark where the implementation diverged from this
-> doc's pre-implementation guesses.
+> **Status (2026-05-07): Phases 0–6 shipped on `feat/upgrade-packages`.**
+> R1 implementation: commits `755bd3a..eda5d71` + docs banner `90f47ad`
+> (commits 1–5 of 5, Phase 0 spike + Phase 4). Phase 5 (test surface
+> update) shipped as commit `77e8dac` — replaces per-test live
+> `pnpm dlx shadcn init` calls (~12-18s each) with copies from committed
+> fixtures at `tests/fixtures/shadcn-{monorepo,flat}-init/`; suite
+> wall-time drops from ~168s to ~22s. Phase 6 (smoke driver R1 rename
+> invariant) shipped as commit `12a5090` — adds `noResidualSubstrings`
+> post-condition + `R1_RENAME_INVARIANT` (no `@workspace/` strings
+> survive in any Path A output) to `tools/smoke.ts`. Smoke v2 itself
+> already shipped as `2026-05-07-monorepo-smoke-test-v2.md`. Pre-R1
+> phases also landed: Phase 1 (B5 fix, `61d6fde`), Phase 2 (B6
+> hardening + auth schema-gen verify hook, `d728828`), Phase 3 (B1
+> dotenv-cli via dlx, `0a584b7`). Inline notes flagged "**Phase 4
+> landed:**" and "**Phase 0 spike correction:**" mark where the
+> implementation diverged from this doc's pre-implementation guesses.
+>
+> **Merge gate remaining:** Tier 1 manual install/build/docker
+> run-through against each preset per
+> [`2026-05-07-monorepo-smoke-test-v2.md`](./2026-05-07-monorepo-smoke-test-v2.md).
+> CI's `pnpm smoke` covers the generation half (skipInstall: true); the
+> real `pnpm install` + `turbo build` + `docker build` + `docker
+> compose run --rm migrate` pass is unverified.
 >
 > Plan to replace next-mcp's current `create-next-app`-driven monorepo
 > scaffolding with delegation to `shadcn@latest init --monorepo`. Surfaced
@@ -617,26 +630,48 @@ Pre-req: Phase 0 spike landed go.
 
 ### Phase 5 — test surface update
 
-- [ ] Update integration tests in `tests/integration/tools/*` to match
+> **Phase 5 landed:** commit `77e8dac` (`feat(tests): wire shadcn-init
+> fixture bypass`). Integration tests now consume committed shadcn-init
+> fixtures at `tests/fixtures/shadcn-{monorepo,flat}-init/` instead of
+> spawning live `pnpm dlx shadcn@latest init` per test (~12-18s each →
+> file-system copy). Wall-time: ~168s → ~22s. The augmentation pipeline
+> (rename, catalog, alignPins, …) runs unchanged on the copy, so the
+> resulting tree matches a live-init run modulo a `rootPkg.name`
+> retarget that runs after either path. Smoke driver continues to use
+> real shadcn init as the canonical runtime check.
+
+- [x] Update integration tests in `tests/integration/tools/*` to match
       the new file shape produced by the shadcn path. Many existing
       assertions will move (e.g. apps/web flat layout), some will be
       replaced (e.g. `pnpm-workspace.yaml` content checks become
       "catalog block was *added* by augmentation, not by shadcn").
-- [ ] Update `tools/smoke.ts` post-conditions per the new layout.
-- [ ] Add new generation-only assertions for the rename pass (no
-      `@workspace/...` strings remain in the output).
+      *(Done as part of R1 commit 3/5, `724de73`.)*
+- [x] Update `tools/smoke.ts` post-conditions per the new layout.
+      *(Smoke driver was already updated alongside R1; Phase 6 below
+      adds the rename-invariant content-grep on top.)*
+- [x] Add new generation-only assertions for the rename pass (no
+      `@workspace/...` strings remain in the output). *(Shipped with
+      Phase 6 — see `R1_RENAME_INVARIANT` in `tools/smoke.ts`.)*
 
 ### Phase 6 — companion smoke doc rewrite (smoke-test-v2)
 
-- [ ] Rewrite the smoke procedure as `2026-XX-XX-monorepo-smoke-test-v2.md`
+> **Phase 6 landed:** smoke-v2 doc shipped as
+> `2026-05-07-monorepo-smoke-test-v2.md`. The §4.0 universal regression
+> catch (no surviving `@workspace/` substrings) is enforced
+> programmatically by commit `12a5090` (`feat(smoke): enforce R1
+> rename invariant via content-grep`) — `tools/smoke.ts` now declares
+> `R1_RENAME_INVARIANT` and applies it to `full-everything-on`,
+> `variant-a-full-npm`, `variant-d-flat-regression`.
+
+- [x] Rewrite the smoke procedure as `2026-05-07-monorepo-smoke-test-v2.md`
       reflecting the new scaffold flow.
-- [ ] Per-tool checklists update — `scaffold_project` now produces
+- [x] Per-tool checklists update — `scaffold_project` now produces
       different artifacts; `setup_shadcn` becomes a much simpler
       "verify shadcn primitives are present, idempotent" check.
-- [ ] Reuse most of section 5 (build steps) and section 6 (companion
+- [x] Reuse most of section 5 (build steps) and section 6 (companion
       smoke variants A/B/C/D) — those are scaffold-shape-agnostic.
-- [ ] Update Variant C ("minimal") description per the §8.4 decision.
-- [ ] Update Variant D ("flat regression") to explicitly assert the
+- [x] Update Variant C ("minimal") description per the §8.4 decision.
+- [x] Update Variant D ("flat regression") to explicitly assert the
       non-shadcn fallback path is exercised.
 
 ---
