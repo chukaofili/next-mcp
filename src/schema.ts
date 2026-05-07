@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 
 /**
  * Side-effect-free schema module. Exports the project config schema, its
@@ -64,7 +64,10 @@ const NON_NONE_DBS = ORM_DATABASE_COMPATIBILITY.none.filter((d) => d !== 'none')
 
 export const ProjectConfigSchema = z
   .object({
-    name: z.string().optional().describe('Project name. If not provided, a unique name will be generated automatically.'),
+    name: z
+      .string()
+      .optional()
+      .describe('Project name. If not provided, a unique name will be generated automatically.'),
     description: z.string().optional().describe('Project description. Used in package.json and documentation.'),
     architecture: z
       .object({
@@ -112,24 +115,22 @@ export const ProjectConfigSchema = z
         monorepo: z
           .enum(['none', 'minimal', 'full'])
           .default('none')
-          .describe('Monorepo layout. `none` = flat project. `minimal` = workspaces + Turborepo with apps/web. `full` = minimal plus opinionated shared packages.'),
+          .describe(
+            'Monorepo layout. `none` = flat project. `minimal` = workspaces + Turborepo with apps/web. `full` = minimal plus opinionated shared packages.'
+          ),
         rpc: z
           .enum(['none', 'orpc'])
           .default('none')
-          .describe('RPC layer. `orpc` requires `monorepo === \'full\'` (emits packages/orpc).'),
+          .describe("RPC layer. `orpc` requires `monorepo === 'full'` (emits packages/orpc)."),
       })
       .describe('Project architecture configuration. Defines the technology stack and features.'),
   })
-  .refine(
-    (cfg) => !(cfg.architecture.rpc === 'orpc' && cfg.architecture.monorepo !== 'full'),
-    { message: 'rpc: "orpc" requires monorepo: "full"' }
-  )
-  .refine(
-    (cfg) => !(cfg.architecture.auth === 'better-auth' && cfg.architecture.database === 'none'),
-    {
-      message: `Better Auth requires a database. Set architecture.database to one of: ${NON_NONE_DBS}.`,
-    }
-  )
+  .refine((cfg) => !(cfg.architecture.rpc === 'orpc' && cfg.architecture.monorepo !== 'full'), {
+    message: 'rpc: "orpc" requires monorepo: "full"',
+  })
+  .refine((cfg) => !(cfg.architecture.auth === 'better-auth' && cfg.architecture.database === 'none'), {
+    message: `Better Auth requires a database. Set architecture.database to one of: ${NON_NONE_DBS}.`,
+  })
   .superRefine((cfg, ctx) => {
     const { orm, database } = cfg.architecture;
     if (orm === 'none') return;

@@ -18,9 +18,10 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { adjectives, colors, Config, names, uniqueNamesGenerator } from 'unique-names-generator';
 import winston from 'winston';
-import { z } from 'zod';
+import * as z from 'zod';
 
 import details from '../package.json' with { type: 'json' };
+import { ORM_DATABASE_COMPATIBILITY, ProjectConfigSchema, type PackageManager, type ProjectConfig } from './schema.js';
 
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -139,17 +140,9 @@ export {
   type ProjectConfig,
   type PackageManager,
 } from './schema.js';
-import {
-  ORM_DATABASE_COMPATIBILITY,
-  ProjectConfigSchema,
-  type ProjectConfig,
-  type PackageManager,
-} from './schema.js';
 
 export function getAppPath(config: ProjectConfig, projectPath: string): string {
-  return config.architecture.monorepo === 'none'
-    ? projectPath
-    : path.join(projectPath, 'apps/web');
+  return config.architecture.monorepo === 'none' ? projectPath : path.join(projectPath, 'apps/web');
 }
 
 /**
@@ -267,9 +260,7 @@ export function getDbDeps(config: ProjectConfig): {
  * - `minimal` / `none` / `full + orm:none`: app directory (via {@link getAppPath})
  */
 export function getDbBaseDir(config: ProjectConfig, projectPath: string): string {
-  return shouldRouteToDbPackage(config)
-    ? path.join(projectPath, 'packages/db')
-    : getAppPath(config, projectPath);
+  return shouldRouteToDbPackage(config) ? path.join(projectPath, 'packages/db') : getAppPath(config, projectPath);
 }
 
 /**
@@ -305,10 +296,7 @@ export function getPrismaOutputArg(config: ProjectConfig): string {
   const dbSrcDir = shouldRouteToDbPackage(config)
     ? path.posix.join(dbBaseDir, 'src')
     : path.posix.join(dbBaseDir, 'src/lib/db');
-  return path.posix.relative(
-    path.posix.join(dbBaseDir, 'prisma'),
-    path.posix.join(dbSrcDir, '.prisma')
-  );
+  return path.posix.relative(path.posix.join(dbBaseDir, 'prisma'), path.posix.join(dbSrcDir, '.prisma'));
 }
 
 /**
@@ -514,11 +502,7 @@ export function runScriptCommand(pm: PackageManager, script: string): string {
  * the same shape — drift between the two docs would surface as
  * conflicting copy-paste commands in the same generated project.
  */
-export function filteredWorkspaceCommand(
-  pm: PackageManager,
-  workspace: string,
-  script: string
-): string {
+export function filteredWorkspaceCommand(pm: PackageManager, workspace: string, script: string): string {
   switch (pm) {
     case 'pnpm':
       return `pnpm --filter ${workspace} ${script}`;
@@ -787,10 +771,7 @@ function buildDrizzleMigrateDepsAdd(pm: PackageManager, database: string): strin
  *
  * All paths use POSIX separators so the result is stable on Windows hosts.
  */
-export function substituteMigrateDockerfilePlaceholders(
-  template: string,
-  config: ProjectConfig
-): string {
+export function substituteMigrateDockerfilePlaceholders(template: string, config: ProjectConfig): string {
   const pm = config.architecture.packageManager;
   const isMonorepo = config.architecture.monorepo !== 'none';
   const orm = config.architecture.orm;
@@ -939,10 +920,7 @@ export type ImportRewriteMapping = {
  * Exported standalone (in addition to being used internally) so it can be
  * unit-tested directly without spinning up the full MCP server.
  */
-export async function rewriteImportsInTree(
-  root: string,
-  mappings: ImportRewriteMapping[]
-): Promise<void> {
+export async function rewriteImportsInTree(root: string, mappings: ImportRewriteMapping[]): Promise<void> {
   // Sort longest-prefix-first so a shorter alias can never partially
   // consume a longer one. Callers may pass mappings in any order.
   const sortedMappings = [...mappings].sort((a, b) => b.alias.length - a.alias.length);
@@ -973,10 +951,7 @@ export async function rewriteImportsInTree(
       // exact alias only (auth case, where the alias maps to a single file).
       const escapedAlias = mapping.alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const pattern = mapping.preserveSubpath
-        ? new RegExp(
-            `((?:from|import|require)\\s*\\(?\\s*)(['"])${escapedAlias}(\\/[^'"]*)?\\2`,
-            'g'
-          )
+        ? new RegExp(`((?:from|import|require)\\s*\\(?\\s*)(['"])${escapedAlias}(\\/[^'"]*)?\\2`, 'g')
         : new RegExp(`((?:from|import|require)\\s*\\(?\\s*)(['"])${escapedAlias}\\2`, 'g');
 
       updated = updated.replace(pattern, (_match, prefix: string, quote: string, sub?: string) => {
@@ -1196,9 +1171,7 @@ class NextMCPServer {
         description: 'Initialize shadcn/ui with defaults and install all components',
         inputSchema: commonInputShape,
       },
-      this.withValidation('setup_shadcn', 'projectPath', (config, projectPath) =>
-        this.setupShadcn(config, projectPath)
-      )
+      this.withValidation('setup_shadcn', 'projectPath', (config, projectPath) => this.setupShadcn(config, projectPath))
     );
 
     this.server.registerTool(
@@ -1336,7 +1309,10 @@ class NextMCPServer {
       // mocking network. Only valid alongside NEXT_MCP_RECORD_COMMANDS.
       const failPatterns = process.env.NEXT_MCP_FAIL_COMMANDS;
       if (failPatterns) {
-        const patterns = failPatterns.split(',').map((p) => p.trim()).filter(Boolean);
+        const patterns = failPatterns
+          .split(',')
+          .map((p) => p.trim())
+          .filter(Boolean);
         if (patterns.some((p) => commandLabel.includes(p))) {
           return { success: false, output: `simulated failure for label: ${commandLabel}` };
         }
@@ -1526,9 +1502,7 @@ class NextMCPServer {
 
     // 1. Root package.json
     const pkgTpl = await fs.readFile(path.join(templatesDir, 'package.json.template'), 'utf-8');
-    let rootPkgRaw = pkgTpl
-      .replaceAll('<projectName>', projectName)
-      .replaceAll('<description>', description);
+    let rootPkgRaw = pkgTpl.replaceAll('<projectName>', projectName).replaceAll('<description>', description);
 
     // For non-pnpm, substitute catalog: references (pnpm uses pnpm-workspace.yaml catalog).
     rootPkgRaw = substituteCatalog(rootPkgRaw, pm, CATALOG_VERSIONS);
@@ -1619,10 +1593,7 @@ class NextMCPServer {
 
     // 5. pnpm-workspace.yaml — only for pnpm
     if (pm === 'pnpm') {
-      const workspaceTpl = await fs.readFile(
-        path.join(templatesDir, 'pnpm-workspace.yaml.template'),
-        'utf-8'
-      );
+      const workspaceTpl = await fs.readFile(path.join(templatesDir, 'pnpm-workspace.yaml.template'), 'utf-8');
       await fs.writeFile(path.join(projectPath, 'pnpm-workspace.yaml'), workspaceTpl);
     }
 
@@ -1721,10 +1692,7 @@ class NextMCPServer {
    * same dep set is added here and removed from `apps/web/package.json` when
    * `shouldRouteToDbPackage(config)` is true.
    */
-  private async patchDbWorkspacePackageJson(
-    config: ProjectConfig,
-    projectPath: string
-  ): Promise<void> {
+  private async patchDbWorkspacePackageJson(config: ProjectConfig, projectPath: string): Promise<void> {
     const { dependencies, devDependencies } = getDbDeps(config);
     if (Object.keys(dependencies).length === 0 && Object.keys(devDependencies).length === 0) {
       return;
@@ -1742,10 +1710,7 @@ class NextMCPServer {
    * Always emits eslint-config + typescript-config.
    * Conditionally emits db/auth/ui/orpc based on other config fields.
    */
-  private async generateFullModePackages(
-    config: ProjectConfig,
-    projectPath: string
-  ): Promise<void> {
+  private async generateFullModePackages(config: ProjectConfig, projectPath: string): Promise<void> {
     if (config.architecture.monorepo !== 'full') return;
 
     // Always-on
@@ -2009,20 +1974,14 @@ class NextMCPServer {
       // packages/auth/src/re-exports.ts) so the only better-auth dep needed
       // there is the workspace dep wired by wireAppsWebToAuthPackage.
       // The `packages/auth` template declares `better-auth: catalog:`.
-      if (
-        config.architecture.auth === 'better-auth' &&
-        !shouldRouteToAuthPackage(config)
-      ) {
+      if (config.architecture.auth === 'better-auth' && !shouldRouteToAuthPackage(config)) {
         additionalDeps['better-auth'] = PACKAGE_VERSIONS['better-auth'];
       }
 
       // `auth:generate` script (flat mode only — monorepo handles this in
       // scaffoldMonorepoRoot) shells `dotenv-cli`. Add it as a devDep so the
       // `dotenv` binary is available in node_modules/.bin.
-      if (
-        config.architecture.monorepo === 'none' &&
-        getAuthGenerateScript(config) !== null
-      ) {
+      if (config.architecture.monorepo === 'none' && getAuthGenerateScript(config) !== null) {
         additionalDevDeps['dotenv-cli'] = PACKAGE_VERSIONS['dotenv-cli'];
       }
 
@@ -2094,10 +2053,7 @@ class NextMCPServer {
       // hardcoded for the legacy single-package layout.
       const isMonorepo = config.architecture.monorepo !== 'none';
       const templateName = isMonorepo ? 'Dockerfile.monorepo' : 'Dockerfile';
-      let dockerfileTemplate = await fs.readFile(
-        path.join(__dirname, 'templates', 'docker', templateName),
-        'utf-8'
-      );
+      let dockerfileTemplate = await fs.readFile(path.join(__dirname, 'templates', 'docker', templateName), 'utf-8');
       if (isMonorepo) {
         dockerfileTemplate = substituteDockerfilePlaceholders(
           dockerfileTemplate,
@@ -2295,8 +2251,7 @@ class NextMCPServer {
       // package managers, all three monorepo modes, and both supported ORMs
       // — see {@link substituteMigrateDockerfilePlaceholders}.
       let migrateDockerfileMessage = '';
-      const ormUsesMigrateImage =
-        config.architecture.orm === 'prisma' || config.architecture.orm === 'drizzle';
+      const ormUsesMigrateImage = config.architecture.orm === 'prisma' || config.architecture.orm === 'drizzle';
       if (ormUsesMigrateImage && config.architecture.database !== 'none') {
         const dockerfileMigrateTemplate = await fs.readFile(
           path.join(__dirname, 'templates', 'docker', 'Dockerfile.migrate'),
@@ -2531,8 +2486,7 @@ class NextMCPServer {
       // combo so the generated project compiles. Users can re-run
       // `setup_shadcn` after `<pm> install` and swap the imports
       // themselves if they want the shadcn variant.
-      const useShadcn =
-        config.architecture.uiLibrary === 'shadcn' && !config.architecture.skipInstall;
+      const useShadcn = config.architecture.uiLibrary === 'shadcn' && !config.architecture.skipInstall;
 
       // Resolve the shadcn import target. In `monorepo: 'full'` the
       // shared shadcn components live in `packages/ui`; apps/web reaches
@@ -2713,10 +2667,7 @@ export { Button };
 
       if (useShadcn) {
         components.push('- Using shadcn/ui Button component (call setup_shadcn tool to install)');
-      } else if (
-        config.architecture.uiLibrary === 'shadcn' &&
-        config.architecture.skipInstall
-      ) {
+      } else if (config.architecture.uiLibrary === 'shadcn' && config.architecture.skipInstall) {
         // shadcn was requested but skipInstall forced the local-Button
         // fallback. Surface the manual recovery so users know to swap to
         // shadcn imports after installing.
@@ -2753,7 +2704,6 @@ export { Button };
       };
     }
   }
-
 
   private generateDrizzleClient(database: string, template: string): string {
     let driverImport = '';
@@ -2853,8 +2803,7 @@ export const db = drizzle(pool, { schema });`;
           {
             type: 'text',
             text:
-              `Invalid combination: ${orm} does not support ${database}. ` +
-              `Valid databases for ${orm}: ${validDbs}`,
+              `Invalid combination: ${orm} does not support ${database}. ` + `Valid databases for ${orm}: ${validDbs}`,
           },
         ],
       };
@@ -2940,11 +2889,7 @@ export const db = drizzle(pool, { schema });`;
     }
   }
 
-  private async setupPrisma(
-    config: ProjectConfig,
-    dbBaseDir: string,
-    dbSrcDir: string
-  ): Promise<void> {
+  private async setupPrisma(config: ProjectConfig, dbBaseDir: string, dbSrcDir: string): Promise<void> {
     const database = config.architecture.database;
     const packageRunner = config.architecture.skipInstall
       ? this.getPackageRunnerDlx(config.architecture.packageManager)
@@ -3001,11 +2946,7 @@ export const db = drizzle(pool, { schema });`;
     }
   }
 
-  private async setupDrizzle(
-    config: ProjectConfig,
-    dbBaseDir: string,
-    dbSrcDir: string
-  ): Promise<void> {
+  private async setupDrizzle(config: ProjectConfig, dbBaseDir: string, dbSrcDir: string): Promise<void> {
     const database = config.architecture.database;
 
     // Read and process drizzle config template
@@ -3017,9 +2958,7 @@ export const db = drizzle(pool, { schema });`;
     // schema barrel at `packages/db/src/schema/index.ts`. In other modes, both
     // live under `<app>/src/lib/db/`. Compute the right path so drizzle-kit
     // can find the schema barrel at runtime.
-    const drizzleSchemaPath = shouldRouteToDbPackage(config)
-      ? './src/schema/index.ts'
-      : './src/lib/db/schema/index.ts';
+    const drizzleSchemaPath = shouldRouteToDbPackage(config) ? './src/schema/index.ts' : './src/lib/db/schema/index.ts';
 
     configTemplate = configTemplate
       .replace(/__DIALECT__/g, this.getDrizzleDialect(database))
@@ -3144,9 +3083,7 @@ export const db = drizzle(pool, { schema });`;
     for (const sub of ['src', 'app']) {
       const root = path.join(appPath, sub);
       if (existsSync(root)) {
-        await this.rewriteImportsInTree(root, [
-          { alias: '@/lib/db', replacement: dbPkgName, preserveSubpath: true },
-        ]);
+        await this.rewriteImportsInTree(root, [{ alias: '@/lib/db', replacement: dbPkgName, preserveSubpath: true }]);
       }
     }
 
@@ -3211,10 +3148,7 @@ export const db = drizzle(pool, { schema });`;
    * Returns the resolved `authPkgName` so callers can include it in
    * user-facing instructions.
    */
-  private async wireAppsWebToAuthPackage(
-    config: ProjectConfig,
-    projectPath: string
-  ): Promise<string> {
+  private async wireAppsWebToAuthPackage(config: ProjectConfig, projectPath: string): Promise<string> {
     const authPkgName = await wireAppsWebToWorkspacePackage(
       projectPath,
       'auth',
@@ -3279,10 +3213,7 @@ export const db = drizzle(pool, { schema });`;
    * Skipped when the orpc package wasn't emitted (the gate matches
    * {@link hasOrpcPackageEmitted}).
    */
-  private async wireAppsWebToOrpcPackage(
-    config: ProjectConfig,
-    projectPath: string
-  ): Promise<string> {
+  private async wireAppsWebToOrpcPackage(config: ProjectConfig, projectPath: string): Promise<string> {
     const orpcPkgName = await wireAppsWebToWorkspacePackage(
       projectPath,
       'orpc',
@@ -3305,10 +3236,7 @@ export const db = drizzle(pool, { schema });`;
     // Emit the catch-all RPC route handler.
     const routeDir = path.join(appPath, 'src/app/api/rpc/[[...rest]]');
     await fs.mkdir(routeDir, { recursive: true });
-    const routeTemplate = await fs.readFile(
-      path.join(__dirname, 'templates/orpc/route.ts.template'),
-      'utf-8'
-    );
+    const routeTemplate = await fs.readFile(path.join(__dirname, 'templates/orpc/route.ts.template'), 'utf-8');
     const routeContent = routeTemplate.replaceAll('__ORPC_PACKAGE_IMPORT__', orpcPkgName);
     await fs.writeFile(path.join(routeDir, 'route.ts'), routeContent);
     logger.info(`Emitted apps/web/src/app/api/rpc/[[...rest]]/route.ts wired to ${orpcPkgName}`);
@@ -3335,10 +3263,7 @@ export const db = drizzle(pool, { schema });`;
    * `@/components/ui/*` (which still resolves to the apps/web local
    * copy that `setup_shadcn` populates).
    */
-  private async wireAppsWebToUiPackage(
-    config: ProjectConfig,
-    projectPath: string
-  ): Promise<string> {
+  private async wireAppsWebToUiPackage(config: ProjectConfig, projectPath: string): Promise<string> {
     const uiPkgName = await wireAppsWebToWorkspacePackage(
       projectPath,
       'ui',
@@ -3418,9 +3343,7 @@ export const db = drizzle(pool, { schema });`;
       // package-manager agnostic and the cwd is unambiguous. Non-routed
       // mode runs the prisma binary directly via the binary runner
       // (`pnpm exec`, `npx`, etc.).
-      const pushCmd = routedToDbPkg
-        ? `${cdHint}${runScript('db:push')}`
-        : `${cdHint}${packageRunner} prisma db push`;
+      const pushCmd = routedToDbPkg ? `${cdHint}${runScript('db:push')}` : `${cdHint}${packageRunner} prisma db push`;
       const migrateAlt = routedToDbPkg ? 'db:migrate' : 'prisma migrate dev';
       const generateCmd = routedToDbPkg
         ? `${cdHint}${runScript('db:generate')}`
@@ -3435,9 +3358,7 @@ export const db = drizzle(pool, { schema });`;
       const generateCmd = routedToDbPkg
         ? `${cdHint}${runScript('db:generate')}`
         : `${cdHint}${packageRunner} drizzle-kit generate`;
-      const pushCmd = routedToDbPkg
-        ? `${cdHint}${runScript('db:push')}`
-        : `${cdHint}${packageRunner} drizzle-kit push`;
+      const pushCmd = routedToDbPkg ? `${cdHint}${runScript('db:push')}` : `${cdHint}${packageRunner} drizzle-kit push`;
       const migrateAlt = routedToDbPkg ? 'db:migrate' : 'drizzle-kit migrate';
 
       instructions += `1. Add your tables to ${schemaDirDrizzle} — it is a barrel directory: auth tables live in schema/auth.ts (populated by \`pnpm auth:generate\`); create new files like schema/users.ts and re-export them from schema/index.ts.\n`;
@@ -3471,9 +3392,7 @@ export const db = drizzle(pool, { schema });`;
     // the headless `betterAuth({...})` config imports the same workspace
     // package that the rest of the monorepo uses. In all other modes, the
     // legacy `@/lib/db` alias resolves to the app's local `src/lib/db`.
-    const dbImportSpecifier = shouldRouteToDbPackage(config)
-      ? `@${config.name}/db`
-      : '@/lib/db';
+    const dbImportSpecifier = shouldRouteToDbPackage(config) ? `@${config.name}/db` : '@/lib/db';
 
     if (orm === 'prisma') {
       return {
@@ -3695,10 +3614,7 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       // subpaths (`<pkg>/server`, `<pkg>/client`) — the barrel exists for
       // ergonomic import in the package's own internal code.
       if (routedToAuthPkg && authPaths.indexPath) {
-        const authIndexTemplate = await fs.readFile(
-          path.join(__dirname, 'templates/auth/index.ts.template'),
-          'utf-8'
-        );
+        const authIndexTemplate = await fs.readFile(path.join(__dirname, 'templates/auth/index.ts.template'), 'utf-8');
         await fs.writeFile(authPaths.indexPath, authIndexTemplate);
       }
 
@@ -3732,14 +3648,8 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       // Step 4.5: Generate proxy.ts (headless — only depends on
       // better-auth/cookies via the routed/upstream import). Always emit
       // regardless of skipInstall.
-      const proxyTemplate = await fs.readFile(
-        path.join(__dirname, 'templates/auth/proxy.ts.template'),
-        'utf-8'
-      );
-      const proxyContent = proxyTemplate.replaceAll(
-        '__BETTER_AUTH_COOKIES_IMPORT__',
-        betterAuthCookiesImport
-      );
+      const proxyTemplate = await fs.readFile(path.join(__dirname, 'templates/auth/proxy.ts.template'), 'utf-8');
+      const proxyContent = proxyTemplate.replaceAll('__BETTER_AUTH_COOKIES_IMPORT__', betterAuthCookiesImport);
       await fs.writeFile(path.join(appPath, 'src/proxy.ts'), proxyContent);
 
       // Step 4.9: Install better-auth-ui shadcn registry pieces. These live
@@ -3821,8 +3731,7 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       //   - `registryInstallFailed` — the install ran but failed; emitting
       //     the importing templates would leave the project uncompilable.
       //     We surface a hard tool error at the end of this function.
-      const writeRegistryDependentLayer =
-        !config.architecture.skipInstall && !registryInstallFailed;
+      const writeRegistryDependentLayer = !config.architecture.skipInstall && !registryInstallFailed;
 
       if (writeRegistryDependentLayer) {
         // Step 5: Generate AuthUIProvider. Substitutes the auth-client import.
@@ -3830,14 +3739,8 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
           path.join(__dirname, 'templates/auth/auth-ui-provider.tsx.template'),
           'utf-8'
         );
-        const authProviderContent = authProviderTemplate.replaceAll(
-          '__AUTH_CLIENT_IMPORT__',
-          authClientImport
-        );
-        await fs.writeFile(
-          path.join(appPath, 'src/providers/auth-ui-provider.tsx'),
-          authProviderContent
-        );
+        const authProviderContent = authProviderTemplate.replaceAll('__AUTH_CLIENT_IMPORT__', authClientImport);
+        await fs.writeFile(path.join(appPath, 'src/providers/auth-ui-provider.tsx'), authProviderContent);
 
         // Step 6: Generate dynamic auth pages & layout
         // Step 7: Generate dynamic account pages
@@ -4035,10 +3938,7 @@ components.`,
       // gated on `writeRegistryDependentLayer` above. Listing files we
       // didn't write would mislead users and break trust in the success
       // message.
-      const generatedFileLines: string[] = [
-        serverFileLine,
-        clientFileLine,
-      ];
+      const generatedFileLines: string[] = [serverFileLine, clientFileLine];
       if (indexFileLine) generatedFileLines.push(indexFileLine.trimStart());
       generatedFileLines.push(
         `- ${appPrefix}src/app/api/auth/[...all]/route.ts (API handler)`,
@@ -4404,8 +4304,7 @@ For more information, visit [Better Auth Documentation](https://www.better-auth.
       // templatizes per monorepo mode AND per ORM (prisma + drizzle) — see
       // {@link substituteMigrateDockerfilePlaceholders}.
       let monorepoDockerNotes = '';
-      const ormUsesMigrateImage =
-        architecture.orm === 'prisma' || architecture.orm === 'drizzle';
+      const ormUsesMigrateImage = architecture.orm === 'prisma' || architecture.orm === 'drizzle';
       if (isMonorepo && ormUsesMigrateImage && architecture.database !== 'none') {
         const ormLabel = architecture.orm === 'prisma' ? 'Prisma' : 'Drizzle';
         monorepoDockerNotes = `
@@ -4588,22 +4487,38 @@ ${
 ${
   isFullMonorepo
     ? `├── packages/
-${hasDbPackage ? `│   ├── packages/db/               # Database client + ${architecture.orm === 'prisma' ? 'Prisma schema' : 'Drizzle schema'} (workspace package)
-` : ''}${hasAuthPackage ? `│   ├── packages/auth/             # Better Auth core (workspace package)
-` : ''}${hasUiPackage ? `│   ├── packages/ui/               # Shared shadcn/ui components (workspace package)
-` : ''}${hasOrpcPackage ? `│   ├── packages/orpc/             # oRPC contracts/handlers (workspace package)
-` : ''}│   ├── packages/eslint-config/    # Shared ESLint config
+${
+  hasDbPackage
+    ? `│   ├── packages/db/               # Database client + ${architecture.orm === 'prisma' ? 'Prisma schema' : 'Drizzle schema'} (workspace package)
+`
+    : ''
+}${
+        hasAuthPackage
+          ? `│   ├── packages/auth/             # Better Auth core (workspace package)
+`
+          : ''
+      }${
+        hasUiPackage
+          ? `│   ├── packages/ui/               # Shared shadcn/ui components (workspace package)
+`
+          : ''
+      }${
+        hasOrpcPackage
+          ? `│   ├── packages/orpc/             # oRPC contracts/handlers (workspace package)
+`
+          : ''
+      }│   ├── packages/eslint-config/    # Shared ESLint config
 │   └── packages/typescript-config/ # Shared TypeScript config
 `
     : ''
 }${
-  // pnpm declares workspaces in `pnpm-workspace.yaml`; npm/yarn/bun
-  // declare them in the root `package.json`'s `workspaces` field
-  // (which scaffoldMonorepoRoot writes for non-pnpm). Listing
-  // `pnpm-workspace.yaml` for those projects would point readers at
-  // a file that doesn't exist.
-  pm === 'pnpm' ? '├── pnpm-workspace.yaml            # Workspace definition\n' : ''
-}├── turbo.json                     # Turborepo task pipeline
+        // pnpm declares workspaces in `pnpm-workspace.yaml`; npm/yarn/bun
+        // declare them in the root `package.json`'s `workspaces` field
+        // (which scaffoldMonorepoRoot writes for non-pnpm). Listing
+        // `pnpm-workspace.yaml` for those projects would point readers at
+        // a file that doesn't exist.
+        pm === 'pnpm' ? '├── pnpm-workspace.yaml            # Workspace definition\n' : ''
+      }├── turbo.json                     # Turborepo task pipeline
 ├── docker-compose.yml             # Docker Compose configuration
 ├── Dockerfile                     # Docker configuration
 ├── package.json                   # Workspace root${pm === 'pnpm' ? ' scripts (Turbo runners)' : ' (workspaces field + Turbo runners)'}
@@ -4820,12 +4735,8 @@ Generated with [Next.js MCP Server](https://github.com/anthropics/next-mcp)
     const routedToDbPkg = shouldRouteToDbPackage(config);
     const routedToAuthPkg = shouldRouteToAuthPackage(config);
     const dbImportSpec = routedToDbPkg ? `@${config.name}/db` : '@/lib/db';
-    const authServerImportSpec = routedToAuthPkg
-      ? `@${config.name}/auth/server`
-      : '@/lib/auth';
-    const authClientImportSpec = routedToAuthPkg
-      ? `@${config.name}/auth/client`
-      : '@/lib/auth-client';
+    const authServerImportSpec = routedToAuthPkg ? `@${config.name}/auth/server` : '@/lib/auth';
+    const authClientImportSpec = routedToAuthPkg ? `@${config.name}/auth/client` : '@/lib/auth-client';
 
     // Stack summary (one paragraph)
     const stackBits: string[] = [`Next.js 16 (App Router)`];
@@ -4833,9 +4744,7 @@ Generated with [Next.js MCP Server](https://github.com/anthropics/next-mcp)
     stackBits.push(`package manager: ${pm}`);
     stackBits.push(`monorepo: ${architecture.monorepo}`);
     if (architecture.database !== 'none') {
-      stackBits.push(
-        `${architecture.database}${architecture.orm !== 'none' ? ` + ${architecture.orm}` : ''}`
-      );
+      stackBits.push(`${architecture.database}${architecture.orm !== 'none' ? ` + ${architecture.orm}` : ''}`);
     }
     if (architecture.auth !== 'none') stackBits.push(`${architecture.auth}`);
     if (architecture.uiLibrary === 'shadcn') stackBits.push('shadcn/ui');
@@ -4877,7 +4786,7 @@ Generated with [Next.js MCP Server](https://github.com/anthropics/next-mcp)
 
 ${layoutLines.join('\n')}
 
-The workspace is wired through ${pm === 'pnpm' ? '`pnpm-workspace.yaml`' : 'the root `package.json`\'s `workspaces` field'} and \`turbo.json\` — \`build\`, \`lint\`, and \`typecheck\` at the root fan out to every workspace.
+The workspace is wired through ${pm === 'pnpm' ? '`pnpm-workspace.yaml`' : "the root `package.json`'s `workspaces` field"} and \`turbo.json\` — \`build\`, \`lint\`, and \`typecheck\` at the root fan out to every workspace.
 `;
     }
 
@@ -4929,17 +4838,13 @@ ${architecture.testing !== 'none' ? `${runScript('test')}               # Run te
 
     // Where-to-find pointer block. Only emit a row when the config produces it.
     const findRows: string[] = [];
-    findRows.push(
-      `- **App routes**: \`${isMonorepo ? 'apps/web/src/app/' : 'src/app/'}\``
-    );
+    findRows.push(`- **App routes**: \`${isMonorepo ? 'apps/web/src/app/' : 'src/app/'}\``);
     if (architecture.uiLibrary === 'shadcn') {
       findRows.push(
         `- **UI components**: \`${hasUiPackage ? 'packages/ui/' : isMonorepo ? 'apps/web/src/components/' : 'src/components/'}\``
       );
     } else {
-      findRows.push(
-        `- **Components**: \`${isMonorepo ? 'apps/web/src/components/' : 'src/components/'}\``
-      );
+      findRows.push(`- **Components**: \`${isMonorepo ? 'apps/web/src/components/' : 'src/components/'}\``);
     }
     if (architecture.database !== 'none' && architecture.orm !== 'none') {
       findRows.push(
@@ -4950,9 +4855,7 @@ ${architecture.testing !== 'none' ? `${runScript('test')}               # Run te
       findRows.push(
         `- **Auth core**: \`${routedToAuthPkg ? 'packages/auth/' : isMonorepo ? 'apps/web/src/lib/auth.ts' : 'src/lib/auth.ts'}\``
       );
-      findRows.push(
-        `- **Auth UI**: \`${isMonorepo ? 'apps/web/src/components/auth/' : 'src/components/auth/'}\``
-      );
+      findRows.push(`- **Auth UI**: \`${isMonorepo ? 'apps/web/src/components/auth/' : 'src/components/auth/'}\``);
     }
     if (hasOrpcPackage) {
       findRows.push(`- **oRPC routes/router**: \`packages/orpc/\``);
@@ -5001,7 +4904,7 @@ ${architecture.testing !== 'none' ? `${runScript('test')}               # Run te
     }
     if (isFullMonorepo) {
       pitfallLines.push(
-        `- **Adding a new package.** Drop it under \`packages/\` and ${pm === 'pnpm' ? "ensure the path matches the glob in `pnpm-workspace.yaml`" : 'ensure it matches the `workspaces` glob in the root `package.json`'} — Turborepo picks it up automatically once it exists in the workspace.`
+        `- **Adding a new package.** Drop it under \`packages/\` and ${pm === 'pnpm' ? 'ensure the path matches the glob in `pnpm-workspace.yaml`' : 'ensure it matches the `workspaces` glob in the root `package.json`'} — Turborepo picks it up automatically once it exists in the workspace.`
       );
     }
     if (architecture.orm === 'prisma' && architecture.database !== 'none') {
@@ -5032,9 +4935,7 @@ Tests run with \`${runScript('test')}\`${architecture.testing === 'vitest' ? ' (
     const sections: string[] = [];
     sections.push(`# AGENTS.md`);
     sections.push('');
-    sections.push(
-      `Working notes for AI agents (Claude Code, Cursor, etc.) on the **${config.name}** codebase.`
-    );
+    sections.push(`Working notes for AI agents (Claude Code, Cursor, etc.) on the **${config.name}** codebase.`);
     sections.push('');
     sections.push(`## Project overview`);
     sections.push('');
