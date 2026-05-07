@@ -290,7 +290,9 @@ COPY --from=deps /app/out/__LOCKFILE__ ./
     expect(out).toContain('bunx turbo prune');
     expect(out).toContain('bun run turbo build');
     expect(out).toContain('--mount=type=cache,id=bun,target=/root/.bun/install/cache');
-    expect(out).toContain('bun.lockb');
+    // Modern Bun emits `bun.lock` (text), not the legacy binary `bun.lockb`.
+    expect(out).toMatch(/\bbun\.lock\b/);
+    expect(out).not.toContain('bun.lockb');
     expect(out).not.toContain('PNPM_HOME');
   });
 });
@@ -499,7 +501,8 @@ describe('Dockerfile.monorepo substitution end-to-end', () => {
     expect(out).toContain('FROM oven/bun:1-alpine AS base');
     expect(out).not.toContain('corepack');
     expect(out).toContain('bun install --frozen-lockfile');
-    expect(out).toContain('bun.lockb');
+    expect(out).toMatch(/\bbun\.lock\b/);
+    expect(out).not.toContain('bun.lockb');
   });
 });
 

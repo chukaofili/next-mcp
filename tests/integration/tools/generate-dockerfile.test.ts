@@ -174,7 +174,12 @@ describe('generate_dockerfile tool', () => {
       const dockerfile = await readFile(path.join(monorepoDir, 'Dockerfile'));
       expect(dockerfile).toContain('FROM oven/bun:1-alpine AS base');
       expect(dockerfile).toContain('bun install --frozen-lockfile');
-      expect(dockerfile).toContain('bun.lockb');
+      // Modern Bun emits the text-format `bun.lock`; the legacy binary
+      // `bun.lockb` is generated only by `bun install --save-text-lockfile=false`.
+      // We pin to the current default — with `bun.lockb` the COPY would miss
+      // the real lockfile and the frozen-lockfile install would fail.
+      expect(dockerfile).toMatch(/\bbun\.lock\b/);
+      expect(dockerfile).not.toContain('bun.lockb');
       expect(dockerfile).toContain('bunx turbo@^2 prune');
       expect(dockerfile).toContain('PACKAGE="@bunny/web"');
       expect(dockerfile).not.toMatch(/__[A-Z_]+__/);

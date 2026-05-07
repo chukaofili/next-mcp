@@ -241,6 +241,88 @@ describe('alignPins', () => {
     expect(pkg.engines.pnpm).toBeUndefined();
     expect(pkg.devDependencies.typescript).toBe('^6');
   });
+
+  it('also bumps typescript devDep in apps/* and packages/* workspaces (shadcn pins TS in child workspaces)', async () => {
+    // shadcn's monorepo init pins typescript ^5.9.3 in apps/web,
+    // packages/ui, and packages/eslint-config — three sites in addition to
+    // the root. Without bumping each, generated monorepos install/run
+    // typescript 5.9.x in those workspaces and the intended ^6 catalog pin
+    // doesn't take effect (Codex review P2).
+    await fs.writeFile(
+      path.join(tempDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: 'shadcn-template',
+          devDependencies: { typescript: '5.9.3', turbo: '^2.8.17' },
+          packageManager: 'pnpm@9.15.9',
+          engines: { node: '>=20' },
+        },
+        null,
+        2
+      ) + '\n'
+    );
+    await fs.mkdir(path.join(tempDir, 'apps/web'), { recursive: true });
+    await fs.writeFile(
+      path.join(tempDir, 'apps/web/package.json'),
+      JSON.stringify(
+        {
+          name: '@workspace/web',
+          devDependencies: { typescript: '^5.9.3', '@types/node': '^25' },
+        },
+        null,
+        2
+      ) + '\n'
+    );
+    await fs.mkdir(path.join(tempDir, 'packages/ui'), { recursive: true });
+    await fs.writeFile(
+      path.join(tempDir, 'packages/ui/package.json'),
+      JSON.stringify(
+        {
+          name: '@workspace/ui',
+          devDependencies: { typescript: '^5.9.3' },
+        },
+        null,
+        2
+      ) + '\n'
+    );
+    await fs.mkdir(path.join(tempDir, 'packages/eslint-config'), { recursive: true });
+    await fs.writeFile(
+      path.join(tempDir, 'packages/eslint-config/package.json'),
+      JSON.stringify(
+        {
+          name: '@workspace/eslint-config',
+          devDependencies: { typescript: '^5.9.3', eslint: '^10' },
+        },
+        null,
+        2
+      ) + '\n'
+    );
+    // No typescript devDep on this one — should be left untouched.
+    await fs.mkdir(path.join(tempDir, 'packages/typescript-config'), { recursive: true });
+    await fs.writeFile(
+      path.join(tempDir, 'packages/typescript-config/package.json'),
+      JSON.stringify({ name: '@workspace/typescript-config' }, null, 2) + '\n'
+    );
+
+    await alignPins(tempDir, 'pnpm');
+
+    for (const rel of [
+      'apps/web/package.json',
+      'packages/ui/package.json',
+      'packages/eslint-config/package.json',
+    ]) {
+      const child = JSON.parse(await fs.readFile(path.join(tempDir, rel), 'utf-8'));
+      expect(child.devDependencies.typescript).toBe('^6');
+    }
+    // Other deps in child workspaces stay put.
+    const web = JSON.parse(await fs.readFile(path.join(tempDir, 'apps/web/package.json'), 'utf-8'));
+    expect(web.devDependencies['@types/node']).toBe('^25');
+    const eslintCfg = JSON.parse(await fs.readFile(path.join(tempDir, 'packages/eslint-config/package.json'), 'utf-8'));
+    expect(eslintCfg.devDependencies.eslint).toBe('^10');
+    // Workspaces with no typescript pin are left as-is.
+    const tsc = JSON.parse(await fs.readFile(path.join(tempDir, 'packages/typescript-config/package.json'), 'utf-8'));
+    expect(tsc.devDependencies).toBeUndefined();
+  });
 });
 
 describe('swapTypescriptConfig', () => {
@@ -289,7 +371,7 @@ describe('moveAppsWebFlatToSrc', () => {
 
   afterEach(async () => cleanupTempDir(tempDir));
 
-  it('moves apps/web/{app,components,hooks,lib} under apps/web/src/ and updates path mappings', async () => {
+  it('moves apps/web/{app,components,hooks,lib} under apps/web/src/ and updates path mappings (monorepo case — cross-workspace tailwind.css unchanged)', async () => {
     const appPath = path.join(tempDir, 'apps/web');
     await fs.mkdir(path.join(appPath, 'app'), { recursive: true });
     await fs.mkdir(path.join(appPath, 'components'), { recursive: true });
@@ -314,7 +396,8 @@ describe('moveAppsWebFlatToSrc', () => {
         2
       ) + '\n'
     );
-    // shadcn-emitted components.json (flat layout — tailwind.css 2 levels up)
+    // shadcn-emitted components.json — monorepo points tailwind.css at the
+    // sibling packages/ui workspace (cross-workspace).
     await fs.writeFile(
       path.join(appPath, 'components.json'),
       JSON.stringify(
@@ -342,10 +425,40 @@ describe('moveAppsWebFlatToSrc', () => {
     const tsc = JSON.parse(await fs.readFile(path.join(appPath, 'tsconfig.json'), 'utf-8'));
     expect(tsc.compilerOptions.paths['@/*']).toEqual(['./src/*']);
 
-    // components.json tailwind.css path adjusted (now 3 levels up since it's
-    // under src/, not flat).
+    // components.json tailwind.css path is UNCHANGED — components.json itself
+    // doesn't move, packages/ui doesn't move, so the cross-workspace relative
+    // path is the same before and after the apps/web/{app,...} → apps/web/src/{app,...}
+    // shuffle. (Bug guard: prior implementation prepended an extra `../` and
+    // broke `setup_shadcn`'s `shadcn add --all` resolution.)
     const cj = JSON.parse(await fs.readFile(path.join(appPath, 'components.json'), 'utf-8'));
-    expect(cj.tailwind.css).toBe('../../../packages/ui/src/styles/globals.css');
+    expect(cj.tailwind.css).toBe('../../packages/ui/src/styles/globals.css');
+  });
+
+  it('rewrites local tailwind.css from `app/globals.css` → `src/app/globals.css` for flat layout', async () => {
+    // Flat dispatch: moveAppsWebFlatToSrc is called with `appPath = projectPath`
+    // (the entire project IS the app). shadcn's flat init emits
+    // `tailwind.css: "app/globals.css"` — this needs to track the move.
+    const appPath = tempDir;
+    await fs.mkdir(path.join(appPath, 'app'), { recursive: true });
+    await fs.writeFile(
+      path.join(appPath, 'app/globals.css'),
+      `@import "tailwindcss";\n`
+    );
+    await fs.writeFile(path.join(appPath, 'app/layout.tsx'), `export default () => null;\n`);
+    await fs.writeFile(
+      path.join(appPath, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { paths: { '@/*': ['./*'] } } }, null, 2) + '\n'
+    );
+    await fs.writeFile(
+      path.join(appPath, 'components.json'),
+      JSON.stringify({ tailwind: { css: 'app/globals.css' } }, null, 2) + '\n'
+    );
+
+    await moveAppsWebFlatToSrc(appPath);
+
+    expect(await fileExists(path.join(appPath, 'src/app/globals.css'))).toBe(true);
+    const cj = JSON.parse(await fs.readFile(path.join(appPath, 'components.json'), 'utf-8'));
+    expect(cj.tailwind.css).toBe('src/app/globals.css');
   });
 
   it('is idempotent: re-running on an already-src/ layout is a no-op', async () => {
@@ -360,9 +473,10 @@ describe('moveAppsWebFlatToSrc', () => {
         2
       ) + '\n'
     );
+    // Cross-workspace path stays put — verifies the second call doesn't drift.
     await fs.writeFile(
       path.join(appPath, 'components.json'),
-      JSON.stringify({ tailwind: { css: '../../../packages/ui/src/styles/globals.css' } }, null, 2) + '\n'
+      JSON.stringify({ tailwind: { css: '../../packages/ui/src/styles/globals.css' } }, null, 2) + '\n'
     );
 
     await moveAppsWebFlatToSrc(appPath);
@@ -371,6 +485,8 @@ describe('moveAppsWebFlatToSrc', () => {
     expect(await fileExists(path.join(appPath, 'src/app/page.tsx'))).toBe(true);
     const tsc = JSON.parse(await fs.readFile(path.join(appPath, 'tsconfig.json'), 'utf-8'));
     expect(tsc.compilerOptions.paths['@/*']).toEqual(['./src/*']);
+    const cj = JSON.parse(await fs.readFile(path.join(appPath, 'components.json'), 'utf-8'));
+    expect(cj.tailwind.css).toBe('../../packages/ui/src/styles/globals.css');
   });
 });
 

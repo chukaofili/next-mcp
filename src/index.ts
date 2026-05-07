@@ -697,6 +697,28 @@ export async function alignPins(projectPath: string, packageManager: PackageMana
   }
 
   await fs.writeFile(filePath, JSON.stringify(pkg, null, 2) + '\n');
+
+  // Child workspaces: shadcn pins typescript ^5.9.3 in apps/web,
+  // packages/ui, and packages/eslint-config (in addition to the root). A
+  // root-only bump leaves those workspaces installing TS 5.9.x, which
+  // defeats the catalog policy and reintroduces typecheck drift across
+  // the monorepo. Walk apps/* and packages/* and bump the typescript
+  // devDep wherever it's pinned.
+  for (const subdir of ['apps', 'packages']) {
+    const dir = path.join(projectPath, subdir);
+    if (!existsSync(dir)) continue;
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const childPkgPath = path.join(dir, entry.name, 'package.json');
+      if (!existsSync(childPkgPath)) continue;
+      const childPkg = JSON.parse(await fs.readFile(childPkgPath, 'utf-8'));
+      if (childPkg.devDependencies && typeof childPkg.devDependencies.typescript === 'string') {
+        childPkg.devDependencies.typescript = CATALOG_VERSIONS.typescript;
+        await fs.writeFile(childPkgPath, JSON.stringify(childPkg, null, 2) + '\n');
+      }
+    }
+  }
 }
 
 /**
@@ -756,14 +778,25 @@ export async function moveAppsWebFlatToSrc(appPath: string): Promise<void> {
     }
   }
 
-  // Patch apps/web/components.json `tailwind.css` to account for the
-  // extra `src/` level in the relative path.
+  // Patch apps/web/components.json `tailwind.css` only when it points at
+  // a *moved* local subtree. Cross-workspace paths (e.g. shadcn's monorepo
+  // default `../../packages/ui/src/styles/globals.css`) are unaffected by
+  // the move — components.json doesn't relocate, packages/ui doesn't
+  // either, so the relative path is the same before and after. Local
+  // paths whose first segment matches one of the moved folders (`app/`,
+  // `components/`, `hooks/`, `lib/`) need a `src/` prefix to track the
+  // shuffle. shadcn's flat init emits `tailwind.css: "app/globals.css"`
+  // — that's the canonical hit for this branch.
   const cjPath = path.join(appPath, 'components.json');
   if (existsSync(cjPath)) {
     const cj = JSON.parse(await fs.readFile(cjPath, 'utf-8'));
-    if (typeof cj.tailwind?.css === 'string' && cj.tailwind.css.startsWith('../../')) {
-      cj.tailwind.css = `../${cj.tailwind.css}`;
-      await fs.writeFile(cjPath, JSON.stringify(cj, null, 2) + '\n');
+    const css = cj.tailwind?.css;
+    if (typeof css === 'string' && !css.startsWith('../') && !css.startsWith('src/')) {
+      const firstSegment = css.replace(/^\.\//, '').split('/', 1)[0];
+      if (folders.includes(firstSegment)) {
+        cj.tailwind.css = `src/${css.replace(/^\.\//, '')}`;
+        await fs.writeFile(cjPath, JSON.stringify(cj, null, 2) + '\n');
+      }
     }
   }
 }
@@ -942,7 +975,13 @@ const DOCKERFILE_PM_VALUES: Record<PackageManager, DockerfilePlaceholderValues> 
     __PM_DLX__: 'bunx',
     __PM_INSTALL__: 'bun install --frozen-lockfile',
     __PM_RUN__: 'bun run',
-    __LOCKFILE__: 'bun.lockb',
+    // Modern Bun emits `bun.lock` (text format) by default — `bun.lockb`
+    // is the legacy binary form, generated only with
+    // `--save-text-lockfile=false`. Pinning to the default keeps the
+    // monorepo Dockerfile's COPY <lockfile> step and the
+    // `bun install --frozen-lockfile` layer aligned with what Bun
+    // actually writes.
+    __LOCKFILE__: 'bun.lock',
     __CACHE_MOUNT__: '--mount=type=cache,id=bun,target=/root/.bun/install/cache',
   },
 };
