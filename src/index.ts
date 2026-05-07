@@ -8,7 +8,7 @@
  */
 import { execSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { appendFileSync, existsSync, promises as fs, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, promises as fs, mkdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -455,6 +455,89 @@ export function getAuthGenerateScript(config: ProjectConfig): string | null {
   const dlx = packageRunnerDlx(config.architecture.packageManager);
   const configRel = getAuthConfigRelPath(config);
   return `dotenv -e .env -- ${dlx} auth@latest generate -y --config ${configRel} --output ${outputRel}`;
+}
+
+/**
+ * Post-exec verify predicate for the auth schema-gen subprocess (B6 +
+ * smoke v1 finding B1). Run after `auth@latest generate` exits 0 to
+ * confirm the CLI actually produced the expected schema artifacts —
+ * the bug pattern is a clean exit having modified nothing. Returns
+ * `true` on success, `{ ok: false, reason }` otherwise.
+ *
+ * - drizzle: the dedicated schema file at `getAuthSchemaOutputRelPath`
+ *   (relative to the schema cwd, which is the project root) must exist.
+ * - prisma: the in-place rewrite must have added the `User` model to
+ *   `<dbBase>/prisma/schema.prisma`.
+ * - mongoose: schema-less; nothing to verify, return true.
+ */
+export function verifyAuthSchemaGenerated(
+  config: ProjectConfig,
+  projectPath: string
+): true | { ok: false; reason: string } {
+  const { orm } = config.architecture;
+
+  if (orm === 'drizzle') {
+    const outputRel = getAuthSchemaOutputRelPath(config);
+    if (!outputRel) return true; // defensive — drizzle always has an output rel
+    const outputAbs = path.join(projectPath, outputRel);
+    if (!existsSync(outputAbs)) {
+      return {
+        ok: false,
+        reason: `auth schema output not produced at ${outputRel} (CLI exit 0 but file missing)`,
+      };
+    }
+    return true;
+  }
+
+  if (orm === 'prisma') {
+    const schemaPath = path.join(getDbBaseDir(config, projectPath), 'prisma/schema.prisma');
+    if (!existsSync(schemaPath)) {
+      return {
+        ok: false,
+        reason: `prisma schema not found at ${schemaPath} (CLI exit 0 but file missing)`,
+      };
+    }
+    const content = readFileSync(schemaPath, 'utf-8');
+    if (!/\bmodel\s+User\b/.test(content)) {
+      return {
+        ok: false,
+        reason: `prisma schema at ${schemaPath} did not get a User model (CLI exit 0 but no in-place rewrite)`,
+      };
+    }
+    return true;
+  }
+
+  // mongoose: schema-less, nothing to verify.
+  return true;
+}
+
+/**
+ * Format the diagnostic block to splice into a user-facing failure message
+ * when an `execCommand` call returns success: false. Includes the verify
+ * reason (when the predicate rejected) and any captured stderr — the
+ * information that smoke v1 finding B6 noted was being silently dropped.
+ *
+ * Returns a multi-line string starting with a blank line so it slots
+ * cleanly between the headline and the "📋 Next Steps:" block. Returns
+ * empty string when there's nothing useful to surface.
+ */
+export function formatExecDiagnostic(result: {
+  success: boolean;
+  output?: string;
+  stderr?: string;
+  reason?: string;
+}): string {
+  if (result.success) return '';
+  const lines: string[] = [];
+  if (result.reason) lines.push(`Reason: ${result.reason}`);
+  if (result.stderr && result.stderr.trim().length > 0) {
+    lines.push('Captured stderr:');
+    for (const line of result.stderr.trim().split('\n')) {
+      lines.push(`  ${line}`);
+    }
+  }
+  if (lines.length === 0) return '';
+  return `\n${lines.join('\n')}\n`;
 }
 
 /**
@@ -1083,7 +1166,7 @@ const scaffoldInputShape = {
   targetPath: z.string().describe('Target directory path, usually the current working directory'),
 } as const;
 
-class NextMCPServer {
+export class NextMCPServer {
   private server: McpServer;
 
   constructor() {
@@ -1283,8 +1366,9 @@ class NextMCPServer {
   private execCommand(
     command: string,
     projectPath: string,
-    commandLabel: string
-  ): { success: boolean; output?: string } {
+    commandLabel: string,
+    verify?: () => boolean | { ok: true } | { ok: false; reason: string }
+  ): { success: boolean; output?: string; stderr?: string; reason?: string } {
     logger.info(`Running ${commandLabel}: ${command}`);
 
     // Test-only short-circuit: when NEXT_MCP_RECORD_COMMANDS points at a
@@ -1327,18 +1411,43 @@ class NextMCPServer {
       });
       const outputStr = output.toString();
       logger.info(`${commandLabel} output: ${outputStr}`);
+
+      // Optional post-exec verification (B6). Exit code 0 alone is too lenient
+      // for tools that can exit clean while producing no expected output (the
+      // failure mode behind B1 and B3 in the 2026-05-07 smoke). When a
+      // predicate is supplied, downgrade success to false if it rejects.
+      if (verify) {
+        const verdict = verify();
+        const ok = typeof verdict === 'boolean' ? verdict : verdict.ok;
+        if (!ok) {
+          const reason =
+            typeof verdict === 'object' && verdict.ok === false
+              ? verdict.reason
+              : 'verify predicate returned false';
+          logger.warn(`${commandLabel} exit 0 but verify failed: ${reason}`);
+          return { success: false, output: outputStr, reason };
+        }
+      }
+
       return { success: true, output: outputStr };
     } catch (error) {
       const execError = error as { status?: number; stderr?: Buffer; stdout?: Buffer; message: string };
+      const stderrStr = execError.stderr?.toString() ?? '';
+      const stdoutStr = execError.stdout?.toString() ?? '';
       logger.error(`[${commandLabel} failed]:`, {
         command,
         status: execError.status,
-        stderr: execError.stderr?.toString(),
-        stdout: execError.stdout?.toString(),
+        stderr: stderrStr,
+        stdout: stdoutStr,
         message: execError.message,
       });
       logger.warn(`${commandLabel} failed - user will need to run manually`);
-      return { success: false };
+      return {
+        success: false,
+        output: stdoutStr || undefined,
+        stderr: stderrStr || undefined,
+        reason: execError.message,
+      };
     }
   }
 
@@ -3818,16 +3927,32 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
       const { database } = config.architecture;
       let schemaGenerated = false;
       let migrationRan = false;
+      let schemaFailureDiagnostic: string | undefined;
+      let migrationFailureDiagnostic: string | undefined;
 
       // MongoDB doesn't need migrations (schema-less)
       const shouldRunMigrations = database !== 'mongodb';
 
       if (shouldRunMigrations && !config.architecture.skipInstall) {
         // Generate auth schema (cwd is mode-aware — see getAuthSchemaCwd).
+        // Pair the exec with a verify predicate (B6) so a silent no-op
+        // (auth CLI exits 0 having modified nothing — the failure mode
+        // behind smoke v1 finding B1) cannot be mistaken for success. For
+        // drizzle the predicate checks the dedicated schema output file;
+        // for prisma it checks that schema.prisma got the auth tables;
+        // for mongoose it short-circuits true (schema-less ORM).
         const schemaCmd = this.getAuthSchemaCommand(config);
         const schemaCwd = this.getAuthSchemaCwd(config, projectPath);
-        const schemaResult = this.execCommand(schemaCmd, schemaCwd, 'auth schema generation');
+        const schemaResult = this.execCommand(
+          schemaCmd,
+          schemaCwd,
+          'auth schema generation',
+          () => verifyAuthSchemaGenerated(config, projectPath)
+        );
         schemaGenerated = schemaResult.success;
+        if (!schemaGenerated) {
+          schemaFailureDiagnostic = formatExecDiagnostic(schemaResult);
+        }
 
         // Run migrations if schema was generated successfully (cwd
         // follows the ORM artifacts — see getAuthMigrationCwd).
@@ -3836,6 +3961,9 @@ NEXT_PUBLIC_BETTER_AUTH_URL=http://localhost:3000
           const migrationCwd = this.getAuthMigrationCwd(config, projectPath);
           const migrationResult = this.execCommand(migrationCmd, migrationCwd, 'auth migration');
           migrationRan = migrationResult.success;
+          if (!migrationRan) {
+            migrationFailureDiagnostic = formatExecDiagnostic(migrationResult);
+          }
         }
       }
 
@@ -3902,7 +4030,7 @@ components.`,
 2. Visit http://localhost:3000/auth/sign-up to create your first user`;
         } else if (schemaGenerated && !migrationRan) {
           nextSteps = `⚠️  Schema generated but migration failed. Please run manually:
-
+${migrationFailureDiagnostic ?? ''}
 📋 Next Steps:
 
 1. Run database migrations:
@@ -3914,7 +4042,7 @@ components.`,
 3. Visit http://localhost:3000/auth/sign-up to create your first user`;
         } else {
           nextSteps = `⚠️  Manual setup required. Please run these commands:
-
+${schemaFailureDiagnostic ?? ''}
 📋 Next Steps:
 
 1. Generate the database schema:
