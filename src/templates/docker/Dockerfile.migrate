@@ -1,14 +1,13 @@
-FROM node:24-alpine
+FROM __BASE_IMAGE__
+__PM_PATH_SETUP__
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN __COREPACK_SETUP__
 
-# Copy only what's needed for migrations
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml* ./
-COPY prisma ./prisma
-COPY prisma.config.ts ./
+# Copy what's needed for migrations
+__MIGRATE_COPY__
 
-# Install only prisma dependencies
-RUN pnpm add prisma @prisma/client dotenv
+# Install ORM CLI + the project's db deps
+RUN __MIGRATE_DEPS_INSTALL__
 
-CMD ["npx", "prisma", "migrate", "deploy"]
+CMD ["sh", "-c", "__MIGRATE_CMD__"]

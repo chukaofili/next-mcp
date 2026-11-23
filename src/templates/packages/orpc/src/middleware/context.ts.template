@@ -1,0 +1,5 @@
+import { os } from '@orpc/server';
+
+import type { ORPCContext } from '../types.js';
+
+export const base = os.$context<ORPCContext>();

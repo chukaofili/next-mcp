@@ -1,5 +1,8 @@
-import { createAuthClient } from 'better-auth/react';
+import { BetterAuthClientOptions } from "better-auth/client"
+import { createAuthClient } from "better-auth/react"
 
-export const authClient = createAuthClient({
-  baseURL: process.env.NEXT_PUBLIC_BETTER_AUTH_URL as string,
-});
+const authClientOptions = {
+  baseURL: process.env.NEXT_PUBLIC_APP_URL!,
+} satisfies BetterAuthClientOptions
+
+export const authClient = createAuthClient(authClientOptions)

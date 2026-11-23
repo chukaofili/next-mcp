@@ -1,7 +1,3 @@
 "use client";
 
-import { UserButton as BetterAuthUserButton } from "@daveyplate/better-auth-ui";
-
-export function UserButton() {
-  return <BetterAuthUserButton />;
-}
+export { UserButton } from "@/components/auth/user/user-button";

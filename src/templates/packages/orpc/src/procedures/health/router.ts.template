@@ -1,0 +1,37 @@
+/**
+ * Health check router
+ */
+import prettyMs from 'pretty-ms';
+import * as z from 'zod';
+
+import { publicProcedure } from '../../middleware/index.js';
+
+export const healthRouter = {
+  check: publicProcedure
+    .route({
+      path: '/health',
+      method: 'GET',
+      summary: 'Health check',
+      successDescription: 'The request has succeeded.',
+      description: 'Check the health status of the RPC server.',
+      tags: ['Health'],
+    })
+    .output(
+      z.object({
+        status: z
+          .literal('online')
+          .describe('Current status of the RPC server'),
+        uptime: z.string().describe('Uptime of the RPC server'),
+        environment: z
+          .string()
+          .describe('Current environment of the RPC server'),
+      }),
+    )
+    .handler(() => {
+      return {
+        status: 'online' as const,
+        uptime: prettyMs(process.uptime() * 1000, { secondsDecimalDigits: 0 }),
+        environment: process.env.NODE_ENV ?? 'development',
+      };
+    }),
+};

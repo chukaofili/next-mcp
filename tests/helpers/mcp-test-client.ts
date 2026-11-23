@@ -22,11 +22,31 @@ export class MCPTestClient {
 
   /**
    * Connect to the MCP server
+   *
+   * Optional `env` is merged into the spawned server's environment. Tests
+   * use this to flip the `NEXT_MCP_RECORD_COMMANDS` switch so `execCommand`
+   * records calls to a JSONL file instead of spawning real shells.
+   *
+   * `process.env` is always merged in. `StdioClientTransport`, given no
+   * `env`, spawns the child with a sanitized minimal env (PATH, HOME) — it
+   * does NOT inherit `process.env`. The vitest `globalSetup`
+   * (`tests/global-setup.ts`) writes `NEXT_MCP_SHADCN_*_FIXTURE` into the
+   * test process env so `scaffoldViaShadcn{Monorepo,Flat}` can copy from
+   * the committed fixtures instead of running a live `pnpm dlx shadcn init`;
+   * without this merge those vars are invisible to the spawned MCP server
+   * child and the suite silently pays the live-init cost per test.
    */
-  async connect(serverPath: string): Promise<void> {
+  async connect(serverPath: string, env?: Record<string, string>): Promise<void> {
+    const mergedEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (typeof value === 'string') mergedEnv[key] = value;
+    }
+    if (env) Object.assign(mergedEnv, env);
+
     this.transport = new StdioClientTransport({
       command: 'node',
       args: [serverPath],
+      env: mergedEnv,
     });
 
     await this.client.connect(this.transport);
@@ -93,9 +113,19 @@ export class MCPTestClient {
   }
 
   /**
-   * Check if tool call failed
+   * Check if tool call failed.
+   * NOTE: tools/smoke.ts:isToolFailure duplicates this logic. Update both in
+   * lockstep — the smoke driver does not import this helper (it cannot, it's
+   * a standalone tsx script outside the test bundle).
+   *
+   * The protocol-level `isError` flag is checked first (set by withValidation
+   * for impl-level throws and by the SDK for input-shape rejections like
+   * `MCP error -32602`). Text markers (❌, "Failed") cover legacy text-only
+   * error responses from per-tool catch arms that pre-date the isError fix.
    */
   isFailure(result: unknown): boolean {
+    const res = result as { isError?: boolean };
+    if (res.isError === true) return true;
     const text = this.getTextContent(result);
     return text.includes('❌') || text.includes('Failed');
   }

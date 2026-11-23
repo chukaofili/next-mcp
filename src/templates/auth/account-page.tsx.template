@@ -1,19 +1,12 @@
-import { AccountView } from "@daveyplate/better-auth-ui";
-import { accountViewPaths } from "@daveyplate/better-auth-ui/server";
+import { Settings } from "@/components/auth/settings/settings";
 
 /**
- * provides the following account paths:
- * - security
- * - settings
- * - api-keys
- * - organizations
+ * Account/settings views provided by the shadcn-registry install of better-auth-ui:
+ * /account/settings, /account/security
+ *
+ * Additional views (api-keys, organizations, etc) are resolved by <Settings />
+ * when the matching plugin is registered.
  */
-
-export const dynamicParams = false;
-
-export function generateStaticParams() {
-  return Object.values(accountViewPaths).map((path) => ({ path }));
-}
 
 interface AccountPageProps {
   params: Promise<{ path: string }>;
@@ -24,14 +17,7 @@ export default async function AccountPage({ params }: AccountPageProps) {
   return (
     <main className="container flex min-h-screen">
       <div className="flex grow flex-col p-4 md:p-6">
-        <AccountView
-          path={path}
-          classNames={{
-            sidebar: {
-              base: "sticky top-10",
-            },
-          }}
-        />
+        <Settings path={path} />
       </div>
     </main>
   );

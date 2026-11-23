@@ -99,5 +99,8 @@ describe('scaffold_project tool', () => {
       expect(text).toBeDefined();
       expect(text).toContain('Successfully created Next.js project');
     }
-  }, 60000);
+    // Three sequential scaffolds each running shadcn init (~12-18s each
+    // post-R1) need a longer ceiling than the v1 single-create-next-app
+    // timeline could justify. Bump to 240s.
+  }, 240000);
 });

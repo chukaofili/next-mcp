@@ -1,0 +1,43 @@
+{
+  "name": "@<projectName>/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js",
+      "default": "./dist/client.js"
+    }
+  },
+  "scripts": {
+    "build": "prisma generate && tsc -b tsconfig.json",
+    "dev": "tsc -b tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --cache",
+    "lint:fix": "eslint . --cache --fix",
+    "clean": "rm -rf dist .prisma node_modules/.prisma *.tsbuildinfo",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio",
+    "db:push": "prisma db push"
+  },
+  "dependencies": {
+    "@prisma/client": "^7"
+  },
+  "devDependencies": {
+    "@<projectName>/eslint-config": "workspace:*",
+    "@<projectName>/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "prisma": "^7",
+    "typescript": "catalog:"
+  }
+}

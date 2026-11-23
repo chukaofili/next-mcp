@@ -1,0 +1,10 @@
+import "server-only"
+
+import { createAuth } from "@<projectName>/db"
+
+import { db } from "./db"
+
+export const auth = createAuth({ db })
+
+export type Session = typeof auth.$Infer.Session
+export type User = typeof auth.$Infer.Session.user

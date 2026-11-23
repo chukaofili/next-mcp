@@ -1,0 +1,25 @@
+import { RPCHandler } from '@orpc/server/fetch';
+
+import { router } from '__ORPC_PACKAGE_IMPORT__';
+
+const handler = new RPCHandler(router);
+
+async function handle(request: Request): Promise<Response> {
+  const { response } = await handler.handle(request, {
+    prefix: '/api/rpc',
+    context: {
+      type: 'rpc',
+      // Wire your auth resolution here. The default returns null so
+      // protected procedures throw UNAUTHORIZED until you populate
+      // session/user from your auth provider (e.g. better-auth).
+      resolveAuth: async () => ({ session: null }),
+    },
+  });
+  return response ?? new Response('Not Found', { status: 404 });
+}
+
+export const GET = handle;
+export const POST = handle;
+export const PUT = handle;
+export const PATCH = handle;
+export const DELETE = handle;

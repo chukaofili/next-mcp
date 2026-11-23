@@ -90,11 +90,15 @@ describe('README Generation', () => {
   });
 
   it('should include package manager specific commands', async () => {
+    // pnpm/yarn accept the bare script name (`pnpm dev`); npm/bun
+    // require the explicit `run` keyword (`npm run dev`, `bun run dev`).
+    // Asserting `${pm.name} dev` for npm/bun would lock in invalid
+    // copy-paste commands that error out for users on those managers.
     const packageManagers = [
       { name: 'pnpm', devCommand: 'pnpm dev' },
       { name: 'npm', devCommand: 'npm run dev' },
       { name: 'yarn', devCommand: 'yarn dev' },
-      { name: 'bun', devCommand: 'bun dev' },
+      { name: 'bun', devCommand: 'bun run dev' },
     ] as const;
 
     for (const pm of packageManagers) {
@@ -111,7 +115,7 @@ describe('README Generation', () => {
       const readmePath = path.join(tempDir, 'README.md');
       const content = await readFile(readmePath);
 
-      expect(content).toContain(`${pm.name} dev`);
+      expect(content).toContain(pm.devCommand);
     }
   });
 
@@ -211,6 +215,7 @@ describe('README Generation', () => {
       architecture: {
         database: 'none',
         orm: 'none',
+        auth: 'none',
       },
     });
 
@@ -328,5 +333,39 @@ describe('README Generation', () => {
     expect(content).toContain('prisma.io');
     expect(content).toContain('better-auth.com');
     expect(content).toContain('ui.shadcn.com');
+  });
+
+  it('uses per-pm workspace filter shape and omits pnpm-workspace.yaml for non-pnpm monorepos', async () => {
+    // Codex flagged that the README was emitting `npm --filter <pkg>`
+    // (invalid — npm uses `--workspace=`) and listing `pnpm-workspace.yaml`
+    // even for npm/yarn/bun workspaces (where the file isn't generated).
+    // This test pins both fixes for npm; the per-pm helper unit tests
+    // cover the other managers' shapes.
+    const config = createMockConfig({
+      name: 'npm-monorepo-readme',
+      architecture: {
+        monorepo: 'full',
+        packageManager: 'npm',
+        database: 'postgres',
+        orm: 'prisma',
+        auth: 'none',
+        uiLibrary: 'none',
+        testing: 'none',
+      },
+    });
+
+    const result = await client.callTool('generate_readme', { config, projectPath: tempDir });
+    expect(client.isSuccess(result)).toBe(true);
+
+    const content = await readFile(path.join(tempDir, 'README.md'));
+
+    // npm filter shape: `npm run <script> --workspace=<pkg>` — NOT
+    // `npm --filter <pkg>`.
+    expect(content).toContain('npm run dev --workspace=@npm-monorepo-readme/web');
+    expect(content).not.toContain('npm --filter');
+
+    // pnpm-workspace.yaml is only emitted for pnpm projects, so the
+    // README's project-structure block must not list it for npm.
+    expect(content).not.toContain('pnpm-workspace.yaml');
   });
 });

@@ -1,0 +1,8 @@
+import "server-only" // Next.js guard: blocks client imports
+
+import { createPrismaClient } from "@<projectName>/db"
+
+export const db = createPrismaClient({
+  databaseUrl: process.env.DATABASE_URL!,
+  nodeEnv: process.env.NODE_ENV,
+})

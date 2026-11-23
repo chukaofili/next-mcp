@@ -1,0 +1,7 @@
+import { healthRouter } from './procedures/health/router.js';
+
+export const router = {
+  health: healthRouter,
+};
+
+export type AppRouter = typeof router;
